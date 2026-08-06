@@ -1,6 +1,8 @@
 # Modelo de Domínio — PCTEC Ingressa
 
-Versão associada: v0.2.0 — Domain Foundation
+Versão associada: v0.2.0 — Domain Foundation (entidade `Identity`
+atualizada pela v0.3.0 — Identity Core; entidade `IdentityProfile` removida
+por ADR-025, ver nota na seção 2)
 Status: Proposto para revisão do Product Owner e do Platform Architect
 
 Este documento substitui e expande a versão anterior deste arquivo (v0.1.0),
@@ -11,13 +13,21 @@ conforme ADR-007 (autorização em duas camadas) — não existe autorização
 fina de negócio no Ingressa, portanto não há um par genérico Role/Permission
 no núcleo do domínio.
 
+**Nota de correção (ADR-025, v0.3.0):** `IdentityProfile` foi removida como
+entidade do bounded context `identity`. As classificações relacionais
+`EMPLOYEE`, `CUSTOMER`, `PARTNER`, `SUPPLIER` pertencem ao contexto do
+`Membership`, sob o nome provisório `MembershipProfile` — modelagem
+definitiva fora do escopo desta entrega. `Membership` e `ApplicationAccess`
+referenciam `Identity` diretamente, não mais `IdentityProfile`. Ver seção 2
+para detalhes desta correção.
+
 Convenção adotada: nomes de entidade, atributo e evento em inglês; texto
 explicativo em português.
 
 ## Índice de entidades
 
 1. Identity
-2. IdentityProfile
+2. ~~IdentityProfile~~ (removida — ADR-025; ver seção 2)
 3. Organization
 4. OrganizationRelationship
 5. Membership
@@ -34,43 +44,80 @@ explicativo em português.
 
 ## 1. Identity
 
-**Responsabilidade:** representar univocamente uma pessoa no ecossistema
-PCTEC. É a raiz de identidade — tudo que se refere a "quem é o usuário"
-converge para uma única `Identity`.
+**Responsabilidade:** representar univocamente uma entidade digital
+reconhecida pela Plataforma PCTEC. É a raiz de identidade — tudo que se
+refere a "quem é reconhecido pela plataforma" converge para uma única
+`Identity`. Apenas o subtipo `HUMAN` é implementado no primeiro escopo
+funcional (ADR-018); os demais tipos (`SERVICE`, `APPLICATION`, `DEVICE`,
+`AGENT`) são reservados.
+
+> Especificação detalhada (Aggregate Root completo, Value Objects,
+> comandos, eventos, máquina de estados, invariantes, casos de uso): ver
+> `docs/03-dominio/IDENTITY-DOMAIN-DESIGN.md` e
+> `docs/03-dominio/IDENTITY-UBIQUITOUS-LANGUAGE.md` (v0.3.0). Esta seção
+> mantém apenas o resumo consistente com aquela especificação.
+
+**Nota de correção de nomenclatura (v0.3.0 — ADR-021):** a partir desta
+revisão, para a entidade `Identity` especificamente, `id` passa a se
+referir ao identificador **interno** (`BIGINT UNSIGNED`) e `public_id` ao
+identificador **externo** (UUID textual, `CHAR(36)`) — o inverso do que a
+v0.2.0 havia nomeado (`id` como UUID público, `internal_id` como interno).
+Esta correção é restrita à entidade `Identity`; as demais entidades deste
+documento mantêm a convenção original da v0.2.0 até uma eventual revisão de
+consistência de plataforma (ver ADR-021, seção Consequências).
 
 **Atributos conceituais:**
 
-- `id` (UUID público, imutável).
-- `internal_id` (identificador numérico interno, nunca exposto em API).
+- `id` (interno, `BIGINT UNSIGNED`, nunca exposto em API, evento ou log de
+  consumidor — ADR-021).
+- `public_id` (UUID textual, `CHAR(36)`, imutável, identificador externo —
+  ADR-021).
+- `type` (`IdentityType`: `HUMAN`, `SERVICE`, `APPLICATION`, `DEVICE`,
+  `AGENT`; apenas `HUMAN` implementado no MVP — ADR-018).
 - `full_name`.
-- `email` (único globalmente, case-insensitive).
-- `document_number` (CPF, opcional, normalizado quando informado).
-- `status` (`PENDING`, `ACTIVE`, `BLOCKED`, `INACTIVE`).
+- `email` (único globalmente, case-insensitive), `email_normalized`.
+- `cpf` (opcional, normalizado quando informado como `cpf_normalized`).
+- `status` (`PENDING`, `ACTIVE`, `BLOCKED`, `INACTIVE`, `DELETED` —
+  ADR-019).
 - `login_enabled` (booleano, independente de `status`).
-- `created_at`, `updated_at`.
+- `created_at`, `created_by_identity_public_id`, `updated_at`,
+  `updated_by_identity_public_id`.
+- `deleted_at`, `deleted_by_identity_public_id`, `deletion_reason`
+  (preenchidos apenas quando `status = DELETED` — ADR-020).
+- `version` (controle de concorrência otimista — ADR-024).
 
 **Invariantes:**
 
-- Uma pessoa possui exatamente uma `Identity`.
+- Uma pessoa possui exatamente uma `Identity` do tipo `HUMAN`.
 - `email` é obrigatório no cadastro e único globalmente, comparado de forma
   case-insensitive.
 - Existe apenas um `email` por identidade no MVP (sem múltiplos e-mails).
-- `document_number` é opcional; quando informado, deve ser normalizado
-  (apenas dígitos) e ser único entre as identidades que o informaram.
+- `cpf` é opcional; quando informado, deve ser normalizado (apenas
+  dígitos) e ser único entre as identidades que o informaram.
 - `login_enabled = true` não é automático a partir de `status = ACTIVE`; são
   dimensões independentes. Uma identidade pode existir, estar `ACTIVE` e
   ainda assim não estar habilitada para login (por exemplo, um cliente
   cadastrado por um vínculo comercial que ainda não deve acessar sistemas).
-- `id` (UUID público) nunca muda após a criação.
+- Autenticação só é permitida com `status = ACTIVE` **e**
+  `login_enabled = true` simultaneamente; `BLOCKED` sempre impede
+  autenticação, independentemente de `login_enabled`.
+- `public_id` nunca muda após a criação; `id` interno nunca é exposto.
+- `status = DELETED` é terminal — sem transição operacional de volta pelo
+  fluxo comum (ADR-019, ADR-020).
+- Detalhamento completo de invariantes, comandos e regras de erro: ver
+  `IDENTITY-DOMAIN-DESIGN.md`.
 
 **Relacionamentos:**
 
-- Uma `Identity` possui um ou mais `IdentityProfile`.
-- Uma `Identity` possui zero ou mais `Membership`.
-- Uma `Identity` possui zero ou uma `Credential` ativa por tipo de
-  mecanismo de autenticação (no MVP, apenas senha local).
-- Uma `Identity` possui zero ou mais `Session`.
-- Uma `Identity` pode ser alvo de zero ou mais `MagicLink`.
+- Uma `Identity` possui zero ou mais `Membership` (o `Membership`, não a
+  `Identity`, carrega a classificação relacional `EMPLOYEE`/`CUSTOMER`/
+  `PARTNER`/`SUPPLIER` — ADR-025).
+- Uma `Identity` referencia (não compõe) zero ou mais `Credential`, por
+  `public_id` — `Credential` é agregado próprio do bounded context
+  `security`, não filha interna do agregado `Identity` (ADR-017,
+  ADR-022).
+- Uma `Identity` referencia, pelo mesmo princípio, zero ou mais `Session` e
+  pode ser alvo de zero ou mais `MagicLink`.
 
 **Status conceituais:**
 
@@ -79,20 +126,53 @@ converge para uma única `Identity`.
 - `BLOCKED`: identidade bloqueada administrativamente ou por segurança.
 - `INACTIVE`: identidade desativada (ex.: desligamento, encerramento de
   relação comercial).
+- `DELETED`: exclusão lógica, estado terminal (ADR-019, ADR-020).
 
-**Eventos de domínio:** `identity.created`, `identity.updated`,
-`identity.activated`, `identity.blocked`, `identity.login-enabled`.
+**Eventos de domínio:** `identity.created`, `identity.name-updated`,
+`identity.email-change-requested`, `identity.email-changed`,
+`identity.login-enabled`, `identity.login-disabled`, `identity.activated`,
+`identity.blocked`, `identity.unblocked`, `identity.inactivated`,
+`identity.reactivated`, `identity.deleted`, `identity.anonymized`. Lista
+completa com payloads: `CATALOGO-DE-EVENTOS.md` e
+`IDENTITY-DOMAIN-DESIGN.md`, seção 9. (`identity.profile-added` e
+`identity.profile-removed` foram removidos por ADR-025 — não pertencem a
+`Identity`.)
 
 **O que não pertence a esta entidade:**
 
 - Papel de negócio dentro de um produto consumidor (isso é responsabilidade
   do produto consumidor).
 - Vínculo organizacional (isso é `Membership`).
-- Mecanismo de autenticação (isso é `Credential`).
+- Classificação relacional `EMPLOYEE`/`CUSTOMER`/`PARTNER`/`SUPPLIER` (isso
+  é `MembershipProfile`, associado ao `Membership` — ADR-025).
+- Mecanismo de autenticação — senha, hash, salt (isso é `Credential`,
+  bounded context `security`; ver ADR-022).
+- Sessão e refresh token (isso é `Session`/`RefreshToken`, `security`).
+- Telefone, endereço, foto, cargo, preferências (não incluídos sem decisão
+  formal — ver `IDENTITY-DOMAIN-DESIGN.md`, seção 15).
 
 ---
 
-## 2. IdentityProfile
+## 2. ~~IdentityProfile~~ (removida — ADR-025)
+
+**Nota de correção (v0.3.0 — ADR-025):** esta entidade foi removida do
+domínio `identity`. A responsabilidade descrita abaixo (histórico, v0.2.0)
+foi reavaliada: `EMPLOYEE`, `CUSTOMER`, `PARTNER` e `SUPPLIER` não são
+características intrínsecas de uma `Identity` — dependem da relação entre a
+`Identity` e uma `Organization` específica (a mesma `Identity` pode ser
+`EMPLOYEE` na Organização A e `CUSTOMER` na Organização B). Essa
+classificação passa a pertencer ao contexto do `Membership`, sob o nome
+provisório `MembershipProfile`, com modelagem definitiva a ser detalhada em
+entrega própria do bounded context `organization`/`access` — fora do
+escopo desta entrega. `Membership` e `ApplicationAccess` referenciam
+`Identity` diretamente, não mais `IdentityProfile` (ver seções 5 e 8
+abaixo, já atualizadas).
+
+Conteúdo histórico preservado apenas para registro de como a entidade foi
+originalmente proposta (v0.2.0), não é mais vigente:
+
+<details>
+<summary>Versão histórica (v0.2.0, não vigente)</summary>
 
 **Responsabilidade:** associar uma `Identity` a um ou mais `Profile`,
 representando os diferentes contextos em que essa pessoa existe no
@@ -130,6 +210,8 @@ possui eventos próprios no MVP.
 
 - Regras de acesso a aplicações (isso é `ApplicationAccess`).
 - Vínculo com organização (isso é `Membership`).
+
+</details>
 
 ---
 
@@ -221,15 +303,26 @@ possui eventos próprios no MVP.
 
 ## 5. Membership
 
-**Responsabilidade:** representar o vínculo de uma `Identity` (no contexto
-de um `IdentityProfile`) com uma `Organization`.
+**Responsabilidade:** representar o vínculo de uma `Identity` com uma
+`Organization`, incluindo a classificação relacional desse vínculo
+(`EMPLOYEE`, `CUSTOMER`, `PARTNER`, `SUPPLIER`).
+
+**Nota de correção (v0.3.0 — ADR-025):** `Membership` referencia `Identity`
+diretamente, não `IdentityProfile` (entidade removida). A classificação
+antes proposta como `IdentityProfile` passa a ser um atributo/conceito
+associado ao próprio `Membership`, sob o nome provisório
+`MembershipProfile` — modelagem definitiva (se será atributo simples ou
+entidade própria, com que invariantes) fica para revisão futura deste
+bounded context, fora do escopo desta correção.
 
 **Atributos conceituais:**
 
 - `id` (UUID público).
 - `identity_id`.
-- `identity_profile_id` (Pendente de decisão — ver observação abaixo).
 - `organization_id`.
+- `profile` (classificação relacional: `EMPLOYEE`, `CUSTOMER`, `PARTNER`,
+  `SUPPLIER`; modelagem definitiva — atributo simples vs. entidade
+  `MembershipProfile` própria — Pendente de decisão, ADR-025).
 - `scope` (`ORGANIZATION_ONLY`, `ORGANIZATION_AND_DESCENDANTS`).
 - `status` (`ACTIVE`, `INACTIVE`).
 - `started_at`, `ended_at` (opcional).
@@ -245,14 +338,16 @@ de um `IdentityProfile`) com uma `Organization`.
   filhas sem que `scope = ORGANIZATION_AND_DESCENDANTS` esteja
   explicitamente definido.
 - Uma `Identity` pode ter múltiplos `Membership` ativos simultaneamente,
-  inclusive em organizações diferentes.
+  inclusive em organizações diferentes e com classificações relacionais
+  diferentes (ex.: `EMPLOYEE` na Organização A, `CUSTOMER` na Organização
+  B).
 - Não deve haver dois `Membership` ativos idênticos (mesma identidade,
-  mesma organização, mesmo perfil).
+  mesma organização, mesma classificação relacional).
 
 **Relacionamentos:**
 
-- Pertence a uma `Identity` (e, conceitualmente, a um `IdentityProfile`
-  específico).
+- Pertence a uma `Identity` (referência direta, por `public_id`/`id`
+  interno — ADR-025).
 - Referencia uma `Organization`.
 
 **Status conceituais:** `ACTIVE`, `INACTIVE`.
@@ -265,18 +360,23 @@ de um `IdentityProfile`) com uma `Organization`.
   do MVP.
 - Acesso a aplicações (isso é `ApplicationAccess`).
 
-**Pendente de decisão:** se `Membership` referencia diretamente
-`IdentityProfile` (vínculo já contextualizado ao perfil) ou se referencia
-`Identity` de forma perfil-agnóstica e o perfil é inferido separadamente.
-Esta entrega assume a primeira opção como proposta, a confirmar com o
-Platform Architect.
+**Pendente de decisão:** modelagem definitiva de `MembershipProfile`
+(atributo simples em `Membership` vs. entidade própria com ciclo de vida) —
+a ser detalhada em entrega própria do bounded context
+`organization`/`access` (ADR-025). Esta entrega apenas resolve que a
+classificação pertence ao `Membership`, não à `Identity`.
 
 ---
 
 ## 6. Profile
 
-**Responsabilidade:** enum de domínio que representa os contextos possíveis
-em que uma `Identity` pode existir no ecossistema.
+**Responsabilidade:** enum de domínio que representa as classificações
+relacionais possíveis de um vínculo `Membership` entre `Identity` e
+`Organization`.
+
+**Nota de correção (v0.3.0 — ADR-025):** este enum não é mais referenciado
+por `IdentityProfile` (entidade removida) — é atributo/conceito do
+`Membership` (ver seção 5).
 
 **Atributos conceituais (valores do enum):**
 
@@ -288,17 +388,17 @@ em que uma `Identity` pode existir no ecossistema.
 
 **Invariantes:**
 
-- `Profile` é um tipo de valor (enum), não uma entidade com ciclo de vida
-  próprio; quem tem ciclo de vida é `IdentityProfile`.
+- `Profile` é um tipo de valor (enum); não é atributo de `Identity`, é
+  atributo do vínculo `Membership` (ADR-025).
 
 **Relacionamentos:**
 
-- Referenciado por `IdentityProfile`.
+- Referenciado por `Membership` (seção 5).
 
 **Status conceituais:** não aplicável (é um enum).
 
-**Eventos de domínio:** não aplicável diretamente; mudanças de perfil são
-capturadas via `identity.updated`.
+**Eventos de domínio:** não aplicável diretamente; mudanças de
+classificação relacional são capturadas via `membership.updated`.
 
 **O que não pertence a esta entidade:**
 
@@ -349,14 +449,18 @@ PCTEC que podem ser alvo de concessão de acesso global.
 ## 8. ApplicationAccess
 
 **Responsabilidade:** representar a concessão (ou revogação) de acesso
-global de uma `Identity`/`IdentityProfile` a uma `Application`.
+global de uma `Identity` a uma `Application`.
+
+**Nota de correção (v0.3.0 — ADR-025):** `ApplicationAccess` referencia
+`Identity` diretamente, não `IdentityProfile` (entidade removida). Caso uma
+concessão de acesso precise ser sensível a contexto organizacional/
+classificação relacional no futuro, isso será modelado via `Membership`/
+`MembershipProfile`, não reintroduzindo `IdentityProfile`.
 
 **Atributos conceituais:**
 
 - `id` (UUID público).
 - `identity_id`.
-- `identity_profile_id` (Pendente de decisão, mesma observação de
-  `Membership`).
 - `application_id`.
 - `status` (`GRANTED`, `REVOKED`).
 - `granted_at`, `revoked_at` (opcional).
@@ -367,8 +471,7 @@ global de uma `Identity`/`IdentityProfile` a uma `Application`.
 **Invariantes:**
 
 - Não deve haver dois registros `ApplicationAccess` com `status = GRANTED`
-  para a mesma combinação de identidade (e perfil, se aplicável) e
-  aplicação.
+  para a mesma combinação de identidade e aplicação.
 - Revogar acesso não apaga o histórico; cria um novo estado (`REVOKED`) ou
   atualiza o registro preservando `granted_at`/`revoked_at` para fins de
   auditoria.
@@ -377,7 +480,7 @@ global de uma `Identity`/`IdentityProfile` a uma `Application`.
 
 **Relacionamentos:**
 
-- Referencia `Identity` (e opcionalmente `IdentityProfile`).
+- Referencia `Identity` diretamente.
 - Referencia `Application`.
 
 **Status conceituais:** `GRANTED`, `REVOKED`.
@@ -604,8 +707,14 @@ Ingressa.
 
 ## Questões pendentes de decisão (consolidado)
 
-- Se `Membership` e `ApplicationAccess` referenciam `IdentityProfile`
-  diretamente ou `Identity` de forma perfil-agnóstica.
+- **(Resolvida por ADR-025 — v0.3.0)** `Membership` e `ApplicationAccess`
+  referenciam `Identity` diretamente. `IdentityProfile` foi removida; a
+  classificação relacional (`EMPLOYEE`/`CUSTOMER`/`PARTNER`/`SUPPLIER`)
+  pertence ao `Membership`.
+- Modelagem definitiva de `MembershipProfile` (atributo simples em
+  `Membership` vs. entidade própria, invariantes, ciclo de vida) — a ser
+  detalhada em entrega própria do bounded context `organization`/`access`
+  (ADR-025).
 - Se `SERVICE_ACCOUNT` entra no MVP como valor válido de `Profile`.
 - Algoritmo de hash de senha e de token.
 - Prazos de expiração para tipos de `MagicLink` além de `ACTIVATION`.

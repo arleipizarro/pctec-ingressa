@@ -68,9 +68,17 @@ flowchart LR
 
 ### 2.1 identity
 
-Responsável por Identity, IdentityProfile e pelo ciclo de vida conceitual da
-pessoa no sistema (criação, ativação, bloqueio, inativação). Não decide
-acesso a aplicações nem a organizações — apenas quem a pessoa é.
+Responsável por `Identity` e pelo ciclo de vida conceitual da entidade
+digital reconhecida pela plataforma (criação, ativação, bloqueio,
+inativação, exclusão lógica, anonimização). Não decide acesso a aplicações
+nem a organizações — apenas quem a entidade é. Apenas o subtipo `HUMAN` é
+implementado no primeiro escopo funcional (ADR-018). Especificação
+detalhada: `docs/03-dominio/IDENTITY-DOMAIN-DESIGN.md` (v0.3.0).
+
+**Nota de correção (v0.3.0 — ADR-025):** a classificação relacional
+`EMPLOYEE`/`CUSTOMER`/`PARTNER`/`SUPPLIER` (antes `IdentityProfile`) não
+pertence a este bounded context — pertence a `organization`/`access`, por
+depender da relação entre `Identity` e `Organization` (ver seção 2.2).
 
 ### 2.2 organization
 
