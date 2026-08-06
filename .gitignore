@@ -26,6 +26,13 @@ logs/
 *.bak
 *.backup
 
+# Exceção: migrations reversíveis versionadas do backend (Identity Core).
+# Migrations são artefatos de código revisáveis, não dumps/backups de
+# dados — precisam ser versionadas para revisão arquitetural e histórico,
+# mesmo estando sob a extensão .sql coberta pela regra geral acima.
+!backend/src/shared/database/migrations/*.up.sql
+!backend/src/shared/database/migrations/*.down.sql
+
 # Editors
 .vscode/
 .idea/

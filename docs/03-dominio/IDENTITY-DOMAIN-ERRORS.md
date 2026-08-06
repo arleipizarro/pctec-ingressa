@@ -25,6 +25,7 @@ definido em v0.2.0, ao qual estes códigos se conectam futuramente).
 | `IDENTITY_EMAIL_REQUIRED` | `email` ausente ou vazio em `CreateIdentity` | E-mail é obrigatório | Validação | 422 |
 | `IDENTITY_EMAIL_INVALID` | `email` presente mas sintaticamente inválido | Formato de e-mail inválido | Validação | 422 |
 | `IDENTITY_EMAIL_ALREADY_EXISTS` | `email_normalized` já pertence a outra identidade | Violação de unicidade de e-mail | Conflito | 409 |
+| `IDENTITY_NAME_INVALID` | `full_name` vazio após normalização (trim), ou excede o tamanho máximo documentado (`IdentityName`, 255 caracteres) | Nome de identidade inválido | Validação | 422 |
 | `IDENTITY_CPF_INVALID` | `cpf` informado mas com formato inválido | CPF informado é inválido | Validação | 422 |
 | `IDENTITY_CPF_ALREADY_EXISTS` | `cpf_normalized` já pertence a outra identidade | Violação de unicidade de CPF | Conflito | 409 |
 | `IDENTITY_TYPE_NOT_SUPPORTED` | `type` diferente de `HUMAN` em operação de criação no MVP | Tipo de identidade não implementado nesta fase | Validação | 422 |
@@ -43,6 +44,17 @@ catálogo, foram removidos — não pertencem ao domínio `identity`. A
 classificação relacional que motivava esses erros pertence ao `Membership`
 (bounded context `organization`/`access`); códigos equivalentes, se
 necessários, serão definidos naquele contexto.
+
+**Nota de correção (v0.4.0 — Identity Core, Slice 1):** `IDENTITY_NAME_INVALID`
+foi incluído formalmente neste catálogo. A implementação da v0.4.0 já
+usava este código internamente (Value Object `IdentityName`), mas o
+catálogo aprovado não o previa — lacuna real da documentação, identificada
+durante a implementação e corrigida aqui, sem necessidade de ADR dedicada
+(correção de catálogo, não decisão arquitetural nova). Nunca publicar o
+valor de `full_name` recebido em logs ou mensagens de erro externas — a
+mensagem do erro descreve a condição (vazio/tamanho excedido), não ecoa o
+valor em si, diferente do tratamento dado a `IDENTITY_EMAIL_INVALID` (cujo
+valor é o próprio dado de entrada do solicitante, não um dado de terceiro).
 
 ## Observações
 

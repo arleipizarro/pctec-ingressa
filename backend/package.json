@@ -1,0 +1,26 @@
+{
+  "name": "@pctec/ingressa-backend",
+  "version": "0.4.0",
+  "private": true,
+  "description": "PCTEC Ingressa — backend (v0.4.0 Identity Core, Vertical Slice 1)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --exclude \"**/*.integration.test.ts\"",
+    "test:integration": "vitest run -c vitest.integration.config.ts",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "mysql2": "3.11.3",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.5.5",
+    "typescript": "5.6.2",
+    "vitest": "2.1.1"
+  }
+}
