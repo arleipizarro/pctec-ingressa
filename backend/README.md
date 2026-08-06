@@ -136,6 +136,13 @@ Product Owner/Platform Architect em uma fatia futura.
   adicionar `@vitest/coverage-v8` como nova dependência de
   desenvolvimento, o que não pareceu justificado só para esta métrica
   nesta fatia.
+- **Estratégia de produção registrada, não implementada (ADR-026):** o
+  backend será executado em produção via PM2 apontando para o resultado
+  de `npm run build` (`dist/`), nunca rodando `.ts` diretamente — `npm
+  run build` já existe desde esta fatia, mas nenhum `ecosystem.config.js`
+  foi criado, nenhum entrypoint de servidor existe ainda, e nenhum
+  processo PM2 foi iniciado. Porta e quantidade de instâncias permanecem
+  Pendente de decisão.
 
 ## Estrutura
 
