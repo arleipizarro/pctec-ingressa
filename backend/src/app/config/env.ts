@@ -25,6 +25,16 @@ const envSchema = z.object({
   // omissão, ainda que um ambiente futuro possa sobrescrever via env.
   HOST: z.string().min(1).default("127.0.0.1"),
   PORT: z.coerce.number().int().positive().default(3011),
+  // --- CLI de migrations (v0.4.2) ---
+  // Gate duplo para migrate:down/migrate:down-all: precisa do argumento
+  // --yes E desta variável em "true" — nenhum dos dois sozinho basta.
+  // Default "false" (nunca destrutivo por omissão). Além disso,
+  // NODE_ENV=production recusa SEMPRE, mesmo com os dois presentes (ver
+  // src/cli/migrate.ts) — essa recusa não depende desta variável.
+  MIGRATIONS_ALLOW_DESTRUCTIVE: z
+    .string()
+    .default("false")
+    .transform((value) => value.toLowerCase() === "true"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development")
 });
 

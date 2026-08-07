@@ -2,21 +2,34 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 3 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 4 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
       "0001_create_schema_migrations",
       "0002_create_identities",
-      "0003_create_audit_events"
+      "0003_create_audit_events",
+      "0004_add_checksum_and_timing_to_schema_migrations"
     ]);
 
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);
       expect(migration.down.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004 é ALTER TABLE, não cria tabela)", () => {
+    const migrations = loadMigrationDefinitions();
+    const tableCreatingMigrations = migrations.filter((m) => m.id !== "0004_add_checksum_and_timing_to_schema_migrations");
+
+    for (const migration of tableCreatingMigrations) {
       expect(migration.up.toUpperCase()).toContain("CREATE TABLE");
       expect(migration.down.toUpperCase()).toContain("DROP TABLE");
     }
+
+    const correctiveMigration = migrations.find((m) => m.id === "0004_add_checksum_and_timing_to_schema_migrations");
+    expect(correctiveMigration?.up.toUpperCase()).toContain("ALTER TABLE");
+    expect(correctiveMigration?.down.toUpperCase()).toContain("ALTER TABLE");
   });
 
   it("a migration de identities usa id BIGINT interno + public_id CHAR(36), nunca BINARY(16)", () => {

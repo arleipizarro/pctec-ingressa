@@ -14,7 +14,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:integration": "vitest run -c vitest.integration.config.ts",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate:status": "node dist/cli/migrate.js status",
+    "migrate:up": "node dist/cli/migrate.js up",
+    "migrate:up:dry-run": "node dist/cli/migrate.js up --dry-run",
+    "migrate:down": "node dist/cli/migrate.js down",
+    "migrate:down-all": "node dist/cli/migrate.js down-all"
   },
   "dependencies": {
     "express": "^5.2.1",

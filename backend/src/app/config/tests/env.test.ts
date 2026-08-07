@@ -32,4 +32,16 @@ describe("loadEnv — HOST/PORT (v0.4.1 Runtime Bootstrap)", () => {
   it("HOST vazio é rejeitado (min(1))", () => {
     expect(() => loadEnv({ HOST: "" })).toThrow();
   });
+
+  it("MIGRATIONS_ALLOW_DESTRUCTIVE tem default false (nunca destrutivo por omissão)", () => {
+    const env = loadEnv({});
+    expect(env.MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(false);
+  });
+
+  it("MIGRATIONS_ALLOW_DESTRUCTIVE=true (case-insensitive) habilita o gate", () => {
+    expect(loadEnv({ MIGRATIONS_ALLOW_DESTRUCTIVE: "true" }).MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(true);
+    expect(loadEnv({ MIGRATIONS_ALLOW_DESTRUCTIVE: "TRUE" }).MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(true);
+    expect(loadEnv({ MIGRATIONS_ALLOW_DESTRUCTIVE: "false" }).MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(false);
+    expect(loadEnv({ MIGRATIONS_ALLOW_DESTRUCTIVE: "qualquer-outra-coisa" }).MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(false);
+  });
 });

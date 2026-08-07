@@ -1,35 +1,56 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.4.1 — Runtime Bootstrap & Migration Validation**, que evolui a
-**v0.4.0 — Identity Core, Vertical Slice 1** anterior.
+**v0.4.2 — MariaDB Integration (preparação)**, que evolui a
+**v0.4.1 — Runtime Bootstrap** e a **v0.4.0 — Identity Core, Vertical
+Slice 1** anteriores.
 
-## Escopo desta fatia (v0.4.1)
+## Escopo desta fatia (v0.4.2 — preparação)
 
-Implementado nesta fatia, além de tudo já descrito na v0.4.0 abaixo:
+**Esta fatia PREPARA a integração real com MariaDB — não a executa.**
+Nenhuma migration foi aplicada contra `pctec_ingressa_dev` ou qualquer
+outro banco real como parte desta entrega.
 
-- Runtime HTTP mínimo: `Express` reintroduzido como dependência real
-  (`^5.2.1`, sem vulnerabilidade de produção conhecida — ver `npm audit
-  --omit=dev` mais abaixo), com `src/app/http/createApp.ts` (fábrica da
-  app, sem abrir porta) separado de `src/server.ts` (entrypoint, abre
-  porta e trata sinais de encerramento).
-- `GET /health` — único endpoint público desta fatia. Não consulta banco,
-  não depende de migration, payload fixo e determinístico.
+Implementado:
+
+- `MigrationRunner` estendido: checksum SHA-256 por migration aplicada,
+  detecção de migration já aplicada com conteúdo alterado
+  (`MigrationChecksumMismatchError`), `status()` (leitura pura),
+  `rollbackLast()`/`rollbackAll()`, lock nomeado (`GET_LOCK`/
+  `RELEASE_LOCK`) contra dois runners concorrentes.
+- Migration corretiva `0004_add_checksum_and_timing_to_schema_migrations`
+  — aditiva, não altera as 3 migrations já promovidas em `dev`.
+- CLI operacional (`src/cli/migrate.ts`): `status`/`up`/`down`/`down-all`,
+  com `--dry-run` e exigência de `--yes` explícito para ações
+  destrutivas.
+- Scripts npm: `migrate:status`, `migrate:up`, `migrate:up:dry-run`,
+  `migrate:down`, `migrate:down-all`.
+- Runbook completo para a execução real em DEV:
+  [`docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md`](../docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md)
+  (fases A–G, recomendação de usuários/privilégios, comandos SQL seguros
+  — nada disso foi executado ainda).
+
+**Não implementado/não executado nesta fatia:**
+
+criação de `pctec_ingressa_dev` real, aplicação de qualquer migration
+contra um MariaDB real, qualquer conexão ao servidor DEV, health check
+de dependência de banco (mudança de contrato de `/health`, fora de
+escopo aqui).
+
+## v0.4.1 — Runtime Bootstrap (fatia anterior)
+
+Implementado:
+
+- Runtime HTTP mínimo: `Express`, `src/app/http/createApp.ts` (fábrica da
+  app) separado de `src/server.ts` (entrypoint, bind e encerramento
+  gracioso).
+- `GET /health` — único endpoint público. Não consulta banco, não
+  depende de migration, payload fixo e determinístico.
 - Encerramento gracioso em `SIGTERM`/`SIGINT`.
-- `HOST`/`PORT` adicionados à validação de ambiente (`src/app/config/env.ts`),
-  com `HOST` default `127.0.0.1` (nunca `0.0.0.0` por omissão — não há
-  Nginx na frente ainda) e `PORT` default `3011`.
+- `HOST`/`PORT` validados via Zod (`src/app/config/env.ts`), default
+  `127.0.0.1:3011`.
 - `ecosystem.config.cjs` preparado para uso futuro do PM2 — **não
-  iniciado nesta fatia**.
-- Scripts `dev`/`build`/`start` no `package.json`.
-
-**Não implementado nesta fatia** (fora de escopo, ver prompt de
-implementação da v0.4.1):
-
-login, Identity API, JWT, sessão, credenciais, frontend, Nginx,
-integração com Portal, qualquer rota além de `/health`, execução real do
-PM2 (`pm2 start`), execução real de migrations contra `pctec_ingressa_dev`
-sem autorização explícita (ver seção de migrations abaixo).
+  iniciado**.
 
 ## v0.4.0 — Identity Core, Vertical Slice 1 (fatia anterior)
 
@@ -149,23 +170,100 @@ O teste de integração disponível
 aplica as migrations contra o banco de destino antes de testar, e as
 reverte ao final (best-effort).
 
-## Validação de migrations contra `pctec_ingressa_dev` (v0.4.1)
+## Migrations — CLI operacional (v0.4.2)
+
+```bash
+npm run build   # o CLI roda a partir de dist/, igual ao server
+
+npm run migrate:status        # leitura pura — nunca escreve
+npm run migrate:up            # aplica pendentes
+npm run migrate:up:dry-run    # mostra o que seria aplicado, sem aplicar
+npm run migrate:down          # reverte só a última aplicada — preview apenas
+npm run migrate:down-all      # reverte todas, ordem reversa — preview apenas
+```
+
+`down`/`down-all` só executam de verdade com **duas condições
+simultâneas**: o argumento `--yes` **e** a variável de ambiente
+`MIGRATIONS_ALLOW_DESTRUCTIVE=true`. Sem qualquer uma das duas, mostra o
+preview e sai com código `1`, sem alterar nada:
+```bash
+MIGRATIONS_ALLOW_DESTRUCTIVE=true npm run migrate:down -- --yes
+MIGRATIONS_ALLOW_DESTRUCTIVE=true npm run migrate:down-all -- --yes
+```
+
+**`NODE_ENV=production` recusa sempre**, mesmo com as duas condições
+acima presentes — sai com código `2`. Não há bypass para este caso.
+
+Cada migration aplicada tem seu checksum SHA-256 registrado. Se o
+conteúdo de uma migration já aplicada mudar (arquivo `.up.sql` editado
+depois do fato), `migrate:status`/`migrate:up` detectam a divergência e
+falham explicitamente (`MigrationChecksumMismatchError`) em vez de
+aplicar silenciosamente. Linhas aplicadas antes de a coluna `checksum`
+existir (migration `0004`) aparecem como `checksum_unknown` — não é uma
+incompatibilidade, é a ausência histórica do dado.
+
+Um lock nomeado (`GET_LOCK`/`RELEASE_LOCK` do MariaDB), adquirido sobre
+a **mesma conexão física** usada para aplicar/reverter e ler/escrever
+`schema_migrations`, impede que dois `migrate:up`/`migrate:down` rodem
+concorrentemente contra o mesmo banco. Se uma migration falhar no meio
+da execução, o runner interrompe imediatamente (nenhuma migration
+seguinte roda), nunca registra a migration como aplicada, libera o lock,
+e nunca promete reverter automaticamente o que já tiver sido alterado
+(DDL não é transacional no MariaDB/InnoDB) — ver
+[`docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md`](../docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md)
+para o procedimento de diagnóstico manual.
+
+Cada arquivo `.up.sql`/`.down.sql` precisa ter exatamente uma instrução
+SQL executável — validado antes de qualquer conexão ser aberta
+(`MigrationMultipleStatementsError` se violado). `multipleStatements`
+nunca é habilitado na conexão.
+
+**Nenhum destes comandos conecta a `pctec_ingressa_dev` por padrão** — o
+alvo vem de `DB_HOST`/`DB_PORT`/`DB_NAME`/`DB_USER`/`DB_PASSWORD` no
+ambiente de quem executa (ver `.env.example`). O runbook completo para a
+execução real em DEV está em
+[`docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md`](../docs/07-operacao/MIGRATIONS-DEV-RUNBOOK.md).
+
+## Validação de migrations contra `pctec_ingressa_dev`
 
 **⚠️ Nenhuma migration foi executada contra `pctec_ingressa_dev` como
-parte desta entrega.** O procedimento (criar banco isolado → aplicar →
-validar schema → reaplicar para provar idempotência → rollback em ordem
-reversa → confirmar remoção → reaplicar → deixar aplicado e vazio) está
-documentado e aguardando autorização explícita antes de qualquer `CREATE
-DATABASE`/`DROP DATABASE` real — ver relatório desta entrega para o
-plano exato.
+parte de nenhuma fatia até agora (v0.4.0, v0.4.1, v0.4.2).** A v0.4.2
+preparou o CLI, o runbook e a extensão do runner — a execução real
+depende de acesso ao servidor DEV (fora do ambiente em que esta entrega
+foi construída) e de autorização explícita antes de qualquer
+`CREATE DATABASE`/migration real.
 
-## Limites desta fatia
+## Limites desta fatia (v0.4.2)
+
+- Nenhuma migration foi executada contra `pctec_ingressa_dev` nem
+  qualquer outro banco real.
+- `pctec_ingressa_dev` **não foi criado**.
+- Nenhum usuário de banco (`pctec_ingressa_dev_migrator`/`pctec_ingressa_dev_app`)
+  foi criado de fato — nomenclatura e privilégios já aprovados pelo
+  Product Owner/Platform Architect (ver runbook), execução real
+  pendente do acesso ao servidor DEV.
+- Gate duplo de rollback (`--yes` + `MIGRATIONS_ALLOW_DESTRUCTIVE=true`)
+  e recusa incondicional em `NODE_ENV=production` implementados e
+  testados — nunca exercitados contra um banco real ainda.
+- `GET /health` continua sem checar banco — deliberado, não alterado
+  nesta fatia (ver runbook, Fase G).
+- DDL não é transacional no MariaDB/InnoDB — limitação do motor,
+  documentada em `MigrationRunner.ts`, não resolvida por este runner (não
+  há como resolver de fato; CREATE/ALTER/DROP TABLE sempre dão commit
+  implícito).
+- Backfill de checksum só cobre migrations aplicadas na MESMA chamada de
+  `applyPending` que também aplica a migration que cria a coluna
+  (`0004`) — migrations aplicadas numa execução passada, antes de `0004`
+  existir, permanecem `checksum_unknown` para sempre (nunca preenchidas
+  retroativamente a partir do conteúdo atual do arquivo, por segurança:
+  não temos como confirmar que o conteúdo aplicado então era o mesmo de
+  agora).
+- PM2 não foi iniciado. Nginx não foi alterado.
+
+## Limites da v0.4.1 (fatia anterior)
 
 - `GET /health` é o único endpoint público. Nenhuma outra rota HTTP
   existe.
-- Nenhuma migration foi executada contra `pctec_ingressa_dev` nem
-  qualquer outro banco real nesta fatia.
-- PM2 não foi iniciado.
 - `AnonymizeIdentity` não foi implementado — a estratégia concreta de
   anonimização (algoritmo/forma dos valores não reversíveis) é uma
   decisão arquitetural ainda pendente nos documentos de domínio
@@ -201,6 +299,8 @@ backend/
 │   │   ├── config/           — validação de variáveis de ambiente (Zod)
 │   │   └── http/              — createApp() (Express, GET /health)
 │   ├── server.ts              — entrypoint (bind HOST:PORT, shutdown gracioso)
+│   ├── cli/
+│   │   └── migrate.ts         — CLI de migrations (status/up/down/down-all)
 │   ├── shared/
 │   │   ├── database/          — Pool, UnitOfWork, MigrationRunner, migrations/
 │   │   ├── errors/            — DomainError (base)
@@ -217,4 +317,7 @@ backend/
 │           ├── infrastructure/ — MariaDbAuditEventRepository
 │           └── tests/
 ├── ecosystem.config.cjs       — configuração PM2 (não iniciada)
+
+docs/07-operacao/
+└── MIGRATIONS-DEV-RUNBOOK.md  — runbook completo para execução real em DEV (v0.4.2)
 ```
