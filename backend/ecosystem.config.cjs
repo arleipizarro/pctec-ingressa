@@ -15,12 +15,18 @@
 // sintaxe ESM (`export default`) e validar compatibilidade com a versão
 // de PM2 usada em produção antes de trocar — sinalizando aqui em vez de
 // assumir silenciosamente.
+// v0.4.2 — corrigido o campo `script` de `dist/server.js` para
+// `dist/main.js` (defeito real observado em DEV: `dist/server.js` não é
+// mais o entrypoint executável — é um módulo reutilizável/import-safe
+// que nunca inicia nada sozinho ao ser carregado; quem de fato chama
+// `startServer()` é `dist/main.js`. Ver `src/main.ts`/`src/server.ts`
+// para a causa raiz completa).
 module.exports = {
   apps: [
     {
       name: "ingressa-backend",
       cwd: "/app/pctec-ingressa/backend",
-      script: "dist/server.js",
+      script: "dist/main.js",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,

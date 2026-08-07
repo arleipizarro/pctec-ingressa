@@ -1,8 +1,26 @@
 import type { Server } from "node:http";
-import { fileURLToPath } from "node:url";
 
 import { createApp } from "./app/http/createApp.js";
-import { loadEnv } from "./app/config/env.js";
+import { loadEnv, type Env } from "./app/config/env.js";
+
+/**
+ * Módulo reutilizável/import-safe: nada neste arquivo abre uma porta ou
+ * executa qualquer efeito colateral só por ser importado — inclusive
+ * `startServer()` só faz algo quando explicitamente CHAMADA por quem
+ * importa este módulo. O entrypoint real do processo é
+ * `src/main.ts`, não este arquivo.
+ *
+ * Motivo desta separação: a estratégia anterior detectava "sou o
+ * entrypoint executado diretamente?" comparando `process.argv[1]` com
+ * `import.meta.url` dentro do próprio `server.ts`, e chamava
+ * `startServer()` automaticamente nesse caso. Isso funciona com
+ * `node dist/server.js`, mas não é confiável sob gerenciamento do PM2
+ * (bug real observado em DEV: PM2 reportava o processo `online`, mas
+ * `startServer()` nunca era chamada — nenhum socket aberto, `/health`
+ * nunca respondia, sem erro nos logs). Separar "módulo" de "entrypoint"
+ * elimina essa classe de bug por completo: não há mais nenhuma detecção
+ * heurística de "sou o módulo principal?" para dar errado.
+ */
 
 /**
  * Cria (mas não instala) a lógica de encerramento gracioso: fecha o
@@ -55,9 +73,15 @@ export function registerGracefulShutdown(
  * porta), cria a app e faz o bind explícito em HOST:PORT (default
  * 127.0.0.1:3011 — nunca 0.0.0.0 por omissão nesta fatia, sem Nginx na
  * frente).
+ *
+ * `env` é injetável (default: `loadEnv()`, que lê `process.env`) — só
+ * para permitir testar `startServer()` de verdade (abrindo um servidor
+ * HTTP real, não um mock) sem depender da porta fixa 3011 nem mutar
+ * `process.env` global; passar `{ ...loadEnv(), PORT: 0 }` num teste faz
+ * o SO escolher uma porta livre, exatamente como os demais testes HTTP
+ * desta suíte já fazem via `app.listen(0)`.
  */
-export function startServer(): Server {
-  const env = loadEnv();
+export function startServer(env: Env = loadEnv()): Server {
   const app = createApp();
 
   const server = app.listen(env.PORT, env.HOST, () => {
@@ -67,13 +91,4 @@ export function startServer(): Server {
 
   registerGracefulShutdown(server);
   return server;
-}
-
-// Só inicia de fato quando este arquivo é o entrypoint executado
-// diretamente (`node dist/server.js`) — nunca como efeito colateral de
-// importar o módulo (ex.: a partir de um teste, que importa `createApp`/
-// `startServer` sem querer abrir uma porta de verdade).
-const isMainModule = process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
-if (isMainModule) {
-  startServer();
 }

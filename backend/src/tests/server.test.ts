@@ -1,8 +1,10 @@
 import type { Server } from "node:http";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../app/http/createApp.js";
-import { createShutdownHandler, registerGracefulShutdown } from "../server.js";
+import { loadEnv } from "../app/config/env.js";
+import { createShutdownHandler, registerGracefulShutdown, startServer } from "../server.js";
 
 async function listenEphemeral(): Promise<Server> {
   const app = createApp();
@@ -10,6 +12,53 @@ async function listenEphemeral(): Promise<Server> {
   await new Promise<void>((resolve) => server.once("listening", resolve));
   return server;
 }
+
+describe("server.ts é import-safe (sem isMainModule)", () => {
+  it("importar o módulo não abre nenhum socket — não existe mais nenhuma detecção de 'sou o entrypoint?' que chame startServer() automaticamente", () => {
+    // Prova estrutural direta da causa raiz do bug real observado em DEV
+    // sob PM2: server.ts não pode mais conter nenhuma chamada de
+    // startServer() fora da própria definição da função, nem qualquer
+    // heurística de process.argv[1]/import.meta.url.
+    const source = readFileSync(new URL("../server.ts", import.meta.url), "utf-8");
+    expect(source).not.toContain("isMainModule");
+    expect(source).not.toContain("fileURLToPath");
+    // Nenhuma linha é uma CHAMADA de startServer() como statement solto
+    // (ex.: "startServer();") fora da própria definição da função —
+    // ignora menções em comentários/prosa (que contêm "startServer()"
+    // como referência de código, não como invocação).
+    const bareInvocationLines = source.split("\n").filter((line) => /^\s*startServer\(\)\s*;?\s*$/.test(line));
+    expect(bareInvocationLines).toEqual([]);
+  });
+});
+
+describe("startServer", () => {
+  it("abre um servidor HTTP real quando chamada explicitamente (env injetado, porta efêmera — não depende da porta fixa 3011)", async () => {
+    const env = { ...loadEnv({}), PORT: 0 };
+    const server = startServer(env);
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("o servidor aberto por startServer() responde em /health de verdade", async () => {
+    const env = { ...loadEnv({}), PORT: 0 };
+    const server = startServer(env);
+    try {
+      await new Promise<void>((resolve) => server.once("listening", resolve));
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("endereço inesperado do servidor de teste");
+      }
+      const res = await fetch(`http://127.0.0.1:${address.port}/health`);
+      expect(res.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+});
 
 describe("createShutdownHandler", () => {
   it("fecha o servidor HTTP (para de aceitar novas conexões)", async () => {

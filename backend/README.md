@@ -1,9 +1,27 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.4.2 — MariaDB Integration (preparação)**, que evolui a
-**v0.4.1 — Runtime Bootstrap** e a **v0.4.0 — Identity Core, Vertical
-Slice 1** anteriores.
+correção de empacotamento/entrypoint da **v0.4.2**, que evolui a
+**v0.4.2 — MariaDB Integration (preparação)**, a **v0.4.1 — Runtime
+Bootstrap** e a **v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+
+## Correção: entrypoint real separado de `server.ts` (v0.4.2)
+
+**Bug real corrigido, observado em DEV sob PM2:** o processo aparecia
+`online` no PM2, com PID estável, mas nunca abria socket em `3011` —
+`/health` nunca respondia, sem nenhum erro nos logs. Causa: `server.ts`
+decidia sozinho, comparando `process.argv[1]` com `import.meta.url`, se
+"era o entrypoint" para então chamar `startServer()` automaticamente.
+Essa heurística funciona com `node dist/server.js` executado diretamente,
+mas não é confiável sob o carregamento de módulo do PM2 — o módulo era
+carregado, mas `startServer()` nunca era invocada.
+
+**Correção:** `server.ts` agora é só um módulo reutilizável/import-safe
+— nunca inicia nada sozinho ao ser importado, nem tenta detectar "sou o
+principal?" de forma alguma. `src/main.ts` é o novo entrypoint executável
+mínimo: importa `startServer` e a chama explicitamente. **O runtime
+executado por PM2/`npm start` agora é `dist/main.js`, nunca mais
+`dist/server.js`.**
 
 ## Escopo desta fatia (v0.4.2 — preparação)
 
@@ -92,7 +110,7 @@ npm install
 |---|---|
 | `npm run dev` | Sobe o servidor em modo desenvolvimento (`tsx watch`), recarregando ao salvar. |
 | `npm run build` | Compila TypeScript para `dist/` **e** copia os assets de migration (`*.up.sql`/`*.down.sql`) para `dist/shared/database/migrations/` — ver nota abaixo. |
-| `npm start` | Roda o build compilado (`node dist/server.js`) — o que o PM2 executa em produção. |
+| `npm start` | Roda o build compilado (`node dist/main.js`) — o que o PM2 executa em produção. `dist/server.js` é só um módulo (nunca executado diretamente). |
 | `npm test` | Roda a suíte de testes unitários. **Nunca** depende de banco externo. |
 | `npm run test:integration` | Roda testes de integração. Requer `RUN_INTEGRATION_TESTS=true` e um MariaDB real acessível via as variáveis `DB_*`. |
 | `npm run typecheck` | Verifica tipos com TypeScript, sem gerar saída. |
@@ -142,8 +160,8 @@ cp .env.example .env
 
 Nenhuma dessas variáveis é lida automaticamente ao importar módulos desta
 fatia — a validação (`src/app/config/env.ts`) só roda quando
-explicitamente chamada (pelo entrypoint `server.ts`, ou por testes que a
-exercitam diretamente).
+explicitamente chamada (por `startServer()`, invocada pelo entrypoint
+`src/main.ts`, ou por testes que a exercitam diretamente).
 
 ## Como rodar os testes unitários
 
@@ -173,7 +191,7 @@ a porta graciosamente antes de sair.
 ## PM2 (preparado, não iniciado)
 
 `ecosystem.config.cjs` está pronto (`name: ingressa-backend`, `script:
-dist/server.js`, `fork`, `instances: 1`, `HOST=127.0.0.1`, `PORT=3011`).
+dist/main.js`, `fork`, `instances: 1`, `HOST=127.0.0.1`, `PORT=3011`).
 Extensão `.cjs` (não `.js`) é deliberada: o `package.json` tem
 `"type": "module"`, e um `ecosystem.config.js` seria carregado como ESM
 por padrão, quebrando o `module.exports` que o PM2 espera.
@@ -321,7 +339,8 @@ backend/
 │   ├── app/
 │   │   ├── config/           — validação de variáveis de ambiente (Zod)
 │   │   └── http/              — createApp() (Express, GET /health)
-│   ├── server.ts              — entrypoint (bind HOST:PORT, shutdown gracioso)
+│   ├── main.ts                 — entrypoint executável real (o que PM2/npm start rodam)
+│   ├── server.ts               — módulo reutilizável/import-safe: startServer(), shutdown gracioso — NUNCA inicia nada sozinho
 │   ├── cli/
 │   │   └── migrate.ts         — CLI de migrations (status/up/down/down-all)
 │   ├── shared/

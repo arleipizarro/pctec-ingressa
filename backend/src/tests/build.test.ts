@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 const BACKEND_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DIST_DIR = path.join(BACKEND_ROOT, "dist");
 const DIST_SERVER_JS = path.join(DIST_DIR, "server.js");
+const DIST_MAIN_JS = path.join(DIST_DIR, "main.js");
 const DIST_CLI_MIGRATE_JS = path.join(DIST_DIR, "cli", "migrate.js");
 const SRC_MIGRATIONS_DIR = path.join(BACKEND_ROOT, "src", "shared", "database", "migrations");
 const DIST_MIGRATIONS_DIR = path.join(DIST_DIR, "shared", "database", "migrations");
@@ -43,8 +44,12 @@ describe("build", () => {
     execFileSync("npm", ["run", "build"], { cwd: BACKEND_ROOT, stdio: "pipe" });
   }, 30_000);
 
-  it("gera dist/server.js", () => {
+  it("gera dist/server.js (módulo import-safe — não é mais o entrypoint executável)", () => {
     expect(existsSync(DIST_SERVER_JS)).toBe(true);
+  });
+
+  it("gera dist/main.js (entrypoint executável real — é isto que PM2/npm start executam)", () => {
+    expect(existsSync(DIST_MAIN_JS)).toBe(true);
   });
 
   it("gera dist/cli/migrate.js", () => {
