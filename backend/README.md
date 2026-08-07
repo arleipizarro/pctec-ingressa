@@ -91,11 +91,34 @@ npm install
 | Comando | O que faz |
 |---|---|
 | `npm run dev` | Sobe o servidor em modo desenvolvimento (`tsx watch`), recarregando ao salvar. |
-| `npm run build` | Compila TypeScript para `dist/`. |
+| `npm run build` | Compila TypeScript para `dist/` **e** copia os assets de migration (`*.up.sql`/`*.down.sql`) para `dist/shared/database/migrations/` — ver nota abaixo. |
 | `npm start` | Roda o build compilado (`node dist/server.js`) — o que o PM2 executa em produção. |
 | `npm test` | Roda a suíte de testes unitários. **Nunca** depende de banco externo. |
 | `npm run test:integration` | Roda testes de integração. Requer `RUN_INTEGRATION_TESTS=true` e um MariaDB real acessível via as variáveis `DB_*`. |
 | `npm run typecheck` | Verifica tipos com TypeScript, sem gerar saída. |
+
+### Migrations SQL são assets obrigatórios do build
+
+`tsc` compila apenas arquivos `.ts` — ele **não copia** arquivos não-TS
+para `dist/`. Como as migrations vivem em `src/shared/database/migrations/*.sql`
+(fonte única de verdade, revisável por um DBA sem ler TypeScript),
+`npm run build` executa um segundo passo depois do `tsc`:
+[`scripts/copy-migration-assets.mjs`](./scripts/copy-migration-assets.mjs)
+copia `*.up.sql`/`*.down.sql` para `dist/shared/database/migrations/`,
+byte-a-byte, falhando explicitamente se o diretório fonte não existir, se
+não houver nenhuma migration, ou se algum par `up`/`down` estiver
+incompleto.
+
+Sem esse passo, `node dist/cli/migrate.js` (ou qualquer código compilado
+que dependa de `loadMigrationDefinitions`) falha com
+`ENOENT: no such file or directory, scandir '.../dist/shared/database/migrations'`
+— foi exatamente esse defeito de empacotamento, encontrado em DEV antes
+da primeira migration real, que motivou este passo adicional no build
+(nenhuma migration chegou a ser executada quando isso ocorreu).
+
+`loadMigrationDefinitions()` nunca tem fallback para `src/` em tempo de
+execução — o runtime compilado depende exclusivamente de
+`dist/shared/database/migrations/`.
 
 ## Variáveis de ambiente
 
