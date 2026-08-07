@@ -69,7 +69,7 @@ describe("main.ts — entrypoint executável real", () => {
     const res = await fetch(`http://127.0.0.1:${TEST_PORT}/health`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toEqual({ status: "ok", service: "pctec-ingressa", version: "0.4.1" });
+    expect(body).toEqual({ status: "ok", service: "pctec-ingressa", version: "0.5.0" });
 
     // Encerramento gracioso continua funcionando através do entrypoint real.
     child!.kill("SIGTERM");

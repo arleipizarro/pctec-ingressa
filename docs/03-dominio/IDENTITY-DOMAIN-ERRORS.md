@@ -22,6 +22,7 @@ definido em v0.2.0, ao qual estes códigos se conectam futuramente).
 | Código | Condição | Significado | Classificação | HTTP conceitual |
 |---|---|---|---|---|
 | `IDENTITY_NOT_FOUND` | `public_id` informado não corresponde a nenhuma `Identity` existente | A identidade referenciada não existe | Validação | 404 |
+| `IDENTITY_PUBLIC_ID_INVALID` | `public_id` ausente, malformado ou incompatível com o formato público aceito pelo domínio (UUID sintaticamente válido) | Identificador público inválido | Validação | 422 |
 | `IDENTITY_EMAIL_REQUIRED` | `email` ausente ou vazio em `CreateIdentity` | E-mail é obrigatório | Validação | 422 |
 | `IDENTITY_EMAIL_INVALID` | `email` presente mas sintaticamente inválido | Formato de e-mail inválido | Validação | 422 |
 | `IDENTITY_EMAIL_ALREADY_EXISTS` | `email_normalized` já pertence a outra identidade | Violação de unicidade de e-mail | Conflito | 409 |

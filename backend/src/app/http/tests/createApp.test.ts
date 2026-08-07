@@ -35,7 +35,7 @@ describe("createApp — GET /health", () => {
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body).toEqual({ status: "ok", service: "pctec-ingressa", version: "0.4.1" });
+    expect(body).toEqual({ status: "ok", service: "pctec-ingressa", version: "0.5.0" });
   });
 
   it("retorna Content-Type application/json", async () => {

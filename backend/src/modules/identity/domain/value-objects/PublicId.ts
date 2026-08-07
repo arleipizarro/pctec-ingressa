@@ -8,8 +8,18 @@ export class InvalidPublicIdError extends DomainError {
   public readonly code = "IDENTITY_PUBLIC_ID_INVALID";
   public readonly classification = "VALIDATION" as const;
 
-  constructor(value: string) {
-    super(`Public ID inválido: "${value}" não é um UUID sintaticamente válido.`);
+  /**
+   * Deliberadamente NÃO recebe/inclui o valor bruto inválido na
+   * mensagem — conforme docs/03-dominio/IDENTITY-DOMAIN-ERRORS.md
+   * ("não incluir o valor bruto inválido na mensagem externa"). Esta
+   * mensagem é usada tal como está na resposta HTTP
+   * (`mapDomainErrorToHttp`), então qualquer valor incluído aqui seria
+   * refletido de volta ao cliente sem tratamento — um padrão a evitar
+   * por princípio, mesmo quando o valor em si (um publicId malformado)
+   * não é tipicamente sensível.
+   */
+  constructor() {
+    super("Public ID inválido: não é um UUID sintaticamente válido.");
   }
 }
 
@@ -37,7 +47,7 @@ export class PublicId {
   /** Reconstrói um PublicId a partir de um valor já existente (ex.: vindo do banco). */
   public static fromString(value: string): PublicId {
     if (!UUID_PATTERN.test(value)) {
-      throw new InvalidPublicIdError(value);
+      throw new InvalidPublicIdError();
     }
     return new PublicId(value.toLowerCase());
   }

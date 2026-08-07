@@ -1,11 +1,152 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-correção de empacotamento/entrypoint da **v0.4.2**, que evolui a
+**v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, que
+evolui a correção de empacotamento/entrypoint da v0.4.2, a
 **v0.4.2 — MariaDB Integration (preparação)**, a **v0.4.1 — Runtime
 Bootstrap** e a **v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
 
+## v0.5.0 — Identity Query API (Slice 1)
+
+Primeira API HTTP real do domínio Identity, provando a cadeia completa
+**HTTP → Application → Domain → Repository → MariaDB**.
+
+### Endpoint
+
+```
+GET /api/v1/identities/:publicId
+```
+
+**200 OK** — Identity encontrada:
+```json
+{
+  "publicId": "6f1c9e2a-2222-4444-8888-000000000000",
+  "type": "HUMAN",
+  "fullName": "Nome Completo",
+  "email": "pessoa@example.com",
+  "status": "PENDING",
+  "loginEnabled": false,
+  "version": 1,
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-01T00:00:00.000Z"
+}
+```
+
+**404** — `IDENTITY_NOT_FOUND` (nenhuma Identity com esse `publicId`).
+**422** — `IDENTITY_PUBLIC_ID_INVALID` (`publicId` não é um UUID
+sintaticamente válido).
+
+Formato de erro (conforme `docs/02-arquitetura/API-CONTRACT-V1.md`):
+```json
+{
+  "error": {
+    "code": "IDENTITY_NOT_FOUND",
+    "message": "Identidade não encontrada: ....",
+    "correlation_id": "b3f2c1a0-....",
+    "details": []
+  }
+}
+```
+Todo request/response inclui o header `X-Correlation-Id` (gerado
+automaticamente se o cliente não enviar um).
+
+### Campos deliberadamente NÃO expostos
+
+`internalId` (BIGINT interno), `normalizedEmail`, `normalizedCpf`, `cpf`,
+`createdByPublicId`/`updatedByPublicId`/`deletedByPublicId`/
+`deletionReason`, e qualquer credencial (que nunca existiu no Aggregate
+`Identity` — ADR-022). Ver `IdentityHttpMapper.ts` — é o único lugar que
+decide o que sai para fora.
+
+### Limitação de actor (decisão explícita desta fatia)
+
+Esta é uma operação de **leitura pública por identificador** — não exige
+`actor`. Isso é diferente de `CreateIdentity`, que sempre exige um
+`ActorPublicId` para auditoria.
+
+**Criação e mutação de Identity continuam bloqueadas** nesta fatia —
+não existe `POST`/`PATCH`/`DELETE` em `/api/v1/identities`. Não foi
+criado nenhum mecanismo temporário de actor (nenhum header tipo
+`X-Actor-Id`/`X-User-Id`, nenhum `SYSTEM` actor artificial aceito via
+HTTP) — essa decisão fica pendente de uma definição futura sobre
+bootstrap/autenticação, deliberadamente fora do escopo desta entrega.
+
+### A API ainda não é pública
+
+**O Nginx de DEV continua expondo somente `/health`.**
+`/api/v1/identities/*` não está acessível de fora do processo backend
+nesta fatia — não existe autenticação implementada ainda, e expor a API
+sem autenticação seria uma falha de segurança, não uma decisão neutra.
+Essa restrição é, ela mesma, parte do controle de segurança desta
+entrega (ver seção "Segurança" abaixo).
+
+### Segurança — pontos auditados nesta entrega
+
+- **IDOR/enumeração:** `publicId` é um UUIDv4 aleatório (`PublicId.generate()`),
+  não sequencial — não há como enumerar identities por incremento. A
+  resposta de "não encontrado" (404) e de "formato inválido" (422) usam
+  códigos e tempos de resposta que não dependem de dado sensível (a
+  consulta ao banco é feita da mesma forma em ambos os casos de leitura
+  malsucedida; a única distinção de timing é a checagem local de formato
+  do UUID acontecer antes de qualquer consulta — que é responder MAIS
+  RÁPIDO para input malformado, não mais devagar, então não cria um
+  oráculo de timing para diferenciar "existe mas..." de "não existe").
+- **Exposição de e-mail:** o e-mail de exibição é retornado (é o
+  conceito documentado no contrato), mas nunca o normalizado; nenhum CPF
+  é exposto nesta primeira versão.
+- **Logs:** nenhum log desta fatia imprime o corpo da resposta, o e-mail
+  ou qualquer dado pessoal — só o log de bootstrap do servidor (host,
+  porta, `NODE_ENV`) já existente desde a v0.4.1.
+- **`internalId`:** nunca sai da camada de infraestrutura — reforçado
+  por teste automatizado (`IdentityHttpMapper.test.ts`).
+- **SQL injection:** `findByPublicId` (reutilizado sem alteração) já
+  usava query parametrizada; nenhuma query nova foi criada nesta fatia.
+- **Erro sanitizado:** o handler de erro central nunca inclui SQL, stack
+  trace, nome de tabela/coluna ou mensagem de driver `mysql2` na
+  resposta — testado ponta a ponta.
+
+### Catálogo de erros — IDENTITY_PUBLIC_ID_INVALID formalizado
+
+`IDENTITY_PUBLIC_ID_INVALID` (código já existente desde a v0.4.0, em
+`PublicId.ts`) foi formalmente adicionado à tabela de
+`docs/03-dominio/IDENTITY-DOMAIN-ERRORS.md` nesta revisão (Validação,
+HTTP conceitual 422 — mesmo padrão já documentado para todo outro erro
+"Validação" de formato: `IDENTITY_EMAIL_INVALID`, `IDENTITY_NAME_INVALID`,
+etc.). Durante essa formalização, uma inconsistência real foi corrigida:
+a mensagem de `InvalidPublicIdError` incluía o valor bruto inválido
+recebido (ex.: `Public ID inválido: "xyz" não é...`) — isso violava a
+regra "não incluir o valor bruto inválido na mensagem externa" agora
+explícita no catálogo, já que essa mensagem vai direto para a resposta
+HTTP via `mapDomainErrorToHttp`. Corrigido: a mensagem não recebe mais o
+valor de entrada.
+
+### Versionamento — pendência técnica
+
+`package.json` e o payload de `/health` estavam ambos travados em
+`"0.4.1"` mesmo depois das entregas de v0.4.2 completas — bumpados nesta
+entrega para `"0.5.0"`.
+
+**Pendência técnica:** Consolidar package.json como fonte única de
+versão do runtime.
+
+### Flake de testes conhecido (pré-existente, não desta fatia)
+
+`build.test.ts` e `main.test.ts` manipulam `dist/` concorrentemente
+quando o vitest executa arquivos de teste em workers paralelos — cada um
+faz seu próprio `rm -rf dist`/rebuild ou depende de `dist/main.js`
+existir. Isso pode gerar uma falha intermitente e rara (observada uma
+vez em várias dezenas de execuções desta fatia; as 3 execuções
+consecutivas exigidas antes desta entrega terminaram limpas). Não é uma
+falha determinística nem uma regressão de código — é uma característica
+da arquitetura atual de testes (dois arquivos que tocam o mesmo
+diretório de build sem coordenação entre si). Deliberadamente **não
+corrigido nesta fatia** (fora de escopo: não serializar a suíte, não
+desabilitar/remover nenhum dos dois arquivos, não aumentar timeout como
+paliativo) — registrado aqui como pendência técnica para uma fatia de
+manutenção de testes futura.
+
 ## Correção: entrypoint real separado de `server.ts` (v0.4.2)
+
 
 **Bug real corrigido, observado em DEV sob PM2:** o processo aparecia
 `online` no PM2, com PID estável, mas nunca abria socket em `3011` —
@@ -338,7 +479,7 @@ backend/
 ├── src/
 │   ├── app/
 │   │   ├── config/           — validação de variáveis de ambiente (Zod)
-│   │   └── http/              — createApp() (Express, GET /health)
+│   │   └── http/              — createApp() (Express, GET /health, GET /api/v1/identities/:publicId)
 │   ├── main.ts                 — entrypoint executável real (o que PM2/npm start rodam)
 │   ├── server.ts               — módulo reutilizável/import-safe: startServer(), shutdown gracioso — NUNCA inicia nada sozinho
 │   ├── cli/
@@ -346,13 +487,15 @@ backend/
 │   ├── shared/
 │   │   ├── database/          — Pool, UnitOfWork, MigrationRunner, migrations/
 │   │   ├── errors/            — DomainError (base)
+│   │   ├── http/              — correlationId, mapDomainErrorToHttp (DomainError → status HTTP)
 │   │   └── types/              — DomainEvent (base), integration-test-guard
-│   ├── tests/                 — testes que não pertencem a um módulo específico (server, build)
+│   ├── tests/                 — testes que não pertencem a um módulo específico (server, build, main)
 │   └── modules/
 │       ├── identity/
 │       │   ├── domain/        — Identity (Aggregate Root), Value Objects, eventos, erros
-│       │   ├── application/   — CreateIdentityService
+│       │   ├── application/   — CreateIdentityService, GetIdentityByPublicIdService
 │       │   ├── infrastructure/persistence/ — MariaDbIdentityRepository
+│       │   ├── http/          — identityRoutes (controller), IdentityHttpMapper (presenter)
 │       │   └── tests/
 │       └── audit/
 │           ├── domain/        — AuditEvent, AuditEventRepository (contrato)

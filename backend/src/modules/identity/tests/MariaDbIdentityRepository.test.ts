@@ -73,6 +73,37 @@ describe("MariaDbIdentityRepository", () => {
     expect(result?.getInternalIdForPersistence()).toBe(7);
   });
 
+  it("findByPublicId usa parâmetro preparado (?), nunca concatena o publicId diretamente no SQL", async () => {
+    const publicId = PublicId.generate();
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM identities") && sql.includes("public_id = ?"),
+      () => [[], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    await repository.findByPublicId(publicId);
+
+    const call = fake.calls.find((c) => c.sql.includes("FROM identities"));
+    expect(call?.sql).not.toContain(publicId.toString());
+    expect(call?.params).toContain(publicId.toString());
+  });
+
+  it("findByPublicId nunca usa SELECT * — só colunas explícitas, e nunca 'id' cru sem alias/uso controlado", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM identities") && sql.includes("public_id = ?"),
+      () => [[], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    await repository.findByPublicId(PublicId.generate());
+
+    const call = fake.calls.find((c) => c.sql.includes("FROM identities"));
+    expect(call?.sql).not.toMatch(/SELECT\s+\*/i);
+    expect(call?.sql).toContain("SELECT id, public_id");
+  });
+
   it("existsByNormalizedEmail retorna true quando há linha correspondente", async () => {
     const fake = new FakeQueryable();
     fake.whenExecute(

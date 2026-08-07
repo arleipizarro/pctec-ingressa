@@ -1,8 +1,8 @@
 {
   "name": "@pctec/ingressa-backend",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
-  "description": "PCTEC Ingressa — backend (v0.4.1 Runtime Bootstrap & Migration Validation)",
+  "description": "PCTEC Ingressa — backend (v0.5.0 Identity API, Vertical Slice 1 — Identity Query API)",
   "type": "module",
   "engines": {
     "node": ">=22"
