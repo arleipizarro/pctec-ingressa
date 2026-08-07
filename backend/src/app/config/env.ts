@@ -18,6 +18,13 @@ const envSchema = z.object({
     .string()
     .default("false")
     .transform((value) => value.toLowerCase() === "true"),
+  // --- Servidor HTTP (v0.4.1 — Runtime Bootstrap) ---
+  // HOST tem default "127.0.0.1" deliberadamente: nesta fatia não há
+  // Nginx nem qualquer proxy reverso na frente do processo, então o bind
+  // deve ficar restrito ao loopback por padrão — nunca 0.0.0.0 por
+  // omissão, ainda que um ambiente futuro possa sobrescrever via env.
+  HOST: z.string().min(1).default("127.0.0.1"),
+  PORT: z.coerce.number().int().positive().default(3011),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development")
 });
 
