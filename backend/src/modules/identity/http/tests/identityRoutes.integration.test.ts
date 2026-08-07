@@ -5,108 +5,123 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shouldRunIntegrationTests } from "../../../../shared/types/integration-test-guard.js";
 import { loadEnv } from "../../../../app/config/env.js";
 import { createPool } from "../../../../shared/database/Pool.js";
-import { loadMigrationDefinitions } from "../../../../shared/database/loadMigrationDefinitions.js";
-import { MigrationRunner } from "../../../../shared/database/MigrationRunner.js";
 import { MariaDbIdentityRepository } from "../../infrastructure/persistence/MariaDbIdentityRepository.js";
 import { createApp } from "../../../../app/http/createApp.js";
 import { Identity } from "../../domain/Identity.js";
-import { ActorPublicId } from "../../domain/value-objects/ActorPublicId.js";
+import { assertIntegrationSchemaReady, cleanupIntegrationTest, type IntegrationTestState } from "./integrationTestSupport.js";
 
 /**
- * Teste de integração ponta a ponta REAL: HTTP → Application →
- * Domain → Repository → MariaDB.
+ * Teste de integração ponta a ponta: HTTP → Application → Domain →
+ * Repository → MariaDB.
  *
- * NÃO roda como parte de `npm test`. Só executa via
- * `npm run test:integration`, e mesmo assim apenas se
- * RUN_INTEGRATION_TESTS=true estiver definido (`describe.skipIf`).
- * Nunca aponta automaticamente para DEV — as variáveis DB_* vêm de
- * `process.env`, preenchidas por quem rodar o comando.
+ * CORREÇÃO DE BUG REAL (encontrado em DEV): a versão anterior deste
+ * arquivo instanciava `MigrationRunner`/`applyPending` no `beforeAll`,
+ * tentando criar/alterar schema — isso falha (corretamente!) com o
+ * usuário runtime (`pctec_ingressa_dev_app`, só
+ * SELECT/INSERT/UPDATE/DELETE, sem CREATE) e é um erro categórico deste
+ * teste, não do código funcional da API: migration é responsabilidade
+ * exclusiva do usuário `pctec_ingressa_dev_migrator`, executada
+ * separadamente (`npm run migrate:up`), NUNCA como preparação implícita
+ * de um teste de API.
  *
- * PREPARADO NESTA ENTREGA, MAS NÃO EXECUTADO — conforme instrução da
- * v0.5.0 Slice 1: nenhuma fixture foi inserida no MariaDB DEV real.
+ * Este arquivo agora:
+ * - NUNCA importa/usa `MigrationRunner`, `applyPending`, ou qualquer
+ *   `CREATE`/`ALTER`/`DROP`;
+ * - trata o schema (tabelas `identities`, `audit_events`) como
+ *   PRÉ-CONDIÇÃO, verificada de forma read-only
+ *   (`assertIntegrationSchemaReady`) — falha com mensagem clara se
+ *   ausente, nunca tenta prepará-lo;
+ * - usa exclusivamente as credenciais runtime (`DB_USER` de `loadEnv()`
+ *   — em DEV, `pctec_ingressa_dev_app`; nunca hardcoded, nunca o usuário
+ *   migrator);
+ * - usa limpeza tolerante a setup parcial (`cleanupIntegrationTest`) —
+ *   nunca assume que `server`/`pool` chegaram a existir.
  *
- * Desvio deliberado do padrão "insere em transação, faz rollback ao
- * final": um teste que sobe o `createApp()` completo passa pela camada
- * HTTP até o `Pool` — a leitura (`GET`) abre sua PRÓPRIA conexão do
- * pool, diferente da conexão que faria o INSERT dentro de uma
- * transação ainda não commitada. Sob REPEATABLE READ (padrão do
- * InnoDB), a conexão de leitura nunca enxergaria uma linha inserida e
- * ainda não commitada em outra conexão — então "inserir em transação e
- * nunca commitar" simplesmente não funcionaria para provar o fluxo
- * ponta a ponta de verdade. Em vez disso: insere a fixture com um
- * `INSERT` normal (commitado), roda os testes, e remove a fixture
- * explicitamente no `afterAll` (mesmo padrão de limpeza já usado em
- * `MariaDbIdentityRepository.integration.test.ts`).
- *
- * Nenhum CPF real. E-mail fictício, deliberadamente inválido como
- * domínio real (`@example.invalid`, RFC 2606), como instruído.
+ * NÃO roda como parte de `npm test`. Só via `npm run test:integration`,
+ * com `RUN_INTEGRATION_TESTS=true`. Nunca aponta automaticamente para
+ * DEV — as variáveis `DB_*` vêm de `process.env`, preenchidas por quem
+ * rodar o comando.
  */
 const shouldRun = shouldRunIntegrationTests();
 
-describe.skipIf(!shouldRun)("GET /api/v1/identities/:publicId (integração — requer MariaDB real, ponta a ponta)", () => {
-  let pool: Pool;
-  let server: Server;
-  let baseUrl: string;
-  let fixtureIdentity: Identity;
+// Chave FIXA e reservada exclusivamente a este teste — nunca aleatória
+// por execução, para que o cleanup (antes E depois do teste) consiga
+// localizar e remover uma fixture residual de uma execução anterior que
+// tenha falhado no meio, tornando a suíte recuperável. Nunca reutilizar
+// este publicId para nenhuma outra fixture/fatia.
+const FIXTURE_PUBLIC_ID = "a0000000-0000-4000-8000-000000000001";
+const FIXTURE_EMAIL = "identity-query-integration@example.invalid";
+const NONEXISTENT_PUBLIC_ID = "a0000000-0000-4000-8000-000000000099";
+
+describe.skipIf(!shouldRun)("GET /api/v1/identities/:publicId (integração — usuário runtime, schema como pré-condição)", () => {
+  const state: IntegrationTestState = {};
 
   beforeAll(async () => {
     const env = loadEnv();
-    pool = createPool({
+    const pool: Pool = createPool({
       host: env.DB_HOST,
       port: env.DB_PORT,
       database: env.DB_NAME,
-      user: env.DB_USER,
+      user: env.DB_USER, // usuário runtime (DEV: pctec_ingressa_dev_app) — NUNCA o migrator
       password: env.DB_PASSWORD
     });
-    const runner = new MigrationRunner(pool);
-    await runner.applyPending(loadMigrationDefinitions());
+    state.pool = pool;
 
-    const repository = new MariaDbIdentityRepository(pool);
-    fixtureIdentity = Identity.create({
+    // Pré-condição, verificada de forma read-only — nunca prepara schema aqui.
+    await assertIntegrationSchemaReady(pool);
+
+    // Remove eventual fixture residual de uma execução anterior que
+    // tenha falhado antes do cleanup — pela chave FIXA e específica
+    // deste teste, nunca um DELETE genérico.
+    await pool.execute(`DELETE FROM identities WHERE public_id = ?`, [FIXTURE_PUBLIC_ID]);
+
+    const now = new Date();
+    const fixture = Identity.reconstitute({
+      internalId: 0, // ignorado pelo insert() — o banco atribui o id real via AUTO_INCREMENT
+      publicId: FIXTURE_PUBLIC_ID,
       type: "HUMAN",
-      fullName: "Fixture de Integração v0.5.0",
-      email: `identity-test-${Date.now()}@example.invalid`,
-      actor: ActorPublicId.system(),
-      correlationId: "8f14e45f-ceea-467e-a1a3-000000000098"
+      fullName: "Fixture Identity Query Integration (dado fictício, nunca real)",
+      email: FIXTURE_EMAIL,
+      emailNormalized: FIXTURE_EMAIL.toLowerCase(),
+      status: "PENDING",
+      loginEnabled: false,
+      version: 1,
+      createdAt: now,
+      updatedAt: now
     });
-    await repository.insert(fixtureIdentity);
+    const repository = new MariaDbIdentityRepository(pool);
+    await repository.insert(fixture);
+    state.fixturePublicId = FIXTURE_PUBLIC_ID;
 
     const app = createApp({ identityRepository: repository });
-    server = app.listen(0);
+    const server: Server = app.listen(0);
     await new Promise<void>((resolve) => server.once("listening", resolve));
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("endereço inesperado do servidor de teste de integração");
-    }
-    baseUrl = `http://127.0.0.1:${address.port}`;
+    state.server = server;
   });
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
-    });
-    // Limpeza explícita da fixture — nunca deixa dado de teste no banco.
-    await pool.execute(`DELETE FROM identities WHERE public_id = ?`, [fixtureIdentity.getPublicId().toString()]);
-
-    const migrations = loadMigrationDefinitions();
-    for (const migration of [...migrations].reverse()) {
-      // eslint-disable-next-line no-await-in-loop
-      await pool.execute(migration.down);
-    }
-    await pool.end();
+    await cleanupIntegrationTest(state);
   });
 
-  it("encontra, via HTTP real, a fixture inserida de verdade no MariaDB", async () => {
-    const res = await fetch(`${baseUrl}/api/v1/identities/${fixtureIdentity.getPublicId().toString()}`);
+  function baseUrl(): string {
+    const address = state.server?.address();
+    if (address === null || address === undefined || typeof address === "string") {
+      throw new Error("servidor de teste de integração não está com um endereço válido");
+    }
+    return `http://127.0.0.1:${address.port}`;
+  }
+
+  it("encontra, via HTTP real, a fixture inserida de verdade no MariaDB (usuário runtime)", async () => {
+    const res = await fetch(`${baseUrl()}/api/v1/identities/${FIXTURE_PUBLIC_ID}`);
     const body = (await res.json()) as { publicId: string; email: string };
 
     expect(res.status).toBe(200);
-    expect(body.publicId).toBe(fixtureIdentity.getPublicId().toString());
-    expect(body.email).toContain("@example.invalid");
+    expect(body.publicId).toBe(FIXTURE_PUBLIC_ID);
+    expect(body.email).toBe(FIXTURE_EMAIL);
   });
 
   it("retorna 404 real (não fake) para um publicId válido mas inexistente no banco", async () => {
-    const res = await fetch(`${baseUrl}/api/v1/identities/22222222-2222-2222-2222-222222222222`);
+    const res = await fetch(`${baseUrl()}/api/v1/identities/${NONEXISTENT_PUBLIC_ID}`);
     expect(res.status).toBe(404);
   });
 });
