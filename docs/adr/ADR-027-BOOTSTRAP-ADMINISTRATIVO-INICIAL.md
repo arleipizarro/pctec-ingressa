@@ -1,5 +1,43 @@
 # ADR-027 — Bootstrap Administrativo Inicial
 
+## Nota de revisão (v0.5.0 Slice 2, terceira rodada — implementação concluída)
+
+O mecanismo desenhado nas rodadas anteriores desta ADR foi **implementado
+em código** nesta rodada. Decisões abaixo estão FECHADAS, não mais
+propostas:
+
+- `BootstrapFirstIdentityService` (Application Service dedicado) foi
+  implementado — `CreateIdentityService` **não** é reutilizado (motivo
+  confirmado por auditoria de código, não só por análise teórica: ver
+  "`CreateIdentityService` — reavaliação").
+- `Identity.createFoundational()` é a extensão localizada de domínio
+  escolhida e implementada — método novo, isolado, `Identity.create()`
+  e todos os comandos de mutação existentes permanecem intocados.
+- `IdentityRepository.countAll()` é o guard de leitura escolhido e
+  implementado.
+- `UnitOfWork` genérico (`MariaDbUnitOfWork.runInTransaction`) **não é
+  usado** — motivo: ele faz `commit()` só depois que o callback `work()`
+  retorna, e o named lock precisa permanecer adquirido até **depois** do
+  `COMMIT` (nunca antes) para proteger a janela entre a leitura de
+  `COUNT` e a durabilidade do `INSERT`. Reaproveitar `runInTransaction`
+  forçaria `RELEASE_LOCK` a rodar dentro de `work()`, antes do commit
+  automático — uma corrida real. `BootstrapFirstIdentityService` orquestra
+  a conexão/transação diretamente por este motivo.
+- Toda a operação usa uma única conexão física, na ordem: `GET_LOCK` →
+  `BEGIN` → `COUNT` → `INSERT Identity` → `INSERT AuditEvent` → `COMMIT`
+  → `RELEASE_LOCK` → `connection.release()` — implementada e **provada
+  por teste explícito de sequência** (não só por inspeção de código; ver
+  relatório da entrega para os testes exatos).
+- `identities.created_by_identity_public_id = NULL`,
+  `audit_events.actor_public_id = "BOOTSTRAP"`, `loginEnabled = false`,
+  `type = HUMAN` — todos implementados e confirmados por teste,
+  inspecionando os parâmetros posicionais exatos do `INSERT`.
+- Nenhuma `Credential`/`ApplicationAccess` é criada — confirmado por
+  teste (nenhuma SQL relacionada a essas tabelas é executada).
+- A migration `actor_type` em `audit_events` continua **adiada**, não
+  implementada — permanece dívida consciente registrada (ver seção "Gap
+  real de schema").
+
 ## Nota de revisão (v0.5.0 Slice 2, segunda rodada)
 
 Esta ADR foi revisada após a primeira rodada de aprovação parcial. Três
@@ -86,9 +124,9 @@ Nenhuma identificada além dos refinamentos desta rodada de revisão
 **Adotada a Opção A: bootstrap via CLI local, one-shot, protegido por
 named lock MariaDB e pela invariante "nenhuma Identity existe ainda".**
 
-1. Um CLI (`npm run bootstrap:admin`, desenhado nesta ADR, **não
-   implementado nesta entrega**) cria exatamente **uma** `Identity`
-   fundacional — não um administrador (ver "Fases").
+1. Um CLI (`npm run bootstrap:first-identity`, **implementado nesta
+   entrega** — `src/cli/bootstrap-first-identity.ts`) cria exatamente
+   **uma** `Identity` fundacional — não um administrador (ver "Fases").
 2. `identities.created_by_identity_public_id = NULL` para essa Identity —
    nunca um marcador fingindo ser um `public_id`.
 3. A auditoria representa o bootstrap por um mecanismo distinto de
@@ -184,9 +222,7 @@ abstração de domínio é necessária para isso especificamente.
 
 ## One-shot guard
 
-**Corrigido nesta rodada — não depende de `created_by`/marcador.**
-
-Desenho (não implementado):
+**Implementado exatamente como segue** (`BootstrapFirstIdentityService`):
 
 ```
 1. Obter UMA conexão do pool (mesma conexão para todos os passos seguintes
@@ -273,7 +309,7 @@ nada além disso.
 
 | Fase | O que entrega | Status |
 |---|---|---|
-| **A — Bootstrap da primeira Identity** | Uma `Identity` (`type=HUMAN`, `status=PENDING`, `loginEnabled=false`) existe no diretório mestre, com auditoria verdadeira do processo que a criou. | **Esta ADR** — desenho, não implementado ainda. |
+| **A — Bootstrap da primeira Identity** | Uma `Identity` (`type=HUMAN`, `status=PENDING`, `loginEnabled=false`) existe no diretório mestre, com auditoria verdadeira do processo que a criou. | **Implementada nesta entrega** (`BootstrapFirstIdentityService` + CLI `bootstrap:first-identity`) — não executada contra o MariaDB DEV real ainda. |
 | **B — `ApplicationAccess` administrativo** | Um mecanismo real para conceder acesso administrativo a uma aplicação (ADR-007) — hoje só conceitual, zero código. | **Fora de escopo** — dependência futura não resolvida por esta ADR. |
 | **C — `Credential`/autenticação** | A Identity fundacional ganha uma forma de provar quem é (senha, magic link, etc.) — bounded context `security`, não implementado. | **Fora de escopo.** |
 | **D — Primeiro login administrativo** | Alguém efetivamente autentica como a Identity fundacional E tem `ApplicationAccess` concedido a uma aplicação administrativa. Só é possível depois de B e C. | **Fora de escopo, depende de B e C.** |
@@ -333,38 +369,37 @@ resto do ciclo de vida sempre opera sobre uma Identity que já existe, com
 um actor real ou `SYSTEM`, nunca `BOOTSTRAP`).
 
 **B. `BootstrapFirstIdentityService`, novo Application Service dedicado —
-recomendada, com uma ressalva explícita.** Um serviço novo,
-separado de `CreateIdentityService`, que orquestra o MESMO domínio e os
-MESMOS repositórios (`Identity`, `IdentityRepository`,
-`AuditEventRepository`, `UnitOfWork`) — mas **não é um wrapper trivial**:
-precisa de uma pequena extensão, ainda por desenhar em detalhe na
-implementação, que permita `Identity.create()` (ou uma variante sua)
-produzir um par (`createdByPublicId = undefined`,
-`evento.actor_public_id = "BOOTSTRAP"`) em vez do par único que existe
-hoje. Este é o único ponto de código genuinamente novo no domínio — bem
-menor e mais localizado que a Opção A (não toca nenhum outro comando de
-mutação), mas real, não gratuito.
+implementada.** Um serviço novo, separado de `CreateIdentityService`,
+que orquestra o MESMO domínio e os MESMOS repositórios (`Identity`,
+`IdentityRepository`, `AuditEventRepository`) — mas **não é um wrapper
+trivial**: `Identity.createFoundational()` (novo método estático,
+implementado) produz exatamente o par que faltava —
+`createdByPublicId = undefined`, evento com `actorPublicId = "BOOTSTRAP"`
+— sem tocar `Identity.create()` nem nenhum comando de mutação existente.
+`UnitOfWork` genérico **não é usado** pelo serviço — ver nota da terceira
+rodada, no topo deste documento, para o motivo exato (ordem
+lock/commit).
 
-**Recomendação final: Opção B, com a ressalva registrada.** Não
-sobrecarregar `ActorPublicId` para representar não-Identities de forma
-genérica (preferência do Platform Architect, mantida) — a divergência
-necessária é tratada como um caso especial e localizado da criação, não
-uma mudança sistêmica de como "actor" é representado em todo o domínio.
-O desenho exato dessa pequena extensão (ex.: um parâmetro extra em
-`Identity.create()`, ou uma variante `Identity.bootstrap()`) fica para a
-próxima entrega de implementação — não decidido nem codificado aqui.
+**Decisão final: Opção B, implementada.** `ActorPublicId` **não foi**
+estendido para representar não-Identities de forma genérica (preferência
+do Platform Architect, mantida) — a divergência necessária foi resolvida
+como um caso especial e localizado da criação
+(`Identity.createFoundational()`), não uma mudança sistêmica de como
+"actor" é representado em todo o domínio.
 
 ## Erros
 
 | Código | HTTP conceitual | Classificação | Onde pertence |
 |---|---|---|---|
-| `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Conflito | Não é um erro de domínio do Aggregate `Identity` no sentido estrito (não é lançado por nenhum Value Object/Identity) — é um erro de **orquestração do processo de bootstrap** (`BootstrapFirstIdentityService`, seção anterior). Proposto para o catálogo `identity` mesmo assim, por ser o bounded context mais próximo, mas a decisão final de onde ele vive fica para o Platform Architect. |
-| `IDENTITY_CREATION_NOT_AUTHORIZED` | 403 | Autorização | Pertenceria à futura camada de autorização (Fase B/D — fora do domínio `identity` em sentido estrito, já que ADR-007 mantém autorização fora do núcleo `identity`). Proposto, não decidido. |
+| `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Conflito | **Implementado** (`BootstrapAlreadyCompletedError`, `application/errors/BootstrapErrors.ts`) e **formalizado** no catálogo (`docs/03-dominio/IDENTITY-DOMAIN-ERRORS.md`). Não é um erro de domínio do Aggregate `Identity` no sentido estrito — é um erro de **orquestração do processo de bootstrap**, mantido no catálogo `identity` por proximidade de bounded context. |
+| `BOOTSTRAP_LOCK_NOT_ACQUIRED` | 409 | Conflito | **Implementado** (`BootstrapLockNotAcquiredError`) e **formalizado** no catálogo. Distinto de `BOOTSTRAP_ALREADY_COMPLETED`: concorrência em andamento, não bootstrap já concluído no passado. |
+| `IDENTITY_CREATION_NOT_AUTHORIZED` | 403 | Autorização | Pertenceria à futura camada de autorização (Fase B/D — fora do domínio `identity` em sentido estrito, já que ADR-007 mantém autorização fora do núcleo `identity`). **Ainda proposto, não implementado, não decidido** — pertence ao futuro `POST /api/v1/identities` autenticado, fora do escopo desta entrega (que é só o CLI de bootstrap). |
 
-**Nenhum dos dois é adicionado ao catálogo formal
-(`IDENTITY-DOMAIN-ERRORS.md`) nesta entrega** — permanecem como decisão
+**`IDENTITY_CREATION_NOT_AUTHORIZED` não é adicionado ao catálogo formal
+(`IDENTITY-DOMAIN-ERRORS.md`) nesta entrega** — permanece como decisão
 proposta nesta ADR, pendente de aprovação explícita antes de qualquer
-implementação.
+implementação (pertence ao futuro `POST /api/v1/identities`, não a esta
+entrega).
 
 ## Contrato futuro do POST — reafirmado
 
@@ -387,31 +422,35 @@ Nenhuma dessas três dependências é resolvida por esta ADR.
 
 ## Consequências
 
-- Nenhuma migration é executada nesta entrega. Uma migration futura
-  **opcional** (`actor_type` em `audit_events`) fica registrada como
-  melhoria proposta, não bloqueante.
+- Nenhuma migration foi criada/executada nesta entrega. Uma migration
+  futura **opcional** (`actor_type` em `audit_events`) fica registrada
+  como melhoria proposta, não bloqueante — dívida consciente, não uma
+  omissão.
 - `identities.created_by_identity_public_id = NULL` para a Identity
-  fundacional — já suportado pelo schema atual, sem qualquer alteração.
+  fundacional — implementado (`Identity.createFoundational()`), sem
+  qualquer alteração de schema.
 - `audit_events.actor_public_id = "BOOTSTRAP"` (marcador reservado,
   reaproveitando o precedente de `"SYSTEM"`) para o evento/auditoria da
-  criação fundacional — já suportado pelo schema atual.
-- Um novo Application Service (`BootstrapFirstIdentityService`) e uma
-  pequena extensão localizada no tratamento do `actor` de criação (não
-  em `ActorPublicId` de forma sistêmica) ficam desenhados para a próxima
-  entrega — não implementados agora.
-- `IdentityRepository` **não** ganha um método de contagem dedicado
-  nesta ADR além do que já é necessário para o guard (`COUNT(*) FROM
-  identities`) — pode ser um método simples (`countAll()`) na próxima
-  entrega; não decidido em detalhe aqui.
+  criação fundacional — implementado, sem alteração de schema.
+- `BootstrapFirstIdentityService` e `Identity.createFoundational()` —
+  implementados nesta entrega, testados (conexão única, ordem
+  lock/transação, atomicidade, mensagens sanitizadas — ver relatório da
+  entrega).
+- `IdentityRepository.countAll()` — implementado, leitura pura.
 - A Identity fundacional criada pela Fase A **não tem** autoridade
   administrativa — isso depende das Fases B, C e D, todas fora de
   escopo.
-- Dois códigos de erro (`BOOTSTRAP_ALREADY_COMPLETED`,
-  `IDENTITY_CREATION_NOT_AUTHORIZED`) são propostos, não decididos, não
-  adicionados ao catálogo formal.
+- `BOOTSTRAP_ALREADY_COMPLETED` e `BOOTSTRAP_LOCK_NOT_ACQUIRED` —
+  implementados e formalizados no catálogo
+  (`IDENTITY-DOMAIN-ERRORS.md`). `IDENTITY_CREATION_NOT_AUTHORIZED`
+  permanece proposto, não implementado, não adicionado ao catálogo
+  formal.
 
 ## Status
 
-Proposta para revisão do Product Owner e do Platform Architect — v0.5.0,
-Vertical Slice 2 (desenho, não implementado nesta entrega). Segunda
-rodada de revisão.
+Aprovada tecnicamente pelo Product Owner e pelo Platform Architect —
+v0.5.0, Vertical Slice 2. **Implementado em código**
+(`BootstrapFirstIdentityService`, `Identity.createFoundational()`, CLI
+`bootstrap:first-identity`, catálogo de erros formalizado) — não
+executado ainda contra o MariaDB DEV real, nenhuma Identity real criada.
+Terceira rodada de revisão.

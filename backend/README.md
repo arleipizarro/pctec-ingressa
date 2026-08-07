@@ -1,10 +1,76 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, que
-evolui a correção de empacotamento/entrypoint da v0.4.2, a
-**v0.4.2 — MariaDB Integration (preparação)**, a **v0.4.1 — Runtime
-Bootstrap** e a **v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+**v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, que evolui a
+**v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, a
+correção de empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB
+Integration (preparação)**, a **v0.4.1 — Runtime Bootstrap** e a
+**v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+
+## v0.5.0 — Bootstrap da primeira Identity (Slice 2)
+
+Resolve o problema de partida documentado em
+[`docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`](../docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md):
+como nasce a primeira `Identity` da plataforma, se toda criação exige um
+`Actor` autenticado e nenhum existe ainda?
+
+### O que este CLI cria — e o que NÃO cria
+
+Cria a **primeira Identity fundacional** da plataforma (`type=HUMAN`,
+`status=PENDING`, `loginEnabled=false`) — nada além disso.
+**Não cria um administrador funcional.** Não concede acesso a nenhuma
+aplicação (`ApplicationAccess` não existe como código ainda). Não cria
+`Credential`. Ver ADR-027, seção "Fases", para a separação completa
+entre bootstrap (Fase A, esta entrega) e autoridade administrativa real
+(Fases B/C/D, fora de escopo).
+
+### Uso
+
+```bash
+npm run build
+npm run bootstrap:first-identity
+```
+
+100% interativo — **nunca aceita argumento de linha de comando** (elimina
+a classe de risco "segredo em `argv`/`ps`/histórico do shell"). Pede
+nome completo, e-mail e CPF (opcional), mostra um resumo (CPF sempre
+mascarado, só os 2 últimos dígitos) e exige digitar exatamente
+`BOOTSTRAP` para confirmar — qualquer outra resposta cancela sem
+nenhuma alteração.
+
+Bloqueado em `NODE_ENV` fora de `development`/`test` (recusa
+incondicional, exit code `2`) — produção exige uma decisão formal futura,
+não implícita.
+
+### Mecanismo de proteção (one-shot)
+
+Named lock MariaDB (`GET_LOCK('pctec_ingressa_identity_bootstrap', ...)`)
++ `COUNT(identities) = 0` verificado dentro da mesma transação, na MESMA
+conexão física do início ao fim — mesma lição já aplicada em
+`MigrationRunner`. O lock é **cooperativo** (protege duas execuções
+simultâneas do próprio CLI) — não é uma constraint de banco; isso é
+aceitável nesta fase porque não existe nenhum outro fluxo de criação de
+`Identity` ainda, e `COUNT(identities) = 0` continua bloqueando
+permanentemente assim que qualquer `Identity` existir, por qualquer via
+(ver ADR-027 para a justificativa completa).
+
+### Auditoria
+
+`identities.created_by_identity_public_id = NULL` para a Identity
+fundacional — nunca um marcador fingindo ser um `public_id` real.
+`audit_events.actor_public_id = "BOOTSTRAP"` (marcador reservado, mesmo
+padrão já usado por `"SYSTEM"` nessa coluna) — nenhuma tabela nova, nenhum
+evento de domínio novo (`identity.created` reaproveitado sem alteração).
+
+### Por que não reaproveita `CreateIdentityService`
+
+`CreateIdentityService` alimenta, com o mesmo valor de `actor`, tanto
+`created_by_identity_public_id` (que precisa ser `NULL` no bootstrap)
+quanto o `actor_public_id` do evento (que precisa ser `"BOOTSTRAP"`) — os
+dois precisam divergir aqui. `BootstrapFirstIdentityService` é um
+Application Service dedicado, usando `Identity.createFoundational()`
+(extensão pequena e isolada do domínio — não toca `Identity.create()` nem
+nenhum comando de mutação existente).
 
 ## v0.5.0 — Identity Query API (Slice 1)
 
@@ -255,6 +321,7 @@ npm install
 | `npm test` | Roda a suíte de testes unitários. **Nunca** depende de banco externo. |
 | `npm run test:integration` | Roda testes de integração. Requer `RUN_INTEGRATION_TESTS=true` e um MariaDB real acessível via as variáveis `DB_*`. |
 | `npm run typecheck` | Verifica tipos com TypeScript, sem gerar saída. |
+| `npm run bootstrap:first-identity` | CLI interativo, one-shot — cria a primeira Identity fundacional da plataforma (ver seção acima). |
 
 ### Migrations SQL são assets obrigatórios do build
 
@@ -483,7 +550,8 @@ backend/
 │   ├── main.ts                 — entrypoint executável real (o que PM2/npm start rodam)
 │   ├── server.ts               — módulo reutilizável/import-safe: startServer(), shutdown gracioso — NUNCA inicia nada sozinho
 │   ├── cli/
-│   │   └── migrate.ts         — CLI de migrations (status/up/down/down-all)
+│   │   ├── migrate.ts         — CLI de migrations (status/up/down/down-all)
+│   │   └── bootstrap-first-identity.ts — CLI one-shot de bootstrap (v0.5.0 Slice 2)
 │   ├── shared/
 │   │   ├── database/          — Pool, UnitOfWork, MigrationRunner, migrations/
 │   │   ├── errors/            — DomainError (base)
@@ -493,7 +561,7 @@ backend/
 │   └── modules/
 │       ├── identity/
 │       │   ├── domain/        — Identity (Aggregate Root), Value Objects, eventos, erros
-│       │   ├── application/   — CreateIdentityService, GetIdentityByPublicIdService
+│       │   ├── application/   — CreateIdentityService, GetIdentityByPublicIdService, BootstrapFirstIdentityService
 │       │   ├── infrastructure/persistence/ — MariaDbIdentityRepository
 │       │   ├── http/          — identityRoutes (controller), IdentityHttpMapper (presenter)
 │       │   └── tests/

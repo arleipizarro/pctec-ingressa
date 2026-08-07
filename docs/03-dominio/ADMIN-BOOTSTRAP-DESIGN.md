@@ -1,22 +1,28 @@
 # Admin Bootstrap Design — PCTEC Ingressa (v0.5.0, Vertical Slice 2)
 
-Versão associada: v0.5.0 — Identity API, Vertical Slice 2 (documental)
-Status: Proposto para revisão do Product Owner e do Platform Architect
-(segunda rodada — ver `docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`
-para a decisão completa e sua justificativa; este documento detalha o
-"como", não repete o "porquê").
+Versão associada: v0.5.0 — Identity API, Vertical Slice 2 (documental +
+implementação)
+Status: Implementado em código nesta rodada (terceira revisão) — ver
+`docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md` para a decisão
+completa e sua justificativa; este documento detalha o "como".
 
-**Nada neste documento foi implementado nesta entrega.** Nenhum CLI,
-nenhuma rota, nenhuma migration, nenhum schema, nenhuma Identity real.
+**Implementado nesta entrega:** `BootstrapFirstIdentityService`,
+`Identity.createFoundational()`, `IdentityRepository.countAll()`, os
+erros `BootstrapAlreadyCompletedError`/`BootstrapLockNotAcquiredError`
+(e sua formalização em `IDENTITY-DOMAIN-ERRORS.md`), e o CLI
+`npm run bootstrap:first-identity` (`src/cli/bootstrap-first-identity.ts`).
+**Não executado ainda:** nenhuma migration, nenhum acesso ao MariaDB DEV
+real, nenhuma Identity real criada — tudo validado por testes automatizados
+(fakes) e um teste de integração preparado, não executado.
 
-**Nomenclatura desta revisão:** este documento chama o resultado do CLI
-de **"Identity fundacional"**, nunca "administrador" — ver ADR-027, seção
+**Nomenclatura:** este documento chama o resultado do CLI de
+**"Identity fundacional"**, nunca "administrador" — ver ADR-027, seção
 "Fases", para a separação explícita entre bootstrap (Fase A) e autoridade
 administrativa real (Fases B/C/D, fora de escopo).
 
 ---
 
-## 1. CLI `bootstrap:admin` — desenho
+## 1. CLI `bootstrap:first-identity` — implementado
 
 ### 1.1 Fluxo
 
@@ -52,18 +58,18 @@ src/cli/bootstrapAdmin.ts (entrypoint mínimo, mesmo padrão de src/main.ts)
 13. Devolve a conexão, encerra. Exit code 0.
 ```
 
-### 1.2 Reuso vs. código novo (corrigido nesta rodada)
+### 1.2 Reuso vs. código novo (implementado)
 
 | Peça | Reuso ou novo |
 |---|---|
-| `Identity` (Aggregate Root), Value Objects | Reuso da maior parte; **pequena extensão localizada** no tratamento de `actor`/`createdByPublicId` para o caso de bootstrap (ver ADR-027, seção "CreateIdentityService — reavaliação") — não é reuso 100% gratuito. |
-| `CreateIdentityService` | **Não reaproveitado diretamente.** Sua assinatura atual (`actorPublicId: string`) alimenta, com o mesmo valor, tanto `created_by_identity_public_id` quanto o `actor_public_id` do evento — os dois precisam divergir no bootstrap (`NULL` vs. `"BOOTSTRAP"`), o que `CreateIdentityService` hoje não suporta sem alteração. |
-| `BootstrapFirstIdentityService` | **Novo** — Application Service dedicado, orquestrando o mesmo domínio/repositórios/`UnitOfWork`, mas com a lógica de guard (lock + `COUNT`) e a divergência `createdByPublicId=NULL`/`actor_public_id="BOOTSTRAP"` que `CreateIdentityService` não cobre. |
-| `UnitOfWork`/`MariaDbUnitOfWork` | Reuso integral. |
-| `IdentityRepository`/`MariaDbIdentityRepository` | Reuso do contrato de `insert()`; **método novo** de leitura para o guard (proposto: `countAll(): Promise<number>`, simples, não decidido em detalhe). |
-| `AuditEventRepository` | Reuso integral. |
-| `ActorPublicId` | **Não estendido com um marcador `BOOTSTRAP`** nesta revisão — a divergência é tratada dentro do `BootstrapFirstIdentityService`/`Identity`, não como um terceiro valor genérico de `ActorPublicId` usado em todo o domínio (ver ADR-027, Opção A rejeitada). |
-| CLI wrapper (`bootstrapAdmin.ts`) | Novo — mesmo padrão de `src/cli/migrate.ts`. |
+| `Identity` (Aggregate Root), Value Objects | Reuso da maior parte; **`Identity.createFoundational()`** implementado como método estático novo e isolado — `Identity.create()` e todos os comandos de mutação permanecem intocados. |
+| `CreateIdentityService` | **Não reaproveitado.** Sua assinatura (`actorPublicId: string`) alimenta, com o mesmo valor, tanto `created_by_identity_public_id` quanto o `actor_public_id` do evento — os dois precisam divergir no bootstrap (`NULL` vs. `"BOOTSTRAP"`), confirmado por auditoria de código que `CreateIdentityService` não suporta isso. |
+| `BootstrapFirstIdentityService` | **Implementado** — Application Service dedicado, orquestrando `Identity`/`IdentityRepository`/`AuditEventRepository` sobre uma conexão/transação gerenciada diretamente (não via `UnitOfWork` — ver 1.3). |
+| `UnitOfWork`/`MariaDbUnitOfWork` | **Não usado** por este serviço — `runInTransaction` faz commit só depois do callback retornar, o que forçaria `RELEASE_LOCK` a rodar antes do `COMMIT` (corrida real). |
+| `IdentityRepository`/`MariaDbIdentityRepository` | Reuso do contrato de `insert()` (nenhuma alteração necessária — já trata `createdBy` `undefined` corretamente); **`countAll()` implementado** como guard. |
+| `AuditEventRepository` | Reuso integral, sem alteração. |
+| `ActorPublicId` | **Não estendido** — a divergência é tratada inteiramente dentro de `Identity.createFoundational()`, não como um terceiro valor genérico de `ActorPublicId` usado em todo o domínio (Opção A da ADR-027 permanece rejeitada). |
+| CLI (`bootstrap-first-identity.ts`) | **Implementado** — mesmo padrão de `src/cli/migrate.ts` (lógica pura `runBootstrapCli` separada de I/O real). |
 
 ### 1.3 Controles de segurança
 
@@ -157,12 +163,13 @@ B e C existam e D ocorra.
 
 ---
 
-## 4. Erros — proposta (não adicionada ao catálogo formal)
+## 4. Erros — implementados e formalizados (exceto o de autorização futura)
 
-| Código | HTTP conceitual | Classificação | Onde pertence |
+| Código | HTTP conceitual | Classificação | Status |
 |---|---|---|---|
-| `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Conflito | Erro de orquestração do `BootstrapFirstIdentityService`, não do Aggregate `Identity` em sentido estrito — proposto para o catálogo `identity` por proximidade, decisão final pendente. |
-| `IDENTITY_CREATION_NOT_AUTHORIZED` | 403 | Autorização | Pertenceria à futura camada de autorização (Fase B/D), fora do núcleo `identity` (ADR-007). |
+| `BOOTSTRAP_ALREADY_COMPLETED` | 409 | Conflito | **Implementado** (`BootstrapAlreadyCompletedError`) e **formalizado** em `IDENTITY-DOMAIN-ERRORS.md`. Erro de orquestração do `BootstrapFirstIdentityService`, não do Aggregate `Identity` em sentido estrito — mantido no catálogo `identity` por proximidade. |
+| `BOOTSTRAP_LOCK_NOT_ACQUIRED` | 409 | Conflito | **Implementado** (`BootstrapLockNotAcquiredError`) e **formalizado**. |
+| `IDENTITY_CREATION_NOT_AUTHORIZED` | 403 | Autorização | **Ainda proposto, não implementado.** Pertenceria à futura camada de autorização (Fase B/D), fora do núcleo `identity` (ADR-007) — pertence ao futuro `POST /api/v1/identities`, não a esta entrega. |
 
 ---
 
@@ -182,10 +189,6 @@ B e C existam e D ocorra.
 
 ## 6. Riscos residuais
 
-- A pequena extensão de domínio necessária (divergência `createdByPublicId`/
-  `actor_public_id` no caso de bootstrap) ainda não tem desenho de código
-  fechado — fica para a implementação, com a ressalva já registrada na
-  ADR-027.
 - Named lock protege contra duas execuções simultâneas do CLI, mas não
   contra dois operadores humanos decidindo (por engano) que "o bootstrap
   não foi feito ainda" quando na verdade já foi — mitigado pela mensagem
@@ -194,4 +197,9 @@ B e C existam e D ocorra.
 - O gap de "Administrador real" (Fases B/C/D) permanece — nenhuma
   Identity, nem a fundacional, tem autoridade administrativa até essas
   fases existirem.
-- Os dois códigos de erro propostos não são compromissos.
+- `IDENTITY_CREATION_NOT_AUTHORIZED` continua proposto, não implementado
+  — pertence ao futuro `POST /api/v1/identities` autenticado.
+- A migration opcional (`actor_type` em `audit_events`) permanece
+  adiada — dívida consciente, não implementada.
+- Nenhuma execução real contra o MariaDB DEV foi feita ainda — o teste
+  de integração está preparado, não executado.

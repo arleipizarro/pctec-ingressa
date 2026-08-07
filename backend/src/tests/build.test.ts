@@ -10,6 +10,7 @@ const DIST_DIR = path.join(BACKEND_ROOT, "dist");
 const DIST_SERVER_JS = path.join(DIST_DIR, "server.js");
 const DIST_MAIN_JS = path.join(DIST_DIR, "main.js");
 const DIST_CLI_MIGRATE_JS = path.join(DIST_DIR, "cli", "migrate.js");
+const DIST_CLI_BOOTSTRAP_FIRST_IDENTITY_JS = path.join(DIST_DIR, "cli", "bootstrap-first-identity.js");
 const SRC_MIGRATIONS_DIR = path.join(BACKEND_ROOT, "src", "shared", "database", "migrations");
 const DIST_MIGRATIONS_DIR = path.join(DIST_DIR, "shared", "database", "migrations");
 
@@ -54,6 +55,10 @@ describe("build", () => {
 
   it("gera dist/cli/migrate.js", () => {
     expect(existsSync(DIST_CLI_MIGRATE_JS)).toBe(true);
+  });
+
+  it("gera dist/cli/bootstrap-first-identity.js", () => {
+    expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_IDENTITY_JS)).toBe(true);
   });
 
   it("gera dist/shared/database/migrations/ com exatamente as 8 migrations atuais (0001-0004, up/down)", () => {

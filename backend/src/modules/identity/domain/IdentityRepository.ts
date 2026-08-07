@@ -16,6 +16,14 @@ export interface IdentityRepository {
   existsByNormalizedCpf(normalizedCpf: string): Promise<boolean>;
 
   /**
+   * Conta o total de linhas em `identities` — usado exclusivamente pelo
+   * guard one-shot do bootstrap (v0.5.0, ADR-027): `count = 0` é a
+   * condição necessária para permitir a criação da Identity fundacional.
+   * Leitura pura, nunca escreve.
+   */
+  countAll(): Promise<number>;
+
+  /**
    * Insere uma Identity nova. Após a inserção, DEVE chamar
    * `identity.assignInternalIdFromPersistence(...)` com o `id` gerado
    * pelo banco, para que a instância em memória reflita a chave interna

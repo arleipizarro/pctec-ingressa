@@ -124,6 +124,12 @@ export class MariaDbIdentityRepository implements IdentityRepository {
     return (rows as IdentityRow[]).length > 0;
   }
 
+  public async countAll(): Promise<number> {
+    const [rows] = await this.connection.execute(`SELECT COUNT(*) AS total FROM identities`);
+    const row = (rows as Array<Record<string, unknown>>)[0];
+    return Number(row?.["total"] ?? 0);
+  }
+
   public async insert(identity: Identity): Promise<void> {
     const cpf = identity.getCpf();
     const createdBy = identity.getCreatedAtActorPublicIdForPersistence();

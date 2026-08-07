@@ -189,4 +189,40 @@ describe("MariaDbIdentityRepository", () => {
 
     await expect(repository.update(identity, 1)).rejects.toThrow(IdentityVersionConflictError);
   });
+
+  it("countAll retorna 0 quando a tabela identities está vazia", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.toUpperCase().includes("COUNT(*)") && sql.toUpperCase().includes("FROM IDENTITIES"),
+      () => [[{ total: 0 }], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    await expect(repository.countAll()).resolves.toBe(0);
+  });
+
+  it("countAll retorna o total real de linhas", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.toUpperCase().includes("COUNT(*)") && sql.toUpperCase().includes("FROM IDENTITIES"),
+      () => [[{ total: 7 }], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    await expect(repository.countAll()).resolves.toBe(7);
+  });
+
+  it("countAll não usa WHERE algum — conta a tabela inteira, sem filtro (é o guard do bootstrap, não uma busca)", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.toUpperCase().includes("COUNT(*)") && sql.toUpperCase().includes("FROM IDENTITIES"),
+      () => [[{ total: 0 }], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    await repository.countAll();
+
+    const call = fake.calls.find((c) => c.sql.toUpperCase().includes("COUNT(*)"));
+    expect(call?.sql.toUpperCase()).not.toContain("WHERE");
+  });
 });

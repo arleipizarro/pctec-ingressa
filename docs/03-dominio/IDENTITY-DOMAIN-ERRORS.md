@@ -38,6 +38,8 @@ definido em v0.2.0, ao qual estes códigos se conectam futuramente).
 | `IDENTITY_VERSION_CONFLICT` | `version` informada diverge da `version` atual da identidade | Conflito de concorrência otimista (ADR-024) | Conflito | 409 |
 | `ACTOR_REQUIRED` | Comando executado sem `actor` identificado | Todo comando relevante exige actor para auditoria | Validação | 422 |
 | `DELETION_REASON_REQUIRED` | `LogicallyDeleteIdentity` sem `deletion_reason` | Motivo de exclusão é obrigatório | Validação | 422 |
+| `BOOTSTRAP_ALREADY_COMPLETED` | Bootstrap da primeira Identity solicitado quando já existe pelo menos uma `Identity` no diretório | O bootstrap já foi concluído anteriormente | Conflito | 409 |
+| `BOOTSTRAP_LOCK_NOT_ACQUIRED` | O named lock cooperativo do bootstrap (`GET_LOCK('pctec_ingressa_identity_bootstrap', ...)`) não pôde ser adquirido — outro processo de bootstrap parece estar em execução | Lock de bootstrap indisponível | Conflito | 409 |
 
 **Nota de correção (ADR-025):** os códigos `IDENTITY_PROFILE_ALREADY_EXISTS`
 e `IDENTITY_PROFILE_NOT_FOUND`, presentes em versão anterior deste
@@ -56,6 +58,21 @@ valor de `full_name` recebido em logs ou mensagens de erro externas — a
 mensagem do erro descreve a condição (vazio/tamanho excedido), não ecoa o
 valor em si, diferente do tratamento dado a `IDENTITY_EMAIL_INVALID` (cujo
 valor é o próprio dado de entrada do solicitante, não um dado de terceiro).
+
+**Nota de correção (v0.5.0 — Bootstrap da primeira Identity, Slice 2):**
+`BOOTSTRAP_ALREADY_COMPLETED` e `BOOTSTRAP_LOCK_NOT_ACQUIRED` foram
+incluídos formalmente neste catálogo — códigos já implementados
+(`BootstrapFirstIdentityService`, ver
+`docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`) antes desta
+correção documental. Diferente dos demais erros desta tabela, não são
+lançados pelo Aggregate `Identity` nem por nenhum Value Object — são
+erros de orquestração do processo de bootstrap
+(`BootstrapFirstIdentityService`); mantidos neste catálogo por
+proximidade de bounded context, não por serem invariantes do próprio
+Aggregate. Nenhuma das duas mensagens inclui SQL, host/usuário/senha de
+banco, stack trace, ou o CPF/e-mail informado pelo operador do CLI — a
+mensagem descreve apenas a condição (bootstrap já concluído / lock
+indisponível), nunca dado de entrada.
 
 ## Observações
 

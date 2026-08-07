@@ -316,3 +316,103 @@ describe("Identity — internalId nunca exposto pelo domínio público", () => {
     }
   });
 });
+
+describe("Identity.createFoundational() — bootstrap da primeira Identity (v0.5.0, ADR-027)", () => {
+  function createFoundationalIdentity() {
+    return Identity.createFoundational({
+      fullName: "Fundador da Plataforma",
+      email: "fundador@example.com",
+      correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f1"
+    });
+  }
+
+  it("cria uma Identity type=HUMAN, status=PENDING", () => {
+    const identity = createFoundationalIdentity();
+    expect(identity.getType().toString()).toBe("HUMAN");
+    expect(identity.getStatus().toString()).toBe("PENDING");
+  });
+
+  it("loginEnabled nasce false — nunca configurável pelo chamador (createFoundational não aceita esse parâmetro)", () => {
+    const identity = createFoundationalIdentity();
+    expect(identity.isLoginEnabled()).toBe(false);
+  });
+
+  it("createdByPublicId (persistência) é undefined — NUNCA um marcador fingindo ser Identity public_id", () => {
+    const identity = createFoundationalIdentity();
+    expect(identity.getCreatedAtActorPublicIdForPersistence()).toBeUndefined();
+    expect(identity.getUpdatedByPublicIdForPersistence()).toBeUndefined();
+  });
+
+  it("version nasce 1, igual a qualquer Identity recém-criada", () => {
+    const identity = createFoundationalIdentity();
+    expect(identity.getVersion()).toBe(1);
+  });
+
+  it("produz exatamente 1 evento identity.created, com actorPublicId = 'BOOTSTRAP' — nunca o publicId da própria Identity", () => {
+    const identity = createFoundationalIdentity();
+    const events = identity.pullDomainEvents();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("identity.created");
+    expect(events[0]?.actorPublicId).toBe("BOOTSTRAP");
+    expect(events[0]?.actorPublicId).not.toBe(identity.getPublicId().toString());
+  });
+
+  it("não é possível confundir o marcador de evento com createdByPublicId — são campos e valores diferentes", () => {
+    const identity = createFoundationalIdentity();
+    const events = identity.pullDomainEvents();
+
+    expect(events[0]?.actorPublicId).toBe(Identity.BOOTSTRAP_EVENT_ACTOR_MARKER);
+    expect(identity.getCreatedAtActorPublicIdForPersistence()).not.toBe(Identity.BOOTSTRAP_EVENT_ACTOR_MARKER);
+    expect(identity.getCreatedAtActorPublicIdForPersistence()).toBeUndefined();
+  });
+
+  it("aceita CPF opcional, igual a create()", () => {
+    const identity = Identity.createFoundational({
+      fullName: "Fundador com CPF",
+      email: "fundador2@example.com",
+      cpf: "52998224725",
+      correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f2"
+    });
+    expect(identity.getCpf()).toBeDefined();
+  });
+
+  it("payload do evento identity.created nunca contém CPF, mesmo quando informado", () => {
+    const identity = Identity.createFoundational({
+      fullName: "Fundador com CPF",
+      email: "fundador3@example.com",
+      cpf: "52998224725",
+      correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f3"
+    });
+    const events = identity.pullDomainEvents();
+    expect(JSON.stringify(events[0]?.payload)).not.toContain("cpf");
+    expect(JSON.stringify(events[0]?.payload)).not.toContain("52998224725");
+  });
+
+  it("gera um publicId aleatório (UUID), nunca fornecido pelo chamador — createFoundational não aceita publicId como parâmetro", () => {
+    const a = createFoundationalIdentity();
+    const b = Identity.createFoundational({
+      fullName: "Outro Fundador",
+      email: "outro@example.com",
+      correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f4"
+    });
+    expect(a.getPublicId().equals(b.getPublicId())).toBe(false);
+  });
+
+  it("nome/e-mail inválidos continuam validados normalmente (mesmas regras de create())", () => {
+    expect(() =>
+      Identity.createFoundational({
+        fullName: "",
+        email: "fundador@example.com",
+        correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f5"
+      })
+    ).toThrow();
+    expect(() =>
+      Identity.createFoundational({
+        fullName: "Nome Válido",
+        email: "nao-e-email",
+        correlationId: "8f14e45f-ceea-467e-a1a3-0000000000f6"
+      })
+    ).toThrow();
+  });
+});

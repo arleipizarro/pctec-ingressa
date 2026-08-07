@@ -33,6 +33,10 @@ class InMemoryIdentityRepository implements IdentityRepository {
     return this.cpfs.has(normalizedCpf);
   }
 
+  public async countAll(): Promise<number> {
+    return this.stored.size;
+  }
+
   public async insert(identity: Identity): Promise<void> {
     this.stored.set(identity.getPublicId().toString(), identity);
     this.emails.add(identity.getEmail().normalized());

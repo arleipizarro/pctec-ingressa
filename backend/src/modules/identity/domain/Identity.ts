@@ -36,6 +36,20 @@ export interface CreateIdentityProps {
   readonly now?: Date | undefined;
 }
 
+/**
+ * Entrada de `Identity.createFoundational()` — deliberadamente SEM
+ * `type` (sempre `HUMAN`) e SEM `actor` (não existe Actor real no
+ * bootstrap). Ver `docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`.
+ */
+export interface CreateFoundationalIdentityProps {
+  readonly fullName: string;
+  readonly email: string;
+  readonly cpf?: string | undefined;
+  readonly correlationId: string;
+  readonly causationId?: string | undefined;
+  readonly now?: Date | undefined;
+}
+
 /** Estado completo, como persistido — usado exclusivamente por `reconstitute`. */
 export interface IdentityPersistedState {
   readonly internalId: number;
@@ -78,6 +92,16 @@ export interface IdentityPersistedState {
  *   aplicar a mudança.
  */
 export class Identity {
+  /**
+   * Marcador reservado usado EXCLUSIVAMENTE no `actorPublicId` do evento
+   * de domínio produzido por `createFoundational()` — nunca em
+   * `createdByPublicId`/`updatedByPublicId` (que ficam `undefined`/`NULL`
+   * para a Identity fundacional). Distinto de `ActorPublicId.SYSTEM_MARKER`
+   * por design (ADR-027): o bootstrap é um evento único na vida da
+   * plataforma, não um processo automatizado recorrente.
+   */
+  public static readonly BOOTSTRAP_EVENT_ACTOR_MARKER = "BOOTSTRAP" as const;
+
   private internalId: number | undefined;
   private readonly publicId: PublicId;
   private readonly type: IdentityType;
@@ -175,6 +199,83 @@ export class Identity {
           status: status.toString()
         }
       )
+    );
+
+    return identity;
+  }
+
+  /**
+   * Cria a Identity FUNDACIONAL da plataforma — usada exclusivamente pelo
+   * processo de bootstrap (v0.5.0, ver `docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`),
+   * quando ainda não existe nenhuma Identity autenticada capaz de atuar
+   * como `Actor`.
+   *
+   * Diferenças deliberadas em relação a `create()`:
+   *
+   * - Não recebe (nem aceita) `actor`: não existe Actor real para esta
+   *   operação — é precisamente o problema que o bootstrap resolve.
+   * - `createdByPublicId`/`updatedByPublicId` ficam `undefined` — nunca
+   *   um marcador fingindo ser um `public_id` de Identity (ADR-027,
+   *   correção "não usar 'BOOTSTRAP' como Identity public ID"). Isso é
+   *   persistido como `NULL` em `identities.created_by_identity_public_id`
+   *   sem qualquer alteração em `MariaDbIdentityRepository.insert()` —
+   *   o método já trata `undefined` corretamente (`createdBy ?? null`).
+   * - O evento de domínio `identity.created` é construído diretamente
+   *   aqui (não via `envelope()`, que exige um `ActorPublicId` real, usado
+   *   por todo o resto dos comandos de mutação — nenhum deles é tocado
+   *   por este método), com `actorPublicId` fixado no marcador reservado
+   *   `BOOTSTRAP_EVENT_ACTOR_MARKER` — usado SOMENTE aqui, SOMENTE no
+   *   evento/auditoria, nunca em `createdByPublicId`.
+   * - `type` é sempre `HUMAN`, fixo — nenhum parâmetro de tipo é aceito
+   *   (o CLI de bootstrap não deve poder escolher outro tipo).
+   *
+   * Nenhum outro comportamento de `Identity` é alterado por este método
+   * — é aditivo, isolado, e não modifica `create()` nem qualquer comando
+   * de mutação existente.
+   */
+  public static createFoundational(props: CreateFoundationalIdentityProps): Identity {
+    const type = IdentityType.human();
+    const fullName = IdentityName.create(props.fullName);
+    const email = Email.create(props.email);
+    const cpf = Cpf.createOptional(props.cpf);
+    const now = props.now ?? new Date();
+    const publicId = PublicId.generate();
+    const status = IdentityStatus.pending();
+
+    const identity = new Identity({
+      internalId: undefined,
+      publicId,
+      type,
+      fullName,
+      email,
+      cpf,
+      status,
+      loginEnabled: false,
+      version: 1,
+      createdAt: now,
+      createdByPublicId: undefined,
+      updatedAt: now,
+      updatedByPublicId: undefined,
+      deletedAt: undefined,
+      deletedByPublicId: undefined,
+      deletionReason: undefined
+    });
+
+    const envelope: EventEnvelopeInput = {
+      aggregatePublicId: publicId.toString(),
+      actorPublicId: Identity.BOOTSTRAP_EVENT_ACTOR_MARKER,
+      correlationId: props.correlationId,
+      ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+      occurredAt: now
+    };
+
+    identity.recordEvent(
+      createIdentityCreatedEvent(envelope, {
+        publicId: publicId.toString(),
+        type: type.toString(),
+        email: email.toString(),
+        status: status.toString()
+      })
     );
 
     return identity;

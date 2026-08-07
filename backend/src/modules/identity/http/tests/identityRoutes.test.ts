@@ -25,6 +25,10 @@ class InMemoryIdentityRepository implements IdentityRepository {
     return false;
   }
 
+  public async countAll(): Promise<number> {
+    return this.stored.size;
+  }
+
   public async insert(identity: Identity): Promise<void> {
     this.stored.set(identity.getPublicId().toString(), identity);
   }
@@ -46,6 +50,10 @@ class BrokenIdentityRepository implements IdentityRepository {
 
   public async existsByNormalizedCpf(): Promise<boolean> {
     return false;
+  }
+
+  public async countAll(): Promise<number> {
+    return 0;
   }
 
   public async insert(): Promise<void> {
