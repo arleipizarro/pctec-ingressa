@@ -309,10 +309,34 @@ nada além disso.
 
 | Fase | O que entrega | Status |
 |---|---|---|
-| **A — Bootstrap da primeira Identity** | Uma `Identity` (`type=HUMAN`, `status=PENDING`, `loginEnabled=false`) existe no diretório mestre, com auditoria verdadeira do processo que a criou. | **Implementada nesta entrega** (`BootstrapFirstIdentityService` + CLI `bootstrap:first-identity`) — não executada contra o MariaDB DEV real ainda. |
-| **B — `ApplicationAccess` administrativo** | Um mecanismo real para conceder acesso administrativo a uma aplicação (ADR-007) — hoje só conceitual, zero código. | **Fora de escopo** — dependência futura não resolvida por esta ADR. |
+| **A — Bootstrap da primeira Identity** | Uma `Identity` (`type=HUMAN`, `status=PENDING`, `loginEnabled=false`) existe no diretório mestre, com auditoria verdadeira do processo que a criou. | **Concluída no MariaDB DEV real** (`BootstrapFirstIdentityService` + CLI `bootstrap:first-identity`, executado e validado diretamente no banco — ver seção "Execução real da Fase A" abaixo). |
+| **B — `ApplicationAccess` administrativo** | Um mecanismo real para conceder acesso administrativo a uma aplicação (ADR-007). | **Implementada em código** (v0.5.0, ADR-028 — `BootstrapFirstApplicationAccessService` + CLI `bootstrap:first-admin-access`) — ainda **não executada** contra o MariaDB DEV real. |
 | **C — `Credential`/autenticação** | A Identity fundacional ganha uma forma de provar quem é (senha, magic link, etc.) — bounded context `security`, não implementado. | **Fora de escopo.** |
-| **D — Primeiro login administrativo** | Alguém efetivamente autentica como a Identity fundacional E tem `ApplicationAccess` concedido a uma aplicação administrativa. Só é possível depois de B e C. | **Fora de escopo, depende de B e C.** |
+| **D — Primeiro login administrativo** | Alguém efetivamente autentica como a Identity fundacional E tem `ApplicationAccess` concedido a uma aplicação administrativa. Só é possível depois de B e C. | **Fora de escopo, depende de C** (B já está implementada em código, mas não executada). |
+
+### Execução real da Fase A (registro operacional)
+
+A Fase A foi executada com sucesso no MariaDB DEV real, pelo CLI oficial
+(`npm run bootstrap:first-identity`), e validada diretamente no banco. Dados
+resultantes, registrados aqui como referência operacional/documental —
+**nunca hardcoded em código** (serviço, CLI, domínio ou migration
+continuam recebendo/gerando esses valores dinamicamente):
+
+- `identities.public_id`: `66231e51-66fb-466d-af4f-ac7b925ca9ec`
+- `identities.type`: `HUMAN`
+- `identities.status`: `PENDING`
+- `identities.login_enabled`: `false`
+- `identities.created_by_identity_public_id`: `NULL`
+- `audit_events.event_type`: `identity.created`
+- `audit_events.aggregate_public_id`: `66231e51-66fb-466d-af4f-ac7b925ca9ec`
+- `audit_events.actor_public_id`: `BOOTSTRAP`
+
+Este registro documenta um fato operacional já ocorrido — não é uma
+instrução para o código tratar esse `public_id` como conhecido a priori.
+Qualquer serviço, CLI, comando de domínio ou migration desta plataforma
+que precise dessa Identity a recebe como parâmetro de entrada em tempo de
+execução (ex.: `identityPublicId` informado pelo operador do CLI de
+bootstrap administrativo), nunca como valor fixo no código-fonte.
 
 O nome desta ADR ("Bootstrap Administrativo Inicial") descreve o
 **procedimento operacional** (é a ação que, no fim das contas, existe
@@ -437,9 +461,12 @@ Nenhuma dessas três dependências é resolvida por esta ADR.
   lock/transação, atomicidade, mensagens sanitizadas — ver relatório da
   entrega).
 - `IdentityRepository.countAll()` — implementado, leitura pura.
-- A Identity fundacional criada pela Fase A **não tem** autoridade
-  administrativa — isso depende das Fases B, C e D, todas fora de
-  escopo.
+- A Identity fundacional criada pela Fase A, por si só, **não tem**
+  autoridade administrativa — isso depende de uma concessão real via Fase
+  B. A Fase B já está **implementada em código** (ADR-028), mas ainda
+  **não foi executada** no MariaDB DEV real: nenhuma `ApplicationAccess`
+  administrativa foi de fato concedida a esta Identity até o momento
+  deste registro. As Fases C e D permanecem fora de escopo.
 - `BOOTSTRAP_ALREADY_COMPLETED` e `BOOTSTRAP_LOCK_NOT_ACQUIRED` —
   implementados e formalizados no catálogo
   (`IDENTITY-DOMAIN-ERRORS.md`). `IDENTITY_CREATION_NOT_AUTHORIZED`
@@ -449,8 +476,11 @@ Nenhuma dessas três dependências é resolvida por esta ADR.
 ## Status
 
 Aprovada tecnicamente pelo Product Owner e pelo Platform Architect —
-v0.5.0, Vertical Slice 2. **Implementado em código**
-(`BootstrapFirstIdentityService`, `Identity.createFoundational()`, CLI
-`bootstrap:first-identity`, catálogo de erros formalizado) — não
-executado ainda contra o MariaDB DEV real, nenhuma Identity real criada.
-Terceira rodada de revisão.
+v0.5.0, Vertical Slice 2. **Implementado em código e executado com
+sucesso no MariaDB DEV real** (`BootstrapFirstIdentityService`,
+`Identity.createFoundational()`, CLI `bootstrap:first-identity`, catálogo
+de erros formalizado) — a Identity fundacional
+(`66231e51-66fb-466d-af4f-ac7b925ca9ec`) existe de fato no banco DEV,
+validada diretamente, com o `AuditEvent` correspondente
+(`identity.created`, `actor_public_id = BOOTSTRAP`). Ver "Execução real
+da Fase A" acima. Quarta rodada de revisão.

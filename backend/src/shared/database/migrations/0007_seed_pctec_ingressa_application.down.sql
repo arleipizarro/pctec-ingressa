@@ -1,0 +1,30 @@
+-- Migration: 0007_seed_pctec_ingressa_application
+-- Direção: DOWN
+--
+-- Remove exclusivamente a linha semeada por esta migration (identificada
+-- pelo `public_id` técnico determinístico) — nunca um DELETE genérico por
+-- `code` isolado.
+--
+-- Análise explícita de risco (por que public_id, nunca code):
+-- Se este DOWN filtrasse por `code = 'PCTEC_INGRESSA'`, ele apagaria
+-- QUALQUER linha com esse code — inclusive uma Application recriada
+-- posteriormente com o mesmo code, mas outra identidade lógica (outro
+-- public_id, outro momento de criação). Filtrando por public_id fixo,
+-- o DOWN só pode afetar a linha que tem EXATAMENTE esse public_id — e,
+-- como `applications.public_id` tem `UNIQUE KEY`, existe no máximo uma
+-- linha no banco com esse valor a qualquer momento. Portanto:
+--   (a) se a linha semeada por este UP ainda existe, o DOWN remove
+--       exatamente ela, e nada mais;
+--   (b) se essa linha já foi removida por qualquer outro processo, o
+--       DOWN não afeta nenhuma linha (DELETE de zero linhas, sem erro);
+--   (c) uma Application "PCTEC_INGRESSA" recriada posteriormente com um
+--       public_id DIFERENTE nunca é afetada por este DOWN, porque o
+--       filtro não usa `code`.
+-- A única forma deste DOWN remover uma linha "errada" seria alguém
+-- reatribuir manualmente este public_id fixo a uma entidade lógica
+-- diferente — uma violação de fora da migration tooling, não algo que
+-- SQL possa se defender sozinho.
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
+
+DELETE FROM applications WHERE public_id = '0b13f6f0-8f3a-4a1e-9c2d-000000000001';

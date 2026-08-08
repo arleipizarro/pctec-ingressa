@@ -245,9 +245,21 @@ contexto.
 - **Identificador da entidade:** `application_access_id`.
 - **Versão:** 1.
 - **Payload mínimo:** `application_access_id`, `identity_id`,
-  `application_id`, `granted_at`, `granted_by`.
+  `application_id`, `access_profile`, `granted_at`, `granted_by`.
 - **Nunca publicar:** qualquer detalhe de permissão interna do produto
   consumidor (o Ingressa não conhece essas regras).
+
+**Nota de correção (v0.5.0 — ADR-028):** `access_profile` foi adicionado
+ao payload mínimo — extensão formal do evento, que já existia
+conceitualmente desde a v0.2.0. Implementação real
+(`createApplicationAccessGrantedEvent`,
+`modules/application/domain/events/ApplicationAccessDomainEvents.ts`) usa
+nomes de campo em `camelCase`
+(`applicationAccessPublicId`/`identityPublicId`/`applicationPublicId`/
+`accessProfile`) por consistência com o restante do código TypeScript;
+`granted_by` não está no payload real (é `NULL` na concessão de bootstrap,
+e o payload nunca inclui campos ausentes) — a tabela abaixo mantém a
+nomenclatura conceitual em `snake_case` deste catálogo.
 
 ### application-access.revoked
 

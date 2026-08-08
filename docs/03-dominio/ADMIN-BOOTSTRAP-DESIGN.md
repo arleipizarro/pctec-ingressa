@@ -11,14 +11,17 @@ completa e sua justificativa; este documento detalha o "como".
 erros `BootstrapAlreadyCompletedError`/`BootstrapLockNotAcquiredError`
 (e sua formalização em `IDENTITY-DOMAIN-ERRORS.md`), e o CLI
 `npm run bootstrap:first-identity` (`src/cli/bootstrap-first-identity.ts`).
-**Não executado ainda:** nenhuma migration, nenhum acesso ao MariaDB DEV
-real, nenhuma Identity real criada — tudo validado por testes automatizados
-(fakes) e um teste de integração preparado, não executado.
+**Executado com sucesso no MariaDB DEV real** — o CLI foi rodado e
+validado diretamente no banco; ver ADR-027, seção "Execução real da Fase
+A", para os dados operacionais registrados (nunca hardcoded em código). Tudo
+adicionalmente validado por testes automatizados (fakes) e um teste de
+integração preparado, ainda não executado.
 
 **Nomenclatura:** este documento chama o resultado do CLI de
 **"Identity fundacional"**, nunca "administrador" — ver ADR-027, seção
-"Fases", para a separação explícita entre bootstrap (Fase A) e autoridade
-administrativa real (Fases B/C/D, fora de escopo).
+"Fases", para a separação explícita entre bootstrap (Fase A, concluída) e
+autoridade administrativa real (Fase B, implementada em código mas ainda
+não executada; Fases C/D, fora de escopo).
 
 ---
 
@@ -151,15 +154,25 @@ header/payload do cliente) + autorização apropriada (Fase B/D).
 
 ## 3. Identity fundacional × administrador — separação explícita
 
-| Fase | Entrega | Nesta entrega? |
+| Fase | Entrega | Status |
 |---|---|---|
-| A — Bootstrap da primeira Identity | Uma `Identity` existe, com auditoria verdadeira | Desenhada aqui, não implementada |
-| B — `ApplicationAccess` administrativo | Mecanismo real de concessão de acesso administrativo | Fora de escopo |
+| A — Bootstrap da primeira Identity | Uma `Identity` existe, com auditoria verdadeira | **Concluída no MariaDB DEV real** — ver ADR-027, seção "Execução real da Fase A", para os dados operacionais registrados. |
+| B — `ApplicationAccess` administrativo | Mecanismo real de concessão de acesso administrativo | **Implementada em código** (v0.5.0, ADR-028) — ainda não executada contra o DEV real. |
 | C — `Credential`/autenticação | A Identity fundacional ganha forma de se autenticar | Fora de escopo |
-| D — Primeiro login administrativo | Autenticação + `ApplicationAccess` concedido | Fora de escopo, depende de B e C |
+| D — Primeiro login administrativo | Autenticação + `ApplicationAccess` concedido | Fora de escopo, depende de C (B já implementada, não executada) |
 
-A Identity criada pelo CLI **não tem** autoridade administrativa até que
-B e C existam e D ocorra.
+**Nota de atualização:** este documento foi escrito quando a Fase A ainda
+estava apenas desenhada ("Desenhada aqui, não implementada" era a
+descrição original desta linha da tabela). A Fase A foi posteriormente
+implementada, executada e validada no MariaDB DEV real — ver ADR-027 para
+o registro completo. Este documento permanece válido para o desenho
+conceitual da Fase A; o estado de execução está registrado no ADR, não
+aqui, para evitar duas fontes de verdade sobre o mesmo fato operacional.
+
+A Identity criada pelo CLI **não tem** autoridade administrativa por si
+só até que uma concessão real de Fase B ocorra (a Fase B já está
+implementada em código, mas nenhuma concessão real foi executada ainda) e
+C exista e D ocorra.
 
 ---
 

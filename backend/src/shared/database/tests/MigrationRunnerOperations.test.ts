@@ -316,10 +316,10 @@ describe("MigrationRunner — validação de instrução única por arquivo", ()
     expect(() => assertSingleStatement("x", "down", `DROP TABLE a; DROP TABLE b;`)).toThrow(MigrationMultipleStatementsError);
   });
 
-  it("[auditoria] cada um dos 4 arquivos de migration reais (0001-0004, up e down) tem exatamente uma instrução executável", async () => {
+  it("[auditoria] cada um dos 7 arquivos de migration reais (0001-0007, up e down) tem exatamente uma instrução executável", async () => {
     const { loadMigrationDefinitions } = await import("../loadMigrationDefinitions.js");
     const migrations = loadMigrationDefinitions();
-    expect(migrations.length).toBe(4);
+    expect(migrations.length).toBe(7);
     for (const migration of migrations) {
       expect(() => assertSingleStatement(migration.id, "up", migration.up)).not.toThrow();
       expect(() => assertSingleStatement(migration.id, "down", migration.down)).not.toThrow();

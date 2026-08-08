@@ -1,0 +1,38 @@
+-- Migration: 0007_seed_pctec_ingressa_application
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Seed técnico: a Application que representa a própria plataforma
+-- Ingressa. Metadado técnico estável, não dado pessoal (task v0.5.0,
+-- seção 16) — `public_id` técnico determinístico documentado em
+-- `src/modules/application/domain/value-objects/ApplicationCodes.ts`
+-- (fonte única desse valor no código; esta migration só o replica em
+-- SQL, deliberadamente, pois migrations não importam TypeScript).
+--
+-- Idempotência: NÃO é responsabilidade deste SQL. A idempotência
+-- operacional é fornecida pelo MigrationRunner/schema_migrations — uma
+-- migration cujo `id` já consta em `schema_migrations` nunca é
+-- reexecutada (ver MigrationRunner.ts, applyPending). Por isso este é um
+-- INSERT normal — nenhuma cláusula de "ignorar duplicidade", "substituir
+-- linha existente" ou "atualizar em caso de choque de chave" é usada
+-- aqui: nenhum mecanismo desse tipo deve mascarar um estado pré-existente
+-- divergente.
+--
+-- Se, por qualquer motivo fora do controle do MigrationRunner (ex.:
+-- intervenção manual anterior no banco), já existir uma linha com
+-- `code = 'PCTEC_INGRESSA'` mas `public_id` diferente do esperado, ou
+-- uma linha com este `public_id` mas `code`/`name` diferentes, este
+-- INSERT deve FALHAR explicitamente (violação de `UNIQUE KEY
+-- uk_applications_code` ou `uk_applications_public_id`) — nunca ser
+-- silenciosamente ignorado. Uma falha aqui interrompe o runner antes de
+-- registrar `0007` em `schema_migrations`, sinalizando corretamente que
+-- o schema está em um estado que precisa de investigação manual, em vez
+-- de prosseguir sobre uma divergência não resolvida.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+-- Depende de `applications` (0005) já existir.
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA (v0.5.0).
+
+INSERT INTO applications (public_id, code, name, status, version, created_at, updated_at)
+VALUES ('0b13f6f0-8f3a-4a1e-9c2d-000000000001', 'PCTEC_INGRESSA', 'PCTEC Ingressa', 'ACTIVE', 1, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3));

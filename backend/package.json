@@ -20,7 +20,8 @@
     "migrate:up:dry-run": "node dist/cli/migrate.js up --dry-run",
     "migrate:down": "node dist/cli/migrate.js down",
     "migrate:down-all": "node dist/cli/migrate.js down-all",
-    "bootstrap:first-identity": "node dist/cli/bootstrap-first-identity.js"
+    "bootstrap:first-identity": "node dist/cli/bootstrap-first-identity.js",
+    "bootstrap:first-admin-access": "node dist/cli/bootstrap-first-admin-access.js"
   },
   "dependencies": {
     "express": "^5.2.1",

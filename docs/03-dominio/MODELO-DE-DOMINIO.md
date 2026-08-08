@@ -457,26 +457,38 @@ concessão de acesso precise ser sensível a contexto organizacional/
 classificação relacional no futuro, isso será modelado via `Membership`/
 `MembershipProfile`, não reintroduzindo `IdentityProfile`.
 
+**Nota de correção (v0.5.0 — ADR-028):** adicionado o atributo
+`access_profile`, implementado nesta versão. Distingue **nível de acesso
+GLOBAL à própria aplicação** (ex.: administração da plataforma Ingressa
+como um todo) — não é permissão fina de negócio de um produto consumidor
+(continua vedado pelo invariante abaixo). Enum fechado, hoje só com o
+valor `ADMIN`.
+
 **Atributos conceituais:**
 
 - `id` (UUID público).
 - `identity_id`.
 - `application_id`.
+- `access_profile` (enum fechado — `ADMIN` nesta versão; novos valores
+  exigem decisão formal e `ALTER TABLE`, ADR-028).
 - `status` (`GRANTED`, `REVOKED`).
 - `granted_at`, `revoked_at` (opcional).
-- `granted_by` (referência à `Identity` que concedeu — auditoria de quem
-  concedeu).
+- `granted_by` (referência à `Identity` que concedeu — `NULL` quando não
+  há Actor autenticado real, ex.: bootstrap administrativo, ADR-028;
+  nunca um marcador fingindo ser um `public_id`).
 - `created_at`, `updated_at`.
 
 **Invariantes:**
 
 - Não deve haver dois registros `ApplicationAccess` com `status = GRANTED`
-  para a mesma combinação de identidade e aplicação.
+  para a mesma combinação de identidade, aplicação e `access_profile`.
 - Revogar acesso não apaga o histórico; cria um novo estado (`REVOKED`) ou
   atualiza o registro preservando `granted_at`/`revoked_at` para fins de
   auditoria.
-- `ApplicationAccess` nunca contém regras de permissão fina — apenas
-  entra/não entra.
+- `ApplicationAccess` nunca contém regras de permissão fina de negócio de
+  um produto consumidor — apenas entra/não entra, e com que nível de
+  acesso *global* à aplicação (ADR-028). `access_profile` não é uma
+  matriz de permissões.
 
 **Relacionamentos:**
 
@@ -491,6 +503,9 @@ classificação relacional no futuro, isso será modelado via `Membership`/
 **O que não pertence a esta entidade:**
 
 - Qualquer decisão sobre o que o usuário pode fazer dentro do produto.
+- Permissões finas por funcionalidade — `access_profile` é uma
+  classificação global fechada (enum pequeno), nunca um campo de
+  permissão granular por ação.
 
 ---
 

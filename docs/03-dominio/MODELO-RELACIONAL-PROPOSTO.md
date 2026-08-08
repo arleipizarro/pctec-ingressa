@@ -225,6 +225,17 @@ Chaves e índices:
 **Nota de correção (v0.3.0 — ADR-025):** esta tabela referencia
 `identities` diretamente, não `identity_profiles` (tabela removida).
 
+**Nota de correção (v0.5.0 — ADR-028):** a implementação real desta tabela
+(`application_accesses`, migration `0006_create_application_accesses`)
+diverge do desenho conceitual abaixo em dois pontos: (1) segue a convenção
+`id BIGINT` interno + `public_id CHAR(36)` externo (ADR-021), não
+`BINARY(16)`; (2) FKs referenciam `identities.public_id`/
+`applications.public_id` diretamente (não `internal_id`); (3) inclui a
+coluna `access_profile` (`ENUM('ADMIN')`). O desenho conceitual abaixo é
+preservado como registro histórico da proposta v0.2.0 — a tabela real
+implementada está documentada em
+`docs/03-dominio/APPLICATION-ACCESS-DESIGN.md`, seção 1.2.
+
 | Coluna | Tipo MariaDB | Observações |
 |---|---|---|
 | internal_id | BIGINT UNSIGNED AUTO_INCREMENT | PK interna |

@@ -1,11 +1,80 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, que evolui a
-**v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, a
-correção de empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB
-Integration (preparação)**, a **v0.4.1 — Runtime Bootstrap** e a
-**v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+**v0.5.0 — Administrative Access Foundation**, que evolui a **v0.5.0 —
+Bootstrap da primeira Identity (Slice 2)**, a **v0.5.0 — Identity API,
+Vertical Slice 1 (Identity Query API)**, a correção de
+empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB Integration
+(preparação)**, a **v0.4.1 — Runtime Bootstrap** e a **v0.4.0 — Identity
+Core, Vertical Slice 1** anteriores.
+
+## v0.5.0 — Administrative Access Foundation
+
+Resolve a Fase B do
+[`docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md`](../docs/adr/ADR-027-BOOTSTRAP-ADMINISTRATIVO-INICIAL.md),
+formalizada em
+[`docs/adr/ADR-028-APPLICATION-ACCESS-E-ACESSO-ADMINISTRATIVO.md`](../docs/adr/ADR-028-APPLICATION-ACCESS-E-ACESSO-ADMINISTRATIVO.md):
+como conceder acesso administrativo real a uma `Identity` existente, sem
+`is_admin` em `Identity`, sem `Actor` autenticado real para a primeira
+concessão, e sem misturar isso com permissão fina de negócio de produto
+consumidor.
+
+### O que este CLI cria — e o que NÃO cria
+
+Concede a primeira `ApplicationAccess` com `accessProfile=ADMIN` para a
+aplicação `PCTEC_INGRESSA` a uma `Identity` **já existente**, informada
+pelo operador. **Não cria Identity** (usa `bootstrap:first-identity` para
+isso, separadamente). **Não habilita login** (`loginEnabled` permanece
+como estava). **Não muda `Identity.status`**. **Não cria `Credential`.**
+Ver ADR-028 para a separação completa entre autorização
+(`ApplicationAccess`, esta entrega) e autenticação (`Credential`, Fase C,
+fora de escopo).
+
+### Uso
+
+```bash
+npm run build
+npm run bootstrap:first-admin-access
+```
+
+100% interativo — pede apenas `identityPublicId`. Busca e mostra a
+Identity encontrada (publicId, status atual, e-mail mascarado) antes de
+pedir confirmação. Exige digitar exatamente `GRANT_ADMIN` para confirmar
+— qualquer outra resposta cancela sem nenhuma alteração. Nunca aceita
+código de aplicação ou perfil como entrada — sempre concede exatamente
+`PCTEC_INGRESSA` + `ADMIN`, fixos no código
+(`src/modules/application/domain/value-objects/ApplicationCodes.ts`).
+
+Bloqueado em `NODE_ENV` fora de `development`/`test` (recusa
+incondicional, exit code `2`) — mesmo padrão do CLI de bootstrap de
+Identity.
+
+### Mecanismo de proteção (one-shot)
+
+Named lock MariaDB
+(`GET_LOCK('pctec_ingressa_application_access_bootstrap', ...)`) +
+verificação de que nenhum `ApplicationAccess ADMIN` já está `GRANTED`
+para `PCTEC_INGRESSA`, dentro da mesma transação, na MESMA conexão física
+do início ao fim — mesmo desenho do bootstrap de Identity (ADR-027),
+adaptado (ver ADR-028 para a justificativa completa da diferença de
+guard).
+
+### Auditoria
+
+`application_accesses.granted_by_identity_public_id = NULL` para a
+concessão de bootstrap — nunca um marcador fingindo ser um `public_id`
+real. `audit_events.actor_public_id = "BOOTSTRAP"` — evento de domínio
+`application-access.granted` (já catalogado desde a v0.2.0, payload
+estendido com `access_profile` nesta entrega).
+
+### Migrations desta fatia
+
+Três migrations (não uma — dividida por exigir exatamente uma instrução
+executável por arquivo, regra já reforçada pelo `MigrationRunner` desde a
+v0.4.2): `0005_create_applications`, `0006_create_application_accesses`,
+`0007_seed_pctec_ingressa_application` (seed idempotente, `INSERT
+IGNORE`, da Application que representa a própria plataforma). **Nenhuma
+executada nesta entrega.**
 
 ## v0.5.0 — Bootstrap da primeira Identity (Slice 2)
 
@@ -18,11 +87,13 @@ como nasce a primeira `Identity` da plataforma, se toda criação exige um
 
 Cria a **primeira Identity fundacional** da plataforma (`type=HUMAN`,
 `status=PENDING`, `loginEnabled=false`) — nada além disso.
-**Não cria um administrador funcional.** Não concede acesso a nenhuma
-aplicação (`ApplicationAccess` não existe como código ainda). Não cria
-`Credential`. Ver ADR-027, seção "Fases", para a separação completa
-entre bootstrap (Fase A, esta entrega) e autoridade administrativa real
-(Fases B/C/D, fora de escopo).
+**Não cria um administrador funcional.** Não cria `Credential`. Ver
+ADR-027, seção "Fases", para a separação completa entre bootstrap (Fase A,
+esta entrega) e autoridade administrativa real (Fases B/C/D). A Fase B
+(`ApplicationAccess` administrativo) já existe como código — ver seção
+"v0.5.0 — Administrative Access Foundation" acima; as Fases C/D
+(`Credential`/autenticação, login administrativo) continuam fora de
+escopo.
 
 ### Uso
 
@@ -322,6 +393,7 @@ npm install
 | `npm run test:integration` | Roda testes de integração. Requer `RUN_INTEGRATION_TESTS=true` e um MariaDB real acessível via as variáveis `DB_*`. |
 | `npm run typecheck` | Verifica tipos com TypeScript, sem gerar saída. |
 | `npm run bootstrap:first-identity` | CLI interativo, one-shot — cria a primeira Identity fundacional da plataforma (ver seção acima). |
+| `npm run bootstrap:first-admin-access` | CLI interativo, one-shot — concede a primeira `ApplicationAccess` ADMIN para `PCTEC_INGRESSA` a uma Identity existente (ver seção acima). |
 
 ### Migrations SQL são assets obrigatórios do build
 

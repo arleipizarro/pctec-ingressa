@@ -11,6 +11,7 @@ const DIST_SERVER_JS = path.join(DIST_DIR, "server.js");
 const DIST_MAIN_JS = path.join(DIST_DIR, "main.js");
 const DIST_CLI_MIGRATE_JS = path.join(DIST_DIR, "cli", "migrate.js");
 const DIST_CLI_BOOTSTRAP_FIRST_IDENTITY_JS = path.join(DIST_DIR, "cli", "bootstrap-first-identity.js");
+const DIST_CLI_BOOTSTRAP_FIRST_ADMIN_ACCESS_JS = path.join(DIST_DIR, "cli", "bootstrap-first-admin-access.js");
 const SRC_MIGRATIONS_DIR = path.join(BACKEND_ROOT, "src", "shared", "database", "migrations");
 const DIST_MIGRATIONS_DIR = path.join(DIST_DIR, "shared", "database", "migrations");
 
@@ -61,7 +62,11 @@ describe("build", () => {
     expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_IDENTITY_JS)).toBe(true);
   });
 
-  it("gera dist/shared/database/migrations/ com exatamente as 8 migrations atuais (0001-0004, up/down)", () => {
+  it("gera dist/cli/bootstrap-first-admin-access.js", () => {
+    expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_ADMIN_ACCESS_JS)).toBe(true);
+  });
+
+  it("gera dist/shared/database/migrations/ com exatamente as 14 migrations atuais (0001-0007, up/down)", () => {
     expect(existsSync(DIST_MIGRATIONS_DIR)).toBe(true);
     const distFiles = readdirSync(DIST_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     expect(distFiles).toEqual([
@@ -72,13 +77,19 @@ describe("build", () => {
       "0003_create_audit_events.down.sql",
       "0003_create_audit_events.up.sql",
       "0004_add_checksum_and_timing_to_schema_migrations.down.sql",
-      "0004_add_checksum_and_timing_to_schema_migrations.up.sql"
+      "0004_add_checksum_and_timing_to_schema_migrations.up.sql",
+      "0005_create_applications.down.sql",
+      "0005_create_applications.up.sql",
+      "0006_create_application_accesses.down.sql",
+      "0006_create_application_accesses.up.sql",
+      "0007_seed_pctec_ingressa_application.down.sql",
+      "0007_seed_pctec_ingressa_application.up.sql"
     ]);
   });
 
   it("cada arquivo copiado para dist/ tem SHA-256 idêntico ao arquivo fonte em src/ (cópia byte-a-byte)", () => {
     const srcFiles = readdirSync(SRC_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql"));
-    expect(srcFiles.length).toBe(8);
+    expect(srcFiles.length).toBe(14);
     for (const name of srcFiles) {
       const srcHash = sha256(path.join(SRC_MIGRATIONS_DIR, name));
       const distHash = sha256(path.join(DIST_MIGRATIONS_DIR, name));
@@ -86,7 +97,7 @@ describe("build", () => {
     }
   });
 
-  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 4 migrations (0001-0004) sem depender de src/ nem de banco", async () => {
+  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 7 migrations (0001-0007) sem depender de src/ nem de banco", async () => {
     const compiledModuleUrl = pathToFileURL(path.join(DIST_DIR, "shared", "database", "loadMigrationDefinitions.js")).href;
     const { loadMigrationDefinitions } = (await import(compiledModuleUrl)) as {
       loadMigrationDefinitions: () => Array<{ id: string; up: string; down: string }>;
@@ -98,7 +109,10 @@ describe("build", () => {
       "0001_create_schema_migrations",
       "0002_create_identities",
       "0003_create_audit_events",
-      "0004_add_checksum_and_timing_to_schema_migrations"
+      "0004_add_checksum_and_timing_to_schema_migrations",
+      "0005_create_applications",
+      "0006_create_application_accesses",
+      "0007_seed_pctec_ingressa_application"
     ]);
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);
