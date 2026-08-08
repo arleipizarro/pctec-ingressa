@@ -272,12 +272,33 @@ nomenclatura conceitual em `snake_case` deste catálogo.
   `application_id`, `revoked_at`.
 - **Nunca publicar:** motivo em texto livre que contenha dados sensíveis.
 
+### credential.created
+
+- **Produtor:** bounded context `security`.
+- **Finalidade:** notificar que uma nova credencial foi criada para uma
+  identidade (primeira credencial via bootstrap, ADR-029, ou credencial
+  subsequente via `MagicLink ACTIVATION`, ADR-022).
+- **Identificador da entidade:** `credential_public_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `credential_public_id`, `identity_public_id`,
+  `type`, `correlation_id`, `causation_id`, `actor_public_id`,
+  `occurred_at`.
+- **Nunca publicar:** `password_hash`, senha em qualquer forma, ou
+  qualquer token utilizado para autorizar a criação.
+
+**Nota de correção (v0.5.x — ADR-029):** `credential.created` é distinto
+de `credential.changed` — o primeiro é a criação de uma nova credencial
+(nesta fase, apenas via bootstrap), o segundo (abaixo) fica reservado para
+alterações a uma credencial já existente (troca de senha, etc.), não
+implementado ainda.
+
 ### credential.changed
 
 - **Produtor:** bounded context `security`.
-- **Finalidade:** notificar que a credencial de uma identidade foi criada
-  ou alterada, para fins de auditoria e, futuramente, notificação de
-  segurança ao usuário.
+- **Finalidade:** notificar que uma credencial existente foi alterada
+  (ex.: troca de senha), para fins de auditoria e, futuramente,
+  notificação de segurança ao usuário. **Não usado para a criação da
+  primeira credencial** — ver `credential.created` acima.
 - **Identificador da entidade:** `credential_id`.
 - **Versão:** 1.
 - **Payload mínimo:** `credential_id`, `identity_id`, `type`,

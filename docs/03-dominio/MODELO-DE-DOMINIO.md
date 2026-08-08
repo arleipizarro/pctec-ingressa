@@ -514,14 +514,36 @@ valor `ADMIN`.
 **Responsabilidade:** representar o mecanismo de autenticação de uma
 `Identity`. No MVP, exclusivamente credencial local (senha).
 
+**Nota de correção (v0.5.x — ADR-029, revisão crítica):** modelo revisado
+com as decisões formais da Fase C (ADR-027), incluindo correções feitas
+em uma segunda rodada de revisão crítica antes do commit. `loginIdentifier`
+foi avaliado e **não** adotado — o identificador de login é sempre
+resolvido via `Identity.email_normalized`, nunca duplicado em
+`Credential`. Adicionados `version` (optimistic locking, ADR-024, por
+consistência com as demais entidades já implementadas) e
+`last_authenticated_at` (reservado para a Fase D — login real; não
+populado por nenhum comando desta fase). `failedAttempts`/`lockedUntil`
+foram avaliados e **deferidos** explicitamente (lockout fica para uma
+entrega própria — ver ADR-029, seção "Lockout"; quando implementado,
+`lockedUntil` é um campo temporal na própria linha, nunca um valor de
+`status`). `status` permanece fechado em `ACTIVE`/`REVOKED` — `PENDING`,
+`LOCKED` e `DISABLED` foram avaliados e explicitamente rejeitados como
+valores de `status` (ver ADR-029, "Status de Credential"). A criação da
+primeira credencial é uma exceção de bootstrap **global** (não vinculada
+a nenhuma Identity específica, nem hardcoded) — ver ADR-029, "Escopo
+exato do bootstrap".
+
 **Atributos conceituais:**
 
 - `id` (UUID público).
 - `identity_id`.
 - `type` (`LOCAL_PASSWORD`; outros tipos são futuros e não fazem parte do
-  MVP).
-- `password_hash` (nunca texto puro; algoritmo Pendente de decisão).
+  MVP — ex.: um provedor externo como `MICROSOFT_ENTRA`, sem quebrar
+  `Identity`).
+- `password_hash` (nunca texto puro; algoritmo Argon2id — ADR-029).
 - `status` (`ACTIVE`, `REVOKED`).
+- `last_authenticated_at` (opcional; populado apenas na Fase D).
+- `version` (optimistic locking).
 - `last_changed_at`.
 - `created_at`, `updated_at`.
 
@@ -529,26 +551,39 @@ valor `ADMIN`.
 
 - Senha nunca é armazenada, logada ou trafegada em texto puro em nenhuma
   camada do domínio.
-- Não existe senha provisória: a primeira credencial só é criada como
-  consequência de um `MagicLink` do tipo `ACTIVATION` sendo consumido com
-  sucesso.
-- Uma `Identity` possui no máximo uma `Credential` ativa do tipo
-  `LOCAL_PASSWORD` por vez.
+- Não existe senha provisória: a primeira credencial é criada por um
+  bootstrap explícito e auditável (exceção formalizada em ADR-029); toda
+  `Credential` subsequente nasce por `MagicLink` do tipo `ACTIVATION`
+  consumido com sucesso (regra geral, ADR-022).
+- Existe no máximo **uma linha** de `Credential` por combinação
+  `(identity, type)`, para sempre — garantida por `UNIQUE` de banco
+  (`UNIQUE(identity_public_id, type)`), não apenas por checagem
+  transacional. Rotação de senha é `UPDATE` na mesma linha (`password_hash`,
+  `version += 1`), nunca um novo `INSERT` (revisão crítica de ADR-029,
+  "Rotação de senha e unicidade" — corrige a versão anterior deste
+  documento, que descrevia a unicidade como dependente apenas de
+  checagem transacional).
 
 **Relacionamentos:**
 
-- Pertence a exatamente uma `Identity`.
+- Pertence a exatamente uma `Identity`, referenciada por `public_id`
+  (mesmo padrão de `ApplicationAccess`, ADR-025/028).
 
 **Status conceituais:** `ACTIVE`, `REVOKED`.
 
-**Eventos de domínio:** `credential.changed`.
+**Eventos de domínio:** `credential.created` (nova credencial —
+formalizado em ADR-029), `credential.changed` (alterações futuras a uma
+credencial existente, ex.: troca de senha — não implementado ainda).
 
 **O que não pertence a esta entidade:**
 
-- Algoritmo de hash específico (Pendente de decisão — apenas o requisito de
-  "nunca texto puro, sempre hash resistente" está definido nesta fase).
+- Algoritmo de hash específico como decisão de implementação de biblioteca
+  (a família do algoritmo — Argon2id — já é decisão arquitetural fechada
+  em ADR-029; a biblioteca concreta permanece Pendente de decisão).
 - MFA (previsto no modelo por meio do tipo `MFA_ENROLL` de `MagicLink`, mas
   o mecanismo de segundo fator em si é Pendente de decisão).
+- `loginIdentifier` — nunca duplicado aqui; sempre resolvido via
+  `Identity.email_normalized` (ADR-029).
 
 ---
 

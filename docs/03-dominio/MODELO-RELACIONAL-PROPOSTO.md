@@ -264,6 +264,62 @@ definitiva Pendente de decisão).
 
 ## 8. credentials
 
+**Nota de correção (v0.5.x — ADR-029, revisão crítica antes do commit):**
+desenho revisado com as decisões formais da Fase C, incluindo uma
+correção feita em segunda rodada de revisão. Segue a convenção `id
+BIGINT` interno + `public_id CHAR(36)` externo (ADR-021), não
+`BINARY(16)` como no desenho histórico abaixo — mesma divergência já
+registrada e aceita para `identities`/`applications`/
+`application_accesses`. Adicionadas `version` e `last_authenticated_at`.
+**`UNIQUE(identity_public_id, type)` — decisão corrigida: agora
+adotada** (a primeira versão desta ADR havia rejeitado essa constraint,
+assumindo um modelo de múltiplas linhas históricas por rotação de senha;
+corrigido para o modelo de "atualização em lugar" — uma única linha por
+identidade+tipo, rotação = `UPDATE`, nunca `INSERT` — que torna a
+constraint viável e correta; ver ADR-029, "Rotação de senha e
+unicidade"). Nenhuma migration criada ainda.
+
+| Coluna | Tipo MariaDB | Observações |
+|---|---|---|
+| id | BIGINT UNSIGNED AUTO_INCREMENT | PK interna, nunca exposta (ADR-021) |
+| public_id | CHAR(36) | UUID público, único, imutável |
+| identity_public_id | CHAR(36) | FK → identities.public_id |
+| type | ENUM('LOCAL_PASSWORD') | NOT NULL; sem campos de OAuth/Entra — não inventados antes da hora |
+| password_hash | VARCHAR(255) | NOT NULL (não nullable — só existe LOCAL_PASSWORD nesta fase; ver ADR-029); Argon2id, formato PHC completo |
+| status | ENUM('ACTIVE','REVOKED') | NOT NULL DEFAULT 'ACTIVE'; somente estes dois valores — `PENDING`/`LOCKED`/`DISABLED` avaliados e rejeitados (ADR-029) |
+| last_authenticated_at | DATETIME(3) | NULL; populado só na Fase D |
+| version | BIGINT UNSIGNED | NOT NULL DEFAULT 1; optimistic locking (ADR-024) |
+| created_at | DATETIME(3) | NOT NULL |
+| updated_at | DATETIME(3) | NOT NULL |
+
+Chaves e índices:
+
+- PK: `id`.
+- `UNIQUE KEY uk_credentials_public_id (public_id)`.
+- `UNIQUE KEY uk_credentials_identity_type (identity_public_id, type)` —
+  **corrigido: agora único** (não condicional a `status`) — garante, no
+  nível do banco, que existe no máximo uma `Credential` por combinação
+  identidade+tipo, para sempre. Viável porque rotação de senha é
+  `UPDATE` na mesma linha, não um novo `INSERT` (ver ADR-029).
+- `KEY idx_credentials_status (identity_public_id, type, status)` —
+  índice de apoio para consultas por status, não substitui a `UNIQUE`
+  acima.
+- `FOREIGN KEY (identity_public_id) REFERENCES identities (public_id) ON
+  DELETE RESTRICT ON UPDATE RESTRICT` (mesma justificativa de
+  `application_accesses`: `identities` nunca sofre DELETE físico no fluxo
+  comum; RESTRICT é defesa em profundidade).
+
+Observações de segurança: `password_hash` nunca armazena texto puro;
+tamanho da coluna dimensionado para acomodar o hash resultante do
+Argon2id (que já embute seus parâmetros de custo, sem coluna adicional
+necessária).
+
+**Estrutura histórica preservada apenas como registro (v0.3.0, não mais
+vigente para novas implementações):**
+
+<details>
+<summary>Estrutura histórica (v0.3.0, não vigente)</summary>
+
 | Coluna | Tipo MariaDB | Observações |
 |---|---|---|
 | internal_id | BIGINT UNSIGNED AUTO_INCREMENT | PK interna |
@@ -276,16 +332,7 @@ definitiva Pendente de decisão).
 | created_at | DATETIME | NOT NULL |
 | updated_at | DATETIME | NOT NULL |
 
-Chaves e índices:
-
-- PK: `internal_id`.
-- `UNIQUE KEY uk_credentials_public_id (id)`.
-- `KEY idx_credentials_identity_type_status (identity_internal_id, type,
-  status)`.
-
-Observações de segurança: `password_hash` nunca armazena texto puro;
-tamanho da coluna dimensionado para acomodar algoritmos modernos de hash
-(ex.: Argon2id), mas o algoritmo em si permanece Pendente de decisão.
+</details>
 
 ## 9. magic_links
 
