@@ -231,8 +231,19 @@ Observação: o `refresh_token` não é retornado no corpo desta documentação
 conceitual por ser um valor sensível — seu mecanismo de entrega (cookie
 `HttpOnly`/`Secure` versus corpo de resposta) é Pendente de decisão.
 
-Erros esperados: `INVALID_CREDENTIALS`, `IDENTITY_LOGIN_DISABLED`,
-`IDENTITY_BLOCKED`, `SESSION_NOT_FOUND`.
+Erros esperados: `AUTHENTICATION_FAILED`, `SESSION_NOT_FOUND`.
+
+**Nota de correção (v0.6.0 — ADR-030):** esta seção originalmente listava
+`INVALID_CREDENTIALS`, `IDENTITY_LOGIN_DISABLED`, `IDENTITY_BLOCKED`,
+`SESSION_NOT_FOUND` como erros externos distintos. Corrigido: os três
+primeiros colapsam em um único `AUTHENTICATION_FAILED` (401) — expor
+causas de falha de login separadamente permite enumeração de e-mails
+cadastrados e inferência do estado administrativo de uma conta. Ver
+ADR-030, seção "Conflitos reais encontrados" e "Proteção contra
+enumeração", para a justificativa completa. `SESSION_NOT_FOUND`
+permanece — usado num contexto diferente (validação de sessão já
+estabelecida em requisições subsequentes, não no login em si), onde
+distinguir causas não vaza informação sobre outras contas.
 
 ## 8. `/api/v1/magic-links`
 
@@ -271,6 +282,11 @@ Erros esperados: `MAGIC_LINK_EXPIRED`, `MAGIC_LINK_ALREADY_CONSUMED`,
   à API do Ingressa.
 - Valor padrão e máximo de `limit` na paginação.
 - Onde e como o `refresh_token` é efetivamente entregue ao cliente.
+  **Atualizado (v0.6.0 — ADR-030):** `RefreshToken` foi avaliado e
+  **deferido** para uma fase futura, fora do escopo da Fase D (primeiro
+  login real) — a Fase D usa sessão opaca com expiração absoluta, sem
+  renovação silenciosa. Esta questão permanece pendente apenas para
+  quando `RefreshToken` for de fato implementado.
 - Necessidade de endpoint de introspecção de sessão dedicado para
   consumidores (`/api/v1/sessions/introspect` ou equivalente) — não incluído
   nesta versão conceitual por falta de decisão prévia.
