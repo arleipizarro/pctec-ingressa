@@ -21,9 +21,11 @@
     "migrate:down": "node dist/cli/migrate.js down",
     "migrate:down-all": "node dist/cli/migrate.js down-all",
     "bootstrap:first-identity": "node dist/cli/bootstrap-first-identity.js",
-    "bootstrap:first-admin-access": "node dist/cli/bootstrap-first-admin-access.js"
+    "bootstrap:first-admin-access": "node dist/cli/bootstrap-first-admin-access.js",
+    "bootstrap:first-credential": "node dist/cli/bootstrap-first-credential.js"
   },
   "dependencies": {
+    "argon2": "0.45.1",
     "express": "^5.2.1",
     "mysql2": "3.11.3",
     "zod": "3.23.8"

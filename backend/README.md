@@ -1,12 +1,96 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.5.0 — Administrative Access Foundation**, que evolui a **v0.5.0 —
-Bootstrap da primeira Identity (Slice 2)**, a **v0.5.0 — Identity API,
-Vertical Slice 1 (Identity Query API)**, a correção de
-empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB Integration
-(preparação)**, a **v0.4.1 — Runtime Bootstrap** e a **v0.4.0 — Identity
-Core, Vertical Slice 1** anteriores.
+**v0.5.x — Credential Foundation (Fase C)**, que evolui a **v0.5.0 —
+Administrative Access Foundation**, a **v0.5.0 — Bootstrap da primeira
+Identity (Slice 2)**, a **v0.5.0 — Identity API, Vertical Slice 1
+(Identity Query API)**, a correção de empacotamento/entrypoint da v0.4.2,
+a **v0.4.2 — MariaDB Integration (preparação)**, a **v0.4.1 — Runtime
+Bootstrap** e a **v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+
+## v0.5.x — Credential Foundation (Fase C)
+
+Resolve a Fase C da ADR-027, formalizada em
+[`docs/adr/ADR-029-CREDENTIAL-E-AUTENTICACAO.md`](../docs/adr/ADR-029-CREDENTIAL-E-AUTENTICACAO.md)
+e detalhada em
+[`docs/03-dominio/CREDENTIAL-AUTH-DESIGN.md`](../docs/03-dominio/CREDENTIAL-AUTH-DESIGN.md):
+como nasce a primeira `Credential` da plataforma, sem depender de
+`MagicLink` (infraestrutura de `security` que ainda não existe).
+
+### O que este CLI cria — e o que NÃO cria
+
+Cria a **primeira `Credential` `LOCAL_PASSWORD`** da plataforma, para uma
+`Identity` **já existente** (informada pelo operador) — e, como
+consequência direta dessa criação (mesma transação): ativa a Identity
+(`PENDING → ACTIVE`) e habilita login (`loginEnabled → true`). **Não cria
+Identity** (usa `bootstrap:first-identity` para isso). **Não cria/altera
+`ApplicationAccess`** (usa `bootstrap:first-admin-access` para isso,
+separadamente). **Não implementa login HTTP** — `POST /api/v1/sessions`
+continua inexistente; `AuthenticateIdentityService`/JWT/refresh
+token/session store permanecem fora de escopo desta fatia.
+
+### Argon2id
+
+Biblioteca `argon2` (node-argon2, nativo, mantida, compatível com Node
+22) — auditada antes de adicionar: madura, amplamente usada, sem
+alternativas puras-JS com a mesma maturidade para Argon2id. `bcrypt` foi
+descartado por resistência inferior a ataques com hardware dedicado
+(ADR-029 já havia fixado a família do algoritmo). PHC string completa
+persistida (`$argon2id$v=19$m=...,p=...,t=...$<salt>$<hash>` — ordem real
+dos parâmetros emitida pela biblioteca é `m,p,t`, não `m,t,p`; um bug real
+nesta suposição foi encontrado e corrigido durante a implementação, ver
+`PasswordHash.ts`). Parâmetros de custo (`memoryCost=65536`,
+`timeCost=3`, `parallelism=4`) centralizados em `ARGON2ID_PARAMS`
+(`Argon2PasswordHasher.ts`) — correspondem aos defaults documentados da
+própria biblioteca, tratados como **provisórios até benchmark real em
+produção** (ADR-029).
+
+### Uso
+
+```bash
+npm run build
+npm run bootstrap:first-credential
+```
+
+100% interativo — pede `identityPublicId`, senha e confirmação de senha,
+ambas **ocultas no terminal** (implementado em Node.js puro, modo raw do
+TTY — nenhuma dependência nova além de `argon2`; ver `readHiddenLine` em
+`bootstrap-first-credential.ts`). Mostra a Identity encontrada (publicId,
+e-mail mascarado, status atual) e as três ações que serão executadas
+antes de pedir confirmação. Exige digitar exatamente `CREATE_CREDENTIAL`
+— qualquer outra resposta cancela sem nenhuma alteração. Nunca aceita
+senha via argumento de linha de comando.
+
+Bloqueado em `NODE_ENV` fora de `development`/`test` (mesmo padrão dos
+dois CLIs de bootstrap anteriores).
+
+### Guard global one-shot (não por Identity)
+
+O guard que impede reexecução verifica se **já existe qualquer
+`Credential LOCAL_PASSWORD` em toda a plataforma**, não "esta Identity já
+tem credencial" — isso é o que impede que este CLI vire um bypass
+permanente de `MagicLink` para usuários futuros (ver ADR-029, "Escopo
+exato do bootstrap"). Named lock dedicado:
+`pctec_ingressa_credential_bootstrap`.
+
+### Extensão em `MariaDbIdentityRepository.update()`
+
+Corrigido durante esta implementação: o `UPDATE` de `Identity` persistia
+`version = version + 1` como incremento relativo fixo no SQL — isso
+quebraria ao persistir duas mutações de domínio em sequência
+(`activate()` + `enableLogin()`, cada uma incrementando `version` em
+memória) com uma única chamada. Corrigido para persistir o valor absoluto
+de `identity.getVersion()`, mantendo a condição `WHERE version =
+expectedVersion` para o optimistic locking real. Ver comentário na
+implementação para a justificativa completa.
+
+### Migration desta fatia
+
+`0008_create_credentials` — `UNIQUE(identity_public_id, type)`
+incondicional (viável porque rotação futura de senha será `UPDATE` na
+mesma linha, nunca `INSERT` novo — ADR-029), `status` fechado em
+`ACTIVE`/`REVOKED`, FK para `identities.public_id` com `ON DELETE
+RESTRICT ON UPDATE RESTRICT`. **Não executada nesta entrega.** Sem seed.
 
 ## v0.5.0 — Administrative Access Foundation
 
@@ -394,6 +478,7 @@ npm install
 | `npm run typecheck` | Verifica tipos com TypeScript, sem gerar saída. |
 | `npm run bootstrap:first-identity` | CLI interativo, one-shot — cria a primeira Identity fundacional da plataforma (ver seção acima). |
 | `npm run bootstrap:first-admin-access` | CLI interativo, one-shot — concede a primeira `ApplicationAccess` ADMIN para `PCTEC_INGRESSA` a uma Identity existente (ver seção acima). |
+| `npm run bootstrap:first-credential` | CLI interativo, one-shot — cria a primeira `Credential LOCAL_PASSWORD`, ativa a Identity e habilita login (ver seção acima). |
 
 ### Migrations SQL são assets obrigatórios do build
 

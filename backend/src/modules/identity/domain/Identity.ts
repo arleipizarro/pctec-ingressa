@@ -430,6 +430,48 @@ export class Identity {
     );
   }
 
+  /**
+   * Ativa a Identity como parte do bootstrap da primeira Credential
+   * (v0.5.x, Fase C — ADR-029) — mesma transição `PENDING → ACTIVE` de
+   * `activate()`, mas SEM receber um `actor` externo: internamente usa
+   * `ActorPublicId.bootstrap()`, produzindo um evento com
+   * `actorPublicId = "BOOTSTRAP"`, mesmo princípio já usado por
+   * `createFoundational()` (ADR-027) e por
+   * `ApplicationAccess.grantFoundationalAdminAccess()` (ADR-028).
+   *
+   * **Uso exclusivo de `BootstrapFirstCredentialService`.** Deliberadamente
+   * não reutiliza `activate({ actor: ActorPublicId.bootstrap(), ... })`
+   * a partir do serviço — o serviço nunca importa nem constrói
+   * `ActorPublicId.bootstrap()` diretamente; só `Identity` conhece esse
+   * marcador reservado, mantendo-o localizado (revisão crítica: uma
+   * primeira versão desta funcionalidade ampliava `ActorPublicId` para
+   * reconhecer `"BOOTSTRAP"` genericamente via `required()`, o que teria
+   * permitido que QUALQUER string externa fosse aceita como esse actor —
+   * corrigido).
+   */
+  public activateForCredentialBootstrap(input: {
+    expectedVersion: number;
+    correlationId: string;
+    causationId?: string | undefined;
+    now?: Date | undefined;
+  }): void {
+    this.activate({ actor: ActorPublicId.bootstrap(), ...input });
+  }
+
+  /**
+   * Habilita login como parte do bootstrap da primeira Credential
+   * (v0.5.x, Fase C — ADR-029) — mesmo princípio de
+   * `activateForCredentialBootstrap()` acima, aplicado a `enableLogin()`.
+   */
+  public enableLoginForCredentialBootstrap(input: {
+    expectedVersion: number;
+    correlationId: string;
+    causationId?: string | undefined;
+    now?: Date | undefined;
+  }): void {
+    this.enableLogin({ actor: ActorPublicId.bootstrap(), ...input });
+  }
+
   /** Desabilita login. Idempotente, mesmo padrão de `enableLogin`. */
   public disableLogin(input: {
     actor: ActorPublicId;

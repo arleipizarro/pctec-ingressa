@@ -185,6 +185,21 @@ serviço.
 
 ---
 
+## 6.1 Nota de implementação — ordem real dos parâmetros PHC (achado durante a implementação)
+
+A biblioteca `argon2` (node-argon2) real emite a string PHC com os
+parâmetros de custo na ordem `m=...,p=...,t=...` (memória, paralelismo,
+tempo) — **não** `m=...,t=...,p=...` como uma primeira versão da
+validação de formato (`PasswordHash.ts`) assumia. Esse é um bug real,
+encontrado ao testar `PasswordHash.fromPhcString()` contra hashes gerados
+pela biblioteca de verdade (não apenas fixtures manuais construídas à
+mão) — a regra de validação foi corrigida para não assumir nenhuma ordem
+fixa entre `m`/`t`/`p`, apenas que os três aparecem, cada um uma vez,
+como pares `chave=valor` separados por vírgula. Registrado aqui porque é
+exatamente o tipo de detalhe que só aparece testando contra a biblioteca
+real — reforça por que `Argon2PasswordHasher.test.ts` chama a biblioteca
+de verdade em vez de usar apenas fixtures.
+
 ## 7. Riscos residuais
 
 - Lockout/rate limiting não desenhado em detalhe — deferido, ver ADR-029.

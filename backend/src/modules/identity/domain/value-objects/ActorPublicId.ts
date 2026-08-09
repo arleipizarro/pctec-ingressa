@@ -16,15 +16,38 @@ export class ActorRequiredError extends DomainError {
  * Value Object ActorPublicId.
  *
  * Representa "quem realizou a ação de domínio" (ver Linguagem Ubíqua,
- * termo `Actor`). Pode ser o `public_id` de uma Identity humana, ou o
+ * termo `Actor`). Pode ser o `public_id` de uma Identity humana, o
  * marcador reservado `SYSTEM`, usado quando a ação é disparada por um
- * processo automatizado interno ao domínio (ver termo `System Actor`).
+ * processo automatizado interno ao domínio (ver termo `System Actor`),
+ * ou o marcador reservado `BOOTSTRAP` (ver nota abaixo).
  *
  * Ausência de actor em um comando que o exige é sempre um erro de domínio
  * (`ACTOR_REQUIRED`) — nunca um valor padrão silencioso.
+ *
+ * **Nota sobre `BOOTSTRAP` (v0.5.x, Fase C — ADR-029; revisão crítica
+ * antes do commit):** `ActorPublicId.bootstrap()` existe para permitir
+ * que `Identity` construa internamente um actor válido para os métodos
+ * bootstrap-específicos `activateForCredentialBootstrap()`/
+ * `enableLoginForCredentialBootstrap()` (ver `Identity.ts`) — nunca
+ * chamado a partir de `BootstrapFirstCredentialService` ou de qualquer
+ * outro Application Service diretamente.
+ *
+ * **Decisão arquitetural deliberada, revisada em relação a uma primeira
+ * tentativa incorreta:** uma primeira versão desta mudança também
+ * ensinava `required()` (o método que faz parsing de uma string externa
+ * vinda da borda de um Application Service) a reconhecer
+ * `"BOOTSTRAP"` — isso tornaria `ActorPublicId.required("BOOTSTRAP")`
+ * aceitável a partir de QUALQUER string vinda de fora (ex.: um header
+ * HTTP, um corpo de requisição, um argv), contrariando o princípio já
+ * estabelecido na ADR-027 de nunca ampliar `ActorPublicId` genericamente
+ * só para acomodar bootstrap. **Corrigido:** `required()` permanece
+ * exatamente como estava — `bootstrap()` só é alcançável por código que
+ * escreve literalmente essa chamada em tempo de compilação, nunca por
+ * uma string de entrada não confiável.
  */
 export class ActorPublicId {
   public static readonly SYSTEM_MARKER = "SYSTEM" as const;
+  public static readonly BOOTSTRAP_MARKER = "BOOTSTRAP" as const;
 
   private readonly value: string;
   private readonly isSystem: boolean;
@@ -45,9 +68,26 @@ export class ActorPublicId {
   }
 
   /**
+   * Actor do bootstrap — uso exclusivo interno de `Identity`, nos
+   * métodos `activateForCredentialBootstrap()`/
+   * `enableLoginForCredentialBootstrap()`. NUNCA chamado a partir de
+   * `required()` (parsing de string externa) nem diretamente por
+   * nenhum Application Service — ver nota da classe acima.
+   */
+  public static bootstrap(): ActorPublicId {
+    return new ActorPublicId(ActorPublicId.BOOTSTRAP_MARKER, false);
+  }
+
+  /**
    * Constrói um ActorPublicId a partir de um valor opcional, lançando
    * ACTOR_REQUIRED se ausente. Uso típico na borda dos Application
    * Services, antes de invocar comandos do Aggregate.
+   *
+   * Deliberadamente NÃO reconhece `"BOOTSTRAP"` aqui — ver nota da
+   * classe acima. Uma string `"BOOTSTRAP"` vinda de fora (ex.: de uma
+   * requisição HTTP) é tratada como um `publicId` comum e falhará a
+   * validação de UUID de `PublicId.fromString()`, nunca sendo aceita
+   * como o actor reservado de bootstrap.
    */
   public static required(value: string | undefined | null): ActorPublicId {
     if (value === undefined || value === null || value.trim().length === 0) {
@@ -61,6 +101,10 @@ export class ActorPublicId {
 
   public isSystemActor(): boolean {
     return this.isSystem;
+  }
+
+  public isBootstrapActor(): boolean {
+    return this.value === ActorPublicId.BOOTSTRAP_MARKER;
   }
 
   public toString(): string {

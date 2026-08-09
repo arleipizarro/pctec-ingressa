@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 7 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 8 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -12,7 +12,8 @@ describe("loadMigrationDefinitions", () => {
       "0004_add_checksum_and_timing_to_schema_migrations",
       "0005_create_applications",
       "0006_create_application_accesses",
-      "0007_seed_pctec_ingressa_application"
+      "0007_seed_pctec_ingressa_application",
+      "0008_create_credentials"
     ]);
 
     for (const migration of migrations) {
@@ -69,6 +70,56 @@ describe("loadMigrationDefinitions", () => {
     expect(accessesMigration?.up).not.toContain("BINARY(16)");
     expect(accessesMigration?.up).toContain("FOREIGN KEY (identity_public_id) REFERENCES identities (public_id)");
     expect(accessesMigration?.up).toContain("FOREIGN KEY (application_public_id) REFERENCES applications (public_id)");
+  });
+
+  it("credentials (0008) segue a mesma convenção id BIGINT interno + public_id CHAR(36) (ADR-021), UNIQUE(identity_public_id, type), FK RESTRICT/RESTRICT", () => {
+    const migrations = loadMigrationDefinitions();
+    const credentialsMigration = migrations.find((m) => m.id === "0008_create_credentials");
+
+    expect(credentialsMigration).toBeDefined();
+    expect(credentialsMigration?.up).toContain("public_id");
+    expect(credentialsMigration?.up).toContain("CHAR(36)");
+    expect(credentialsMigration?.up).not.toContain("BINARY(16)");
+    expect(credentialsMigration?.up).toContain("UNIQUE KEY uk_credentials_identity_type (identity_public_id, type)");
+    expect(credentialsMigration?.up).toContain("ENUM('LOCAL_PASSWORD')");
+    expect(credentialsMigration?.up).toContain("ENUM('ACTIVE','REVOKED')");
+    expect(credentialsMigration?.up).toContain("FOREIGN KEY (identity_public_id) REFERENCES identities (public_id)");
+    expect(credentialsMigration?.up).toContain("ON DELETE RESTRICT ON UPDATE RESTRICT");
+    // status fechado — nenhum valor além de ACTIVE/REVOKED (ADR-029, "Status de Credential").
+    expect(credentialsMigration?.up.toUpperCase()).not.toContain("'PENDING'");
+    expect(credentialsMigration?.up.toUpperCase()).not.toContain("'LOCKED'");
+    expect(credentialsMigration?.up.toUpperCase()).not.toContain("'DISABLED'");
+  });
+
+  it("credentials (0008) [revisão crítica, item 6]: UNIQUE(public_id), password_hash VARCHAR(255), charset/collation compatíveis, down específico só de DROP TABLE credentials", () => {
+    const migrations = loadMigrationDefinitions();
+    const credentialsMigration = migrations.find((m) => m.id === "0008_create_credentials");
+
+    expect(credentialsMigration).toBeDefined();
+
+    // UNIQUE(public_id) — distinto de UNIQUE(identity_public_id, type),
+    // já coberto no teste acima.
+    expect(credentialsMigration?.up).toContain("UNIQUE KEY uk_credentials_public_id (public_id)");
+
+    // password_hash com tamanho suficiente para o PHC completo do
+    // Argon2id (medido em Argon2PasswordHasher.test.ts: ~97 caracteres
+    // com os parâmetros atuais — VARCHAR(255) dá folga generosa).
+    expect(credentialsMigration?.up).toContain("password_hash          VARCHAR(255)  NOT NULL");
+
+    // Charset/collation idênticos aos de `identities` (mesma tabela
+    // referenciada pela FK) — evita qualquer problema de comparação de
+    // string entre collations diferentes na junção da FK.
+    expect(credentialsMigration?.up).toContain("DEFAULT CHARSET = utf8mb4");
+    expect(credentialsMigration?.up).toContain("COLLATE = utf8mb4_unicode_520_ci");
+
+    // down específico: SOMENTE um DROP TABLE de `credentials`, nenhuma
+    // outra tabela tocada.
+    const downTrimmed = credentialsMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DROP TABLE IF EXISTS credentials;");
+    // Nenhuma outra tabela mencionada no down (ex.: não deveria
+    // acidentalmente tocar identities/applications/application_accesses).
+    expect(downTrimmed.toUpperCase()).not.toContain("IDENTITIES");
+    expect(downTrimmed.toUpperCase()).not.toContain("APPLICATIONS");
   });
 
   it("application_accesses: todas as 4 FKs têm ON DELETE RESTRICT ON UPDATE RESTRICT explícito (nunca CASCADE/SET NULL)", () => {

@@ -160,6 +160,28 @@ export class MariaDbIdentityRepository implements IdentityRepository {
     identity.assignInternalIdFromPersistence(insertResult.insertId);
   }
 
+  /**
+   * Persiste o estado atual da Identity, aplicando optimistic locking:
+   * o `UPDATE` só afeta a linha se `version` no banco ainda for
+   * `expectedVersion` (o valor lido antes da(s) mutação(ões) em
+   * memória).
+   *
+   * **Extensão v0.5.x (Fase C — Credential Foundation, task seção 17):**
+   * `version` é persistida como o valor ABSOLUTO atual de
+   * `identity.getVersion()`, não mais um incremento relativo
+   * (`version = version + 1`) hardcoded no SQL. Motivo: um único
+   * `Application Service` pode legitimamente chamar mais de um comando de
+   * domínio sobre a mesma Identity antes de persistir (ex.:
+   * `BootstrapFirstCredentialService` chama `activate()` e
+   * `enableLogin()` em sequência, cada um incrementando `version` em
+   * memória) — se o `UPDATE` sempre aplicasse `+1` relativo,
+   * independente de quantas mutações ocorreram em memória, o banco
+   * divergiria do agregado após uma única chamada de `update()` cobrindo
+   * múltiplas mutações. Persistir o valor absoluto elimina essa
+   * fragilidade, sem mudar a semântica de optimistic locking (a
+   * condição `WHERE version = expectedVersion` continua sendo a
+   * garantia de concorrência).
+   */
   public async update(identity: Identity, expectedVersion: number): Promise<void> {
     const cpf = identity.getCpf();
     const deletedBy = identity.getDeletedByPublicIdForPersistence();
@@ -172,7 +194,7 @@ export class MariaDbIdentityRepository implements IdentityRepository {
               cpf_normalized = ?,
               status = ?,
               login_enabled = ?,
-              version = version + 1,
+              version = ?,
               updated_at = ?,
               updated_by_identity_public_id = ?,
               deleted_at = ?,
@@ -188,6 +210,7 @@ export class MariaDbIdentityRepository implements IdentityRepository {
         cpf?.normalized() ?? null,
         identity.getStatus().toString(),
         identity.isLoginEnabled() ? 1 : 0,
+        identity.getVersion(),
         identity.getUpdatedAt(),
         identity.getUpdatedByPublicIdForPersistence() ?? null,
         identity.getDeletedAt() ?? null,
