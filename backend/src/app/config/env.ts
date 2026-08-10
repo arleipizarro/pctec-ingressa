@@ -55,7 +55,24 @@ const envSchema = z.object({
   SESSION_COOKIE_SECURE: z
     .string()
     .default("true")
-    .transform((value) => value.toLowerCase() === "true")
+    .transform((value) => value.toLowerCase() === "true"),
+  // --- CSRF (v0.6.x, Fase E) ---
+  // Lista de origens confiáveis para validação de Origin/Referer em
+  // endpoints mutáveis autenticados por cookie (ADR-030, "CSRF") — usada
+  // por `DELETE /api/v1/sessions/current` (logout). Nunca hardcoded no
+  // código (`csrfGuard.ts` recebe a lista como parâmetro); configurável
+  // via env, separada por vírgula. Default cobre apenas o ambiente local
+  // desta fatia (`127.0.0.1:PORT`) — produção real precisa configurar
+  // explicitamente o(s) domínio(s) do frontend.
+  ALLOWED_ORIGINS: z
+    .string()
+    .default("http://127.0.0.1:3011")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter((origin) => origin.length > 0)
+    )
 });
 
 export type Env = z.infer<typeof envSchema>;

@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { SessionRepository } from "../../domain/session/SessionRepository.js";
 import { Session, type SessionPersistedState } from "../../domain/session/Session.js";
+import { SessionVersionConflictError } from "../../domain/session/errors/SessionErrors.js";
 
 type SessionRow = Record<string, unknown>;
 
@@ -115,5 +116,37 @@ export class MariaDbSessionRepository implements SessionRepository {
     const rowList = rows as SessionRow[];
     const row = rowList[0];
     return row === undefined ? undefined : Session.reconstitute(mapRowToPersistedState(row));
+  }
+
+  /**
+   * `SET version = ?` recebe o valor ABSOLUTO atual de
+   * `session.getVersion()` (não um incremento relativo hardcoded) —
+   * mesmo princípio já corrigido em `MariaDbIdentityRepository.update()`/
+   * `MariaDbCredentialRepository.update()`.
+   */
+  public async update(session: Session, expectedVersion: number): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE sessions
+          SET status = ?,
+              last_seen_at = ?,
+              revoked_at = ?,
+              revocation_reason = ?,
+              version = ?
+        WHERE public_id = ?
+          AND version = ?`,
+      [
+        session.getStatus(),
+        session.getLastSeenAt() ?? null,
+        session.getRevokedAt() ?? null,
+        session.getRevocationReason() ?? null,
+        session.getVersion(),
+        session.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    const updateResult = result as { affectedRows: number };
+    if (updateResult.affectedRows === 0) {
+      throw new SessionVersionConflictError(expectedVersion, session.getVersion());
+    }
   }
 }

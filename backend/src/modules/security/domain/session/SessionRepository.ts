@@ -21,4 +21,16 @@ export interface SessionRepository {
   findByTokenHash(tokenHash: string): Promise<Session | undefined>;
 
   findByPublicId(publicId: string): Promise<Session | undefined>;
+
+  /**
+   * Atualiza uma Session existente, aplicando optimistic locking:
+   * `WHERE version = expectedVersion` (a versão que a instância tinha
+   * ANTES da mutação em memória) — `SET version` recebe o valor
+   * absoluto final (`session.getVersion()`), mesmo padrão já corrigido
+   * em `MariaDbIdentityRepository.update()`/`MariaDbCredentialRepository.update()`.
+   * Se nenhuma linha for afetada, a implementação deve lançar
+   * `SessionVersionConflictError`. Uso desta fatia (v0.6.x, Fase E):
+   * exclusivamente para persistir `revoke()` (logout).
+   */
+  update(session: Session, expectedVersion: number): Promise<void>;
 }

@@ -129,25 +129,50 @@ describe("Session — lifecycle: ACTIVE/REVOKED/EXPIRED (derivado)", () => {
     expect(session.isExpired(exactExpiry)).toBe(true);
   });
 
-  it("revoke() muda status para REVOKED, seta revokedAt/revocationReason, incrementa version", () => {
+  it("revoke() muda status para REVOKED, seta revokedAt/revocationReason, incrementa version, produz evento session.revoked", () => {
     const session = buildSession();
+    session.pullDomainEvents(); // limpa o session.created já pulado por create()
     const now = new Date("2026-01-01T05:00:00Z");
 
-    session.revoke("LOGOUT", now);
+    session.revoke({ reason: "LOGOUT", actorPublicId: IDENTITY_PUBLIC_ID, correlationId: CORRELATION_ID, now });
 
     expect(session.getStatus()).toBe("REVOKED");
     expect(session.isRevoked()).toBe(true);
     expect(session.getRevokedAt()).toEqual(now);
     expect(session.getRevocationReason()).toBe("LOGOUT");
     expect(session.getVersion()).toBe(2);
+
+    const [event] = session.pullDomainEvents();
+    expect(event?.eventType).toBe("session.revoked");
+    expect(event?.actorPublicId).toBe(IDENTITY_PUBLIC_ID);
   });
 
   it("sessão revogada é sempre inválida, mesmo se ainda não expirada", () => {
     const now = new Date("2026-01-01T00:00:00Z");
     const session = buildSession({ ttlSeconds: 3600, now });
-    session.revoke("LOGOUT", now);
+    session.revoke({ reason: "LOGOUT", actorPublicId: IDENTITY_PUBLIC_ID, correlationId: CORRELATION_ID, now });
 
     expect(session.isValid(now)).toBe(false);
+  });
+
+  it("o payload do evento session.revoked não contém token bruto, hash, cookie ou header Authorization — só sessionPublicId/identityPublicId/reason", () => {
+    const session = buildSession();
+    session.pullDomainEvents(); // limpa o session.created já pulado nos testes anteriores desta suíte
+    const now = new Date("2026-01-01T05:00:00Z");
+
+    session.revoke({ reason: "LOGOUT", actorPublicId: IDENTITY_PUBLIC_ID, correlationId: CORRELATION_ID, now });
+    const [event] = session.pullDomainEvents();
+
+    const serialized = JSON.stringify(event?.payload);
+    expect(event?.payload).not.toHaveProperty("tokenHash");
+    expect(event?.payload).not.toHaveProperty("rawToken");
+    expect(event?.payload).not.toHaveProperty("token");
+    expect(event?.payload).not.toHaveProperty("cookie");
+    expect(event?.payload).not.toHaveProperty("authorization");
+    expect(serialized).not.toContain(TOKEN_HASH);
+    expect(Object.keys(event?.payload ?? {}).sort()).toEqual(
+      ["identityPublicId", "reason", "sessionPublicId"].sort()
+    );
   });
 
   it("touch() atualiza lastSeenAt", () => {

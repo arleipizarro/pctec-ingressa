@@ -13,10 +13,13 @@ import type { CredentialType } from "../domain/value-objects/CredentialType.js";
  */
 export class FakeAuthIdentityRepository implements IdentityRepository {
   public readonly byEmail = new Map<string, Identity>();
+  public readonly byPublicId = new Map<string, Identity>();
   public findByNormalizedEmailCalls: string[] = [];
+  public findByPublicIdCalls: string[] = [];
 
-  public async findByPublicId(_publicId: PublicId): Promise<Identity | undefined> {
-    return undefined;
+  public async findByPublicId(publicId: PublicId): Promise<Identity | undefined> {
+    this.findByPublicIdCalls.push(publicId.toString());
+    return this.byPublicId.get(publicId.toString());
   }
 
   public async findByNormalizedEmail(normalizedEmail: string): Promise<Identity | undefined> {

@@ -386,14 +386,77 @@ mesma mensagem genérica. Internamente (auditoria/telemetria), o motivo
 real é distinguível (`authentication.failed`, payload com `reason`
 interno — nunca exposto na resposta HTTP).
 
-**Em requisições subsequentes (sessão já estabelecida):** `SESSION_NOT_FOUND`/
-`SESSION_EXPIRED`/`SESSION_REVOKED` **podem** ser distintos externamente
-— contexto diferente do login: o cliente já demonstrou posse de *algum*
-token antes (não é um chute de credencial alheia), então distinguir
-"sua sessão expirou" de "sua sessão foi revogada" não vaza informação
-sobre a existência de OUTRAS contas — é informação sobre a própria sessão
-do chamador. Mantidos como códigos separados, conforme já listado em
-`API-CONTRACT-V1.md` e pedido explicitamente pela task (seção 30).
+**Em requisições subsequentes (sessão já estabelecida):
+`SESSION_INVALID` — decisão REVISTA (v0.6.x, Fase E).** A versão
+original desta ADR (Fase D) previa `SESSION_NOT_FOUND`/`SESSION_EXPIRED`/
+`SESSION_REVOKED` como códigos externos distintos, com o raciocínio de
+que o cliente já demonstrou posse de *algum* token antes, então
+distinguir a causa não vazaria existência de OUTRAS contas. Na
+implementação real da Fase E, essa decisão foi revista e substituída:
+mesmo sem vazar existência de outras contas, distinguir "revogada" de
+"expirada" de "nunca existiu" ainda entrega um sinal comportamental a
+quem possui um token roubado/copiado (ex.: "revogada" sugere que o dono
+legítimo agiu — trocou de dispositivo, percebeu o roubo, fez logout;
+"expirada" sugere só passagem de tempo, nenhuma ação humana). Colapsar é
+estritamente mais seguro e não custa usabilidade real — a resposta
+correta do cliente é sempre idêntica ("autentique novamente").
+
+**Resolução final:** todas as causas de falha de validação de sessão —
+cookie ausente, cookie vazio/malformado (incluindo cookie duplicado, ver
+"Cookie duplicado" abaixo), token desconhecido, `Session` inexistente,
+`Session` `REVOKED`, `Session` expirada, `Identity` inexistente,
+`Identity` não `ACTIVE`, `loginEnabled=false` — produzem a MESMA resposta
+externa: `SESSION_INVALID`, HTTP 401, mesma mensagem genérica. Nunca
+revelar `SESSION_NOT_FOUND`/`SESSION_REVOKED`/`SESSION_EXPIRED`/
+`IDENTITY_LOGIN_DISABLED` (nem qualquer variante) nesta borda HTTP.
+Internamente (diagnóstico/telemetria futura), o motivo real permanece
+distinguível (campo `reason` interno do erro — nunca exposto na resposta
+HTTP), mesmo padrão já usado por `AUTHENTICATION_FAILED`/`reason` no
+login.
+
+## Cookie duplicado — fail closed (v0.6.x, Fase E)
+
+Se o header `Cookie` contiver o nome canônico (`ingressa_session`) mais
+de uma vez — tecnicamente inválido por HTTP, mas alguns
+proxies/clientes malformados ou um ataque de "cookie injection" via
+subdomínio podem produzir isso — a decisão é **fail closed**: tratar
+como sessão inválida (`SESSION_INVALID`, 401), nunca escolher entre os
+valores (nem o primeiro, nem o último). Motivo: escolher qualquer um dos
+dois tornaria a autenticação dependente de uma precedência/ordem
+ambígua de cookies — um comportamento que pode divergir entre
+navegadores, proxies e a própria biblioteca de parsing, uma superfície
+de ambiguidade que não deveria existir para uma decisão de segurança.
+Nenhum dos dois valores é logado.
+
+## Formato do token — decisão única (v0.6.x, Fase E)
+
+`ValidateSessionService` **não valida o formato/comprimento do token
+antes do hash** — qualquer string não vazia é normalizada (`SHA-256`) e
+consultada no banco via `token_hash`. Decisão única, documentada:
+validar formato (ex.: rejeitar strings que não sejam `base64url` de 43
+caracteres) adicionaria uma segunda categoria de rejeição (formato
+inválido vs. não encontrado) sem ganho de segurança real — um token com
+formato "impossível" simplesmente não vai corresponder a nenhum
+`token_hash` real no lookup, produzindo o mesmo `SESSION_INVALID` de
+qualquer forma. Adicionar uma checagem de formato só criaria um segundo
+caminho de código para o mesmo resultado externo, sem reduzir a
+superfície de ataque (o SHA-256 de uma string maliciosa/malformada
+continua computável e seguro). Único requisito mantido: string não
+vazia (mesmo teste que já existe para "cookie vazio").
+
+## Sem dummy hash — diferente do login (v0.6.x, Fase E)
+
+Validação de sessão **não usa Argon2id/dummy hash**. Justificativa: o
+token de sessão já tem 256 bits de entropia criptográfica (`crypto.
+randomBytes(32)`, ADR-030 "Como o token é gerado?") — um atacante não
+pode adivinhar/forçar um token válido por tentativa e erro, com ou sem
+diferença de timing entre as causas de falha. A mitigação de timing do
+login (dummy Argon2id) existe para proteger contra enumeração de CONTAS
+via e-mail — um problema de baixa entropia (e-mails são relativamente
+previsíveis/enumeráveis) que não existe aqui: o "identificador" nesta
+etapa é um token de alta entropia, nunca um valor de baixo espaço de
+busca. O lookup por `SHA-256` indexado é a única operação, sem custo
+computacional variável — não há nada a nivelar.
 
 ## Timing attacks
 
@@ -556,10 +619,18 @@ nenhuma forma, direta ou derivada:
 
 | Código | HTTP | Contexto | Observação |
 |---|---|---|---|
-| `AUTHENTICATION_FAILED` | 401 (nova classificação `AUTHENTICATION`, ver "Conflitos") | Login (`POST /sessions`) | Único código externo para qualquer causa de falha de login — ver "Proteção contra enumeração". |
-| `SESSION_NOT_FOUND` | 401 | Validação de sessão em requisição subsequente | Token não corresponde a nenhuma sessão. |
-| `SESSION_EXPIRED` | 401 | Idem | `expires_at <= NOW()`. |
-| `SESSION_REVOKED` | 401 | Idem | `status = 'REVOKED'`. |
+| `AUTHENTICATION_FAILED` | 401 (classificação `AUTHENTICATION`, ver "Conflitos") | Login (`POST /sessions`) | Único código externo para qualquer causa de falha de login — ver "Proteção contra enumeração". Tentativa de CRIAR uma sessão nova falhou. |
+| `SESSION_INVALID` | 401 | Validação de uma sessão já existente (`GET /me`, `DELETE /sessions/current`, middleware) — **v0.6.x, Fase E, decisão revista** | Único código externo para toda causa de falha de validação — ver "Proteção contra enumeração" abaixo, revisão explícita da decisão original desta ADR. Credencial de sessão apresentada não autentica mais a requisição. |
+
+**`AUTHENTICATION_FAILED` × `SESSION_INVALID` — diferença formal:**
+`AUTHENTICATION_FAILED` responde a uma tentativa de criar uma sessão
+nova que falhou (`POST /api/v1/sessions`) — não havia sessão alguma
+ainda. `SESSION_INVALID` responde a uma sessão *já existente* (via
+cookie) que não autentica mais a requisição atual, por qualquer motivo
+(`GET /api/v1/me`, `DELETE /sessions/current`, ou qualquer middleware de
+autenticação futuro). Ambos pertencem exclusivamente a `AUTHENTICATION`
+(401) — nunca `AUTHORIZATION` (403); a diferença entre eles é de
+*contexto* (criar vs. validar uma sessão), não de classificação.
 
 `500` sempre sanitizado (mesmo padrão já em `createApp.ts`: `{code:
 "INTERNAL_ERROR", message: "Erro interno inesperado.", correlation_id,

@@ -23,6 +23,10 @@ class FakeSessionRepository implements SessionRepository {
   public async findByPublicId(): Promise<Session | undefined> {
     return undefined;
   }
+
+  public async update(): Promise<void> {
+    // não exercitado nesta fatia (v0.6.0)
+  }
 }
 
 class FixedSessionTokenGenerator implements SessionTokenGenerator {

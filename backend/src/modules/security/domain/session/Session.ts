@@ -1,5 +1,10 @@
 import { PublicId } from "../value-objects/PublicId.js";
-import { createSessionCreatedEvent, type SessionCreatedEvent } from "./SessionDomainEvents.js";
+import {
+  createSessionCreatedEvent,
+  createSessionRevokedEvent,
+  type SessionCreatedEvent,
+  type SessionRevokedEvent
+} from "./SessionDomainEvents.js";
 
 export type SessionStatusValue = "ACTIVE" | "REVOKED";
 
@@ -58,7 +63,7 @@ export class Session {
   private revocationReason: string | undefined;
   private version: number;
 
-  private readonly domainEvents: SessionCreatedEvent[] = [];
+  private readonly domainEvents: Array<SessionCreatedEvent | SessionRevokedEvent> = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -151,7 +156,7 @@ export class Session {
     });
   }
 
-  public pullDomainEvents(): SessionCreatedEvent[] {
+  public pullDomainEvents(): Array<SessionCreatedEvent | SessionRevokedEvent> {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;
@@ -227,18 +232,47 @@ export class Session {
   }
 
   /**
-   * Revoga a sessão — usado pelo logout (`revocationReason = 'LOGOUT'`)
-   * e, no futuro, por revogação em massa administrativa (ADR-030,
-   * "Invalidação de sessão" — não implementada nesta fatia). Idempotente
-   * na semântica de domínio (revogar uma sessão já revogada não é um
-   * erro aqui — a checagem de "já revogada" fica a critério do chamador,
-   * se necessário).
+   * Revoga a sessão — usado pelo logout (`revocationReason = 'LOGOUT'`,
+   * v0.6.x, Fase E) e, no futuro, por revogação em massa administrativa
+   * (ADR-030, "Invalidação de sessão" — não implementada nesta fatia).
+   * Idempotente na semântica de domínio (revogar uma sessão já revogada
+   * não é um erro aqui — a checagem de "já revogada" fica a critério do
+   * chamador, se necessário).
+   *
+   * Produz o evento `session.revoked` — `actorPublicId` é a própria
+   * `Identity` que solicitou o logout (`props.identityPublicId` do
+   * chamador, nunca `BOOTSTRAP`/`SYSTEM`), mesmo princípio já usado por
+   * `create()`.
    */
-  public revoke(reason: string, now: Date = new Date()): void {
+  public revoke(props: {
+    reason: string;
+    actorPublicId: string;
+    correlationId: string;
+    causationId?: string | undefined;
+    now?: Date | undefined;
+  }): void {
+    const now = props.now ?? new Date();
     this.status = "REVOKED";
     this.revokedAt = now;
-    this.revocationReason = reason;
+    this.revocationReason = props.reason;
     this.version += 1;
+
+    this.domainEvents.push(
+      createSessionRevokedEvent(
+        {
+          aggregatePublicId: this.publicId.toString(),
+          actorPublicId: props.actorPublicId,
+          correlationId: props.correlationId,
+          ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+          occurredAt: now
+        },
+        {
+          sessionPublicId: this.publicId.toString(),
+          identityPublicId: this.identityPublicId,
+          reason: props.reason
+        }
+      )
+    );
   }
 
   /** Atualiza `lastSeenAt` — reservado para validação de sessão em requisições futuras (não populado nesta fatia, que só cria sessões). */

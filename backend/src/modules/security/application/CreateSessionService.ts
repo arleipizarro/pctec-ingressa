@@ -1,6 +1,6 @@
 import type { SessionRepository } from "../domain/session/SessionRepository.js";
 import { Session } from "../domain/session/Session.js";
-import type { SessionCreatedEvent } from "../domain/session/SessionDomainEvents.js";
+import type { SessionCreatedEvent, SessionRevokedEvent } from "../domain/session/SessionDomainEvents.js";
 import type { SessionTokenGenerator } from "../infrastructure/token/SessionTokenGenerator.js";
 import { hashSessionToken } from "../infrastructure/token/hashSessionToken.js";
 
@@ -28,7 +28,7 @@ export interface CreatedSession {
    * praticada pelos serviços de bootstrap (o Aggregate produz eventos, o
    * orquestrador decide onde/como persistir).
    */
-  readonly domainEvents: readonly SessionCreatedEvent[];
+  readonly domainEvents: readonly (SessionCreatedEvent | SessionRevokedEvent)[];
 }
 
 /**

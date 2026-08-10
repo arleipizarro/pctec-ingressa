@@ -136,9 +136,13 @@ CreatedSession {
 
 Ver ADR-030, seção "Contrato de erro", para a tabela completa —
 `AUTHENTICATION_FAILED` (único código externo de falha de login, 401,
-requer nova classificação `AUTHENTICATION` em `DomainErrorClassification`),
-`SESSION_NOT_FOUND`/`SESSION_EXPIRED`/`SESSION_REVOKED` (contexto de
-validação de sessão existente, distinguíveis externamente).
+classificação `AUTHENTICATION` em `DomainErrorClassification`),
+`SESSION_INVALID` (v0.6.x, Fase E — único código externo para toda
+causa de falha de validação de sessão existente: cookie ausente/
+malformado/duplicado, token desconhecido, `Session` inexistente/
+`REVOKED`/expirada, `Identity` inexistente/não `ACTIVE`/
+`loginEnabled=false`; decisão revista — não mais distinguíveis
+externamente, ver ADR-030 "Proteção contra enumeração").
 
 ---
 
@@ -182,3 +186,27 @@ tabela `sessions`. **Nenhuma migration criada nesta entrega.**
 - `ip`/`user_agent` fora do modelo — reduz capacidade de auditoria de
   segurança (ex.: detectar login de localização incomum) até decisão de
   LGPD ser tomada.
+
+---
+
+## 9. `last_seen_at` — política (v0.6.x, Fase E)
+
+**Decisão: não atualizado nesta fatia.** `GET /api/v1/me` e qualquer
+validação de sessão futura NÃO escrevem em `sessions.last_seen_at` a
+cada requisição. Motivo: write amplification — atualizar uma coluna a
+cada leitura autenticada multiplicaria o volume de `UPDATE`s por um
+fator igual ao tráfego de leitura, sem benefício funcional imediato (não
+há sliding expiration; a expiração continua absoluta, fixada na
+criação). `last_seen_at` permanece no schema (migration 0009), reservado
+para uso futuro (ex.: um `touch()` com throttle — só atualizar se o
+último registro tiver mais de N minutos —, se uma necessidade
+operacional real de "última atividade" surgir).
+
+## 10. Cookie duplicado — fail closed (v0.6.x, Fase E)
+
+Ver ADR-030, seção "Cookie duplicado — fail closed", para a decisão
+completa. Resumo: `Cookie` HTTP com o nome canônico (`ingressa_session`)
+presente mais de uma vez é tratado como sessão inválida
+(`SESSION_INVALID`, 401) — nunca escolhe entre os valores (nem primeiro,
+nem último). Implementado em `sessionCookieParser.ts`
+(`extractSessionTokenFromCookieHeader`).

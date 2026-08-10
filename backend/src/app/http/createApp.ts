@@ -14,7 +14,11 @@ import { MariaDbAuditEventRepository } from "../../modules/audit/infrastructure/
 import { Argon2PasswordHasher } from "../../modules/security/infrastructure/hashing/Argon2PasswordHasher.js";
 import { CryptoSessionTokenGenerator } from "../../modules/security/infrastructure/token/SessionTokenGenerator.js";
 import { LoginService } from "../../modules/security/application/LoginService.js";
+import { LogoutService } from "../../modules/security/application/LogoutService.js";
+import { ValidateSessionService } from "../../modules/security/application/ValidateSessionService.js";
 import { createSessionRoutes } from "../../modules/security/http/sessionRoutes.js";
+import { createMeRoutes } from "../../modules/security/http/meRoutes.js";
+import { createRequireAuthenticatedSession } from "../../modules/security/http/requireAuthenticatedSession.js";
 import type { SessionCookieConfig } from "../../modules/security/http/sessionCookie.js";
 
 /**
@@ -49,10 +53,27 @@ export interface CreateAppOptions {
    */
   readonly loginService?: LoginService;
   /**
+   * Injetável para testes — v0.6.x, Fase E. Quando omitido,
+   * `createApp()` constrói um `LogoutService` real.
+   */
+  readonly logoutService?: LogoutService;
+  /**
+   * Injetável para testes — v0.6.x, Fase E. Quando omitido,
+   * `createApp()` constrói um `ValidateSessionService` real, usado pelo
+   * middleware `requireAuthenticatedSession` (`GET /api/v1/me`).
+   */
+  readonly validateSessionService?: ValidateSessionService;
+  /**
    * Injetável para testes — controla `Secure` do cookie de sessão.
    * Quando omitido, lido de `SESSION_COOKIE_SECURE` (env).
    */
   readonly sessionCookieConfig?: SessionCookieConfig;
+  /**
+   * Injetável para testes — v0.6.x, Fase E. Lista de origens confiáveis
+   * para validação CSRF do logout. Quando omitido, lido de
+   * `ALLOWED_ORIGINS` (env).
+   */
+  readonly allowedOrigins?: readonly string[];
 }
 
 /**
@@ -86,6 +107,22 @@ function defaultLoginService(pool: ReturnType<typeof createPool>): LoginService 
   );
 }
 
+function defaultLogoutService(pool: ReturnType<typeof createPool>): LogoutService {
+  return new LogoutService(
+    pool,
+    (connection) => new MariaDbSessionRepository(connection),
+    (connection) => new MariaDbIdentityRepository(connection),
+    (connection) => new MariaDbAuditEventRepository(connection)
+  );
+}
+
+function defaultValidateSessionService(
+  pool: ReturnType<typeof createPool>,
+  identityRepository: IdentityRepository
+): ValidateSessionService {
+  return new ValidateSessionService(new MariaDbSessionRepository(pool), identityRepository);
+}
+
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
  * `listen()` é `server.ts`. Separar `createApp` de `server.ts` permite
@@ -104,16 +141,24 @@ export function createApp(options: CreateAppOptions = {}): Express {
 
   // Pool compartilhado — só construído se algo precisar dele (nenhuma
   // conexão real é aberta pela simples criação do Pool).
-  const needsDefaultPool = options.identityRepository === undefined || options.loginService === undefined;
+  const needsDefaultPool =
+    options.identityRepository === undefined ||
+    options.loginService === undefined ||
+    options.logoutService === undefined ||
+    options.validateSessionService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
   const getIdentityByPublicId = new GetIdentityByPublicIdService(identityRepository);
 
   const loginService = options.loginService ?? defaultLoginService(sharedPool!);
+  const logoutService = options.logoutService ?? defaultLogoutService(sharedPool!);
+  const validateSessionService =
+    options.validateSessionService ?? defaultValidateSessionService(sharedPool!, identityRepository);
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
+  const allowedOrigins = options.allowedOrigins ?? loadEnv().ALLOWED_ORIGINS;
 
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
@@ -133,7 +178,15 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   app.use("/api/v1/identities", createIdentityRoutes(getIdentityByPublicId));
-  app.use("/api/v1/sessions", createSessionRoutes(loginService, sessionCookieConfig));
+  app.use("/api/v1/sessions", createSessionRoutes(loginService, logoutService, sessionCookieConfig, allowedOrigins));
+  // GET /api/v1/me — protegida por requireAuthenticatedSession, montado
+  // ANTES do router de fato (v0.6.x, Fase E). Nunca resolve
+  // ApplicationAccess/ADMIN/roles — só autenticação (task, seção 13).
+  app.use(
+    "/api/v1/me",
+    createRequireAuthenticatedSession(validateSessionService),
+    createMeRoutes()
+  );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404
   // uniforme, nunca 405, para não revelar quais métodos existiriam em

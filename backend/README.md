@@ -1,13 +1,73 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.6.0 — Session Auth Foundation (Fase D)**, que evolui a **v0.5.x —
+**v0.6.x — Session Validation & Current Principal (Fase E)**, que evolui
+a **v0.6.0 — Session Auth Foundation (Fase D)** (incluindo a correção de
+reconstituição do actor `BOOTSTRAP` pós-publicação), a **v0.5.x —
 Credential Foundation (Fase C)**, a **v0.5.0 — Administrative Access
 Foundation**, a **v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, a
 **v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, a
 correção de empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB
 Integration (preparação)**, a **v0.4.1 — Runtime Bootstrap** e a **v0.4.0
 — Identity Core, Vertical Slice 1** anteriores.
+
+## v0.6.x — Session Validation & Current Principal (Fase E)
+
+Resolve a Fase E da ADR-027: uso da sessão já criada (Fase D) em
+requisições subsequentes.
+
+### `GET /api/v1/me` — primeira rota protegida
+
+Prova que o cookie criado no login realmente autentica uma requisição
+posterior. Fluxo: `Cookie ingressa_session` → `SHA-256` → lookup por
+`token_hash` → validação defensiva (Session `ACTIVE`+não expirada,
+Identity `ACTIVE`+`loginEnabled`) → `AuthenticatedPrincipal` →
+`{ identity: { publicId }, session: { publicId } }`. Payload mínimo
+deliberado — nunca `email`/`fullName`/`ADMIN`/`applicationAccesses`/
+roles/permissions (autorização é uma camada futura separada).
+
+### `DELETE /api/v1/sessions/current` — logout (implementado nesta fatia)
+
+Revoga a sessão atual server-side, audita `session.revoked`, limpa o
+cookie com os mesmos atributos usados ao criá-lo. Primeira rota MUTÁVEL
+autenticada por cookie — protegida por CSRF (validação de `Origin`, com
+`Referer` como fallback; ausência de ambos é rejeitada, nunca assumida
+como segura).
+
+### `SESSION_INVALID` — decisão fechada sobre o contrato externo
+
+Todas as causas de falha de validação de sessão (cookie ausente/
+malformado, token desconhecido, `Session` `REVOKED`/expirada, `Identity`
+inexistente/não `ACTIVE`/`loginEnabled=false`) colapsam externamente em
+um único código, `SESSION_INVALID` (401) — mesma filosofia de
+`AUTHENTICATION_FAILED` no login. Justificativa completa em
+`ValidateSessionService.ts`/`SessionValidationErrors.ts`.
+
+### Defesa em profundidade
+
+Mesmo uma `Session` `ACTIVE` e não expirada é rejeitada se a `Identity`
+atual não estiver mais `ACTIVE`, ou `loginEnabled=false` — nunca confia
+apenas no estado da sessão no momento em que foi criada.
+
+### Sem cookie-parser, sem mitigação de timing dedicada
+
+Parsing de cookie implementado com código próprio pequeno
+(`sessionCookieParser.ts`) — não justificava a dependência externa.
+Validação de sessão não usa dummy hash (diferente do login): o token já
+tem 256 bits de entropia, nenhuma operação cara e variável em custo
+precisa ser nivelada.
+
+### `last_seen_at`
+
+**Decisão desta fatia: não atualizado.** Mais simples; write
+amplification evitado. Throttle (só atualizar após N minutos) fica como
+melhoria de fatia futura, se necessário.
+
+### Autorização — explicitamente fora de escopo
+
+`GET /api/v1/me` prova autenticação, não autorização.
+`ApplicationAccess` não entra aqui; nenhum middleware `requireAdmin`
+criado ainda — fatia futura e separada.
 
 ## v0.6.0 — Session Auth Foundation (Fase D)
 

@@ -38,3 +38,29 @@ export function buildSessionCookieOptions(
     expires: expiresAt
   };
 }
+
+/**
+ * Constrói as opções de `res.clearCookie(...)` para o logout — v0.6.x,
+ * Fase E (task, seção 23: "Logout deve limpar exatamente o mesmo
+ * cookie: mesmo name/Path/Secure/SameSite"). Deliberadamente as MESMAS
+ * opções estruturais de `buildSessionCookieOptions` (exceto `expires`,
+ * que o Express já gerencia internamente em `clearCookie` — passar um
+ * valor aqui seria redundante). Um cookie definido com um `Path`/
+ * `Secure`/`SameSite` e "limpo" com atributos diferentes NÃO é removido
+ * pelo navegador (a correspondência de atributos é exigida pela própria
+ * spec de cookies) — por isso este helper existe, para nunca divergir
+ * acidentalmente dos atributos usados ao criar o cookie.
+ */
+export function buildClearSessionCookieOptions(config: SessionCookieConfig): {
+  readonly httpOnly: true;
+  readonly secure: boolean;
+  readonly sameSite: "lax";
+  readonly path: "/";
+} {
+  return {
+    httpOnly: true,
+    secure: config.secure,
+    sameSite: "lax",
+    path: "/"
+  };
+}

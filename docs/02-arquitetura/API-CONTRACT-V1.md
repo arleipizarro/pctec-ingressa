@@ -231,7 +231,9 @@ Observação: o `refresh_token` não é retornado no corpo desta documentação
 conceitual por ser um valor sensível — seu mecanismo de entrega (cookie
 `HttpOnly`/`Secure` versus corpo de resposta) é Pendente de decisão.
 
-Erros esperados: `AUTHENTICATION_FAILED`, `SESSION_NOT_FOUND`.
+Erros esperados: `AUTHENTICATION_FAILED` (login, `POST /sessions`),
+`SESSION_INVALID` (validação de sessão já existente, `GET /me`/`DELETE
+/sessions/current`/qualquer middleware de autenticação).
 
 **Nota de correção (v0.6.0 — ADR-030):** esta seção originalmente listava
 `INVALID_CREDENTIALS`, `IDENTITY_LOGIN_DISABLED`, `IDENTITY_BLOCKED`,
@@ -240,10 +242,19 @@ primeiros colapsam em um único `AUTHENTICATION_FAILED` (401) — expor
 causas de falha de login separadamente permite enumeração de e-mails
 cadastrados e inferência do estado administrativo de uma conta. Ver
 ADR-030, seção "Conflitos reais encontrados" e "Proteção contra
-enumeração", para a justificativa completa. `SESSION_NOT_FOUND`
-permanece — usado num contexto diferente (validação de sessão já
-estabelecida em requisições subsequentes, não no login em si), onde
-distinguir causas não vaza informação sobre outras contas.
+enumeração", para a justificativa completa.
+
+**Nota de correção adicional (v0.6.x — Fase E):** `SESSION_NOT_FOUND`
+inicialmente permaneceu como código externo distinto, sob a premissa de
+que distinguir causas de sessão inválida (não encontrada/expirada/
+revogada) não vazaria informação sobre outras contas, já que o cliente
+já possui algum token. Essa decisão foi revista na implementação real da
+Fase E: `SESSION_NOT_FOUND`/`SESSION_EXPIRED`/`SESSION_REVOKED` também
+colapsam — agora em `SESSION_INVALID` (401) — porque distinguir a causa
+ainda entrega um sinal comportamental a quem possui um token roubado
+("revogada" sugere ação humana do dono legítimo; "expirada" sugere só
+passagem de tempo). Ver ADR-030, seção "Proteção contra enumeração",
+para a justificativa completa revista.
 
 ## 8. `/api/v1/magic-links`
 

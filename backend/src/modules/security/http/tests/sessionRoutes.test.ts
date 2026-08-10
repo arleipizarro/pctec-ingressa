@@ -264,8 +264,8 @@ describe("POST /api/v1/sessions", () => {
   });
 });
 
-describe("POST /api/v1/sessions — [revisão crítica, item 15] CSRF helper não acoplado ao login", () => {
-  it("createApp.ts nunca importa csrfGuard — o helper existe, mas não é usado em nenhuma rota nesta fatia", async () => {
+describe("POST /api/v1/sessions — [revisão crítica, item 15 — Fase D] CSRF helper não acoplado ao LOGIN", () => {
+  it("createApp.ts nunca importa csrfGuard diretamente — o helper fica encapsulado em sessionRoutes.ts", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(new URL("../../../../app/http/createApp.ts", import.meta.url), "utf-8");
 
@@ -273,12 +273,23 @@ describe("POST /api/v1/sessions — [revisão crítica, item 15] CSRF helper nã
     expect(source).not.toContain("isCsrfSafeRequest");
   });
 
-  it("sessionRoutes.ts nunca importa csrfGuard — POST /api/v1/sessions não exige Origin/Referer", async () => {
+  it("sessionRoutes.ts IMPORTA csrfGuard (Fase E, logout) — mas comprovadamente não é aplicado ao POST / (login), só ao DELETE /current", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync(new URL("../sessionRoutes.ts", import.meta.url), "utf-8");
 
-    expect(source).not.toContain("csrfGuard");
-    expect(source).not.toContain("isCsrfSafeRequest");
+    // Fase E: csrfGuard passou a ser usado — para o logout, não para o
+    // login. A prova comportamental de que o login continua sem exigir
+    // Origin/Referer está nos dois testes HTTP abaixo.
+    expect(source).toContain("isCsrfSafeRequest");
+    // A chamada de CSRF ocorre dentro do handler DELETE, nunca dentro do
+    // handler POST — checagem estrutural: o texto entre 'router.post(\"/\"'
+    // e o próximo 'router.' não contém a chamada de CSRF.
+    const postHandlerStart = source.indexOf('router.post("/"');
+    const deleteHandlerStart = source.indexOf('router.delete("/current"');
+    expect(postHandlerStart).toBeGreaterThanOrEqual(0);
+    expect(deleteHandlerStart).toBeGreaterThan(postHandlerStart);
+    const postHandlerSource = source.slice(postHandlerStart, deleteHandlerStart);
+    expect(postHandlerSource).not.toContain("isCsrfSafeRequest");
   });
 
   it("login funciona normalmente SEM os headers Origin/Referer — não quebra CLI/API clients futuros sem decisão explícita", async () => {
