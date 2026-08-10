@@ -63,6 +63,31 @@ export class PlainPassword {
   }
 
   /**
+   * Constrói a partir de uma senha submetida para VERIFICAÇÃO (login) —
+   * v0.6.0, Fase D — deliberadamente SEM aplicar a política mínima
+   * (`MIN_PASSWORD_LENGTH`/blacklist).
+   *
+   * **Decisão de design, não um bypass acidental:** `create()` valida a
+   * política porque é usado para DEFINIR uma senha nova (bootstrap,
+   * troca futura) — faz sentido rejeitar uma senha fraca antes de
+   * persistir seu hash. Login é diferente: estamos VERIFICANDO uma senha
+   * que já existe (ou não) contra um hash já persistido (ou não). Se
+   * `AuthenticateIdentityService` usasse `create()` aqui, uma senha
+   * submetida mais curta que `MIN_PASSWORD_LENGTH` falharia
+   * IMEDIATAMENTE, antes de sequer chegar ao `Argon2id.verify()` — um
+   * caminho de falha mensuravelmente mais rápido que qualquer outra
+   * causa de falha (que sempre passa pelo hash, real ou dummy),
+   * reintroduzindo exatamente o tipo de diferença de tempo que a
+   * mitigação de timing attack (ADR-030) existe para eliminar. Por
+   * isso, o valor aqui não é validado contra política alguma — é
+   * comparado como está contra o hash armazenado (ou o dummy), sempre
+   * pagando o mesmo custo computacional independente do seu formato.
+   */
+  public static forVerification(rawValue: string): PlainPassword {
+    return new PlainPassword(rawValue);
+  }
+
+  /**
    * Confirma que duas senhas (a informada e a confirmação) são idênticas
    * — usado pelo CLI antes de prosseguir. Comparação simples (não
    * timing-safe): não há segredo já persistido envolvido nesta

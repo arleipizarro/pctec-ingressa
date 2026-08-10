@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 8 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 9 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -13,7 +13,8 @@ describe("loadMigrationDefinitions", () => {
       "0005_create_applications",
       "0006_create_application_accesses",
       "0007_seed_pctec_ingressa_application",
-      "0008_create_credentials"
+      "0008_create_credentials",
+      "0009_create_sessions"
     ]);
 
     for (const migration of migrations) {
@@ -89,6 +90,26 @@ describe("loadMigrationDefinitions", () => {
     expect(credentialsMigration?.up.toUpperCase()).not.toContain("'PENDING'");
     expect(credentialsMigration?.up.toUpperCase()).not.toContain("'LOCKED'");
     expect(credentialsMigration?.up.toUpperCase()).not.toContain("'DISABLED'");
+  });
+
+  it("sessions (0009) segue a mesma convenção id BIGINT interno + public_id CHAR(36) (ADR-021), UNIQUE(token_hash), FK RESTRICT/RESTRICT, status fechado ACTIVE/REVOKED", () => {
+    const migrations = loadMigrationDefinitions();
+    const sessionsMigration = migrations.find((m) => m.id === "0009_create_sessions");
+
+    expect(sessionsMigration).toBeDefined();
+    expect(sessionsMigration?.up).toContain("public_id");
+    expect(sessionsMigration?.up).toContain("CHAR(36)");
+    expect(sessionsMigration?.up).not.toContain("BINARY(16)");
+    expect(sessionsMigration?.up).toContain("UNIQUE KEY uk_sessions_public_id (public_id)");
+    expect(sessionsMigration?.up).toContain("UNIQUE KEY uk_sessions_token_hash (token_hash)");
+    expect(sessionsMigration?.up).toContain("ENUM('ACTIVE','REVOKED')");
+    expect(sessionsMigration?.up).toContain("FOREIGN KEY (identity_public_id) REFERENCES identities (public_id)");
+    expect(sessionsMigration?.up).toContain("ON DELETE RESTRICT ON UPDATE RESTRICT");
+    // EXPIRED é estado derivado, nunca persistido (ADR-030).
+    expect(sessionsMigration?.up.toUpperCase()).not.toContain("'EXPIRED'");
+    // token bruto nunca é uma coluna — só o hash.
+    expect(sessionsMigration?.up).not.toContain("raw_token");
+    expect(sessionsMigration?.up).not.toContain("token VARCHAR");
   });
 
   it("credentials (0008) [revisão crítica, item 6]: UNIQUE(public_id), password_hash VARCHAR(255), charset/collation compatíveis, down específico só de DROP TABLE credentials", () => {

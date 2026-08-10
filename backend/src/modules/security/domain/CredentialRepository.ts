@@ -21,6 +21,18 @@ export interface CredentialRepository {
   findByIdentityAndType(identityPublicId: string, type: CredentialType): Promise<Credential | undefined>;
 
   /**
+   * Atualiza uma Credential existente, aplicando optimistic locking:
+   * `WHERE version = expectedVersion` (a versão que a instância tinha
+   * ANTES da mutação em memória) — `SET version` recebe o valor absoluto
+   * final (`credential.getVersion()`), mesmo padrão já corrigido em
+   * `MariaDbIdentityRepository.update()` (v0.5.x). Se nenhuma linha for
+   * afetada, a implementação deve lançar `CredentialVersionConflictError`.
+   * Uso desta fatia: exclusivamente para persistir
+   * `recordSuccessfulAuthentication()` (v0.6.0, Fase D).
+   */
+  update(credential: Credential, expectedVersion: number): Promise<void>;
+
+  /**
    * Verifica se já existe QUALQUER Credential do tipo informado em toda a
    * plataforma, de qualquer Identity — usado pelo guard GLOBAL one-shot
    * do bootstrap (ADR-029, "Escopo exato do bootstrap"). Não é por

@@ -45,3 +45,66 @@ describe("loadEnv — HOST/PORT (v0.4.1 Runtime Bootstrap)", () => {
     expect(loadEnv({ MIGRATIONS_ALLOW_DESTRUCTIVE: "qualquer-outra-coisa" }).MIGRATIONS_ALLOW_DESTRUCTIVE).toBe(false);
   });
 });
+
+describe("loadEnv — SESSION_COOKIE_SECURE (v0.6.0, Fase D, revisão crítica item 7)", () => {
+  it("default é true quando ausente (fallback seguro, nunca inseguro por omissão)", () => {
+    const env = loadEnv({ NODE_ENV: "development" });
+    expect(env.SESSION_COOKIE_SECURE).toBe(true);
+  });
+
+  it("development/test aceitam SESSION_COOKIE_SECURE=false explicitamente (útil para HTTP local sem TLS)", () => {
+    expect(loadEnv({ NODE_ENV: "development", SESSION_COOKIE_SECURE: "false" }).SESSION_COOKIE_SECURE).toBe(false);
+    expect(loadEnv({ NODE_ENV: "test", SESSION_COOKIE_SECURE: "false" }).SESSION_COOKIE_SECURE).toBe(false);
+  });
+
+  it("produção com SESSION_COOKIE_SECURE=false FALHA no carregamento — nunca aceito", () => {
+    expect(() =>
+      loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "false", SESSION_TTL_SECONDS: "3600" })
+    ).toThrow(/SESSION_COOKIE_SECURE/);
+  });
+
+  it("produção com SESSION_COOKIE_SECURE ausente (assume default true) carrega normalmente — omissão nunca é insegura", () => {
+    const env = loadEnv({ NODE_ENV: "production", SESSION_TTL_SECONDS: "3600" });
+    expect(env.SESSION_COOKIE_SECURE).toBe(true);
+  });
+
+  it("produção com SESSION_COOKIE_SECURE=true explícito carrega normalmente", () => {
+    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "3600" });
+    expect(env.SESSION_COOKIE_SECURE).toBe(true);
+  });
+});
+
+describe("loadEnv — SESSION_TTL_SECONDS (v0.6.0, Fase D, revisão crítica item 10)", () => {
+  it("default é 28800 (8h) quando ausente em development/test — documentado como valor operacional, não regra de domínio", () => {
+    expect(loadEnv({ NODE_ENV: "development" }).SESSION_TTL_SECONDS).toBe(28800);
+    expect(loadEnv({ NODE_ENV: "test" }).SESSION_TTL_SECONDS).toBe(28800);
+  });
+
+  it("precisa ser inteiro positivo — zero/negativo/não numérico são rejeitados", () => {
+    expect(() => loadEnv({ SESSION_TTL_SECONDS: "0" })).toThrow();
+    expect(() => loadEnv({ SESSION_TTL_SECONDS: "-100" })).toThrow();
+    expect(() => loadEnv({ SESSION_TTL_SECONDS: "abc" })).toThrow();
+    expect(() => loadEnv({ SESSION_TTL_SECONDS: "3600.5" })).toThrow();
+  });
+
+  it("tem limite superior razoável (30 dias) — valores absurdamente altos são rejeitados", () => {
+    expect(() => loadEnv({ SESSION_TTL_SECONDS: "2592001" })).toThrow();
+    expect(loadEnv({ SESSION_TTL_SECONDS: "2592000" }).SESSION_TTL_SECONDS).toBe(2_592_000);
+  });
+
+  it("produção SEM SESSION_TTL_SECONDS explícito FALHA no carregamento — nunca herda o default de development/test silenciosamente", () => {
+    expect(() => loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true" })).toThrow(
+      /SESSION_TTL_SECONDS/
+    );
+  });
+
+  it("produção COM SESSION_TTL_SECONDS explícito carrega normalmente, mesmo que o valor numérico coincida com o default", () => {
+    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800" });
+    expect(env.SESSION_TTL_SECONDS).toBe(28800);
+  });
+
+  it("development/test NÃO exigem SESSION_TTL_SECONDS explícito — só produção", () => {
+    expect(() => loadEnv({ NODE_ENV: "development" })).not.toThrow();
+    expect(() => loadEnv({ NODE_ENV: "test" })).not.toThrow();
+  });
+});

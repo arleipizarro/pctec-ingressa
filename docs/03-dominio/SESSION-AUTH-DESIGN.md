@@ -71,7 +71,7 @@ Request: { email, password }
    a. Set-Cookie: <SESSION_COOKIE_NAME>=<rawToken>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<segundos até expiresAt>
    b. 201 Created { session: { publicId, expiresAt }, identity: { publicId } }
       — rawToken NUNCA aparece no corpo da resposta; ADMIN/applicationAccesses/roles/permissions também nunca aparecem (ver ADR-030, questão 8).
-      — Location conceitual: /api/v1/sessions/{publicId} (ADR-030, "POST /api/v1/sessions — 201, decisão fechada").
+      — Location: /api/v1/sessions/{publicId} do recurso Session criado — implementado nesta fatia (decisão fechada na revisão crítica antes do commit, item 14; ver ADR-030, "POST /api/v1/sessions — 201, decisão fechada").
 ```
 
 **Atenção de atomicidade (decisão de implementação, registrada aqui para

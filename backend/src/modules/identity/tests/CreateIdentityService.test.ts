@@ -25,6 +25,15 @@ class InMemoryIdentityRepository implements IdentityRepository {
     return this.stored.get(publicId.toString());
   }
 
+  public async findByNormalizedEmail(normalizedEmail: string): Promise<Identity | undefined> {
+    for (const identity of this.stored.values()) {
+      if (identity.getEmail().normalized() === normalizedEmail) {
+        return identity;
+      }
+    }
+    return undefined;
+  }
+
   public async existsByNormalizedEmail(normalizedEmail: string): Promise<boolean> {
     return this.emails.has(normalizedEmail);
   }

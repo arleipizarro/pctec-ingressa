@@ -34,7 +34,10 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({
   VALIDATION: 422,
   CONFLICT: 409,
-  AUTHORIZATION: 403
+  AUTHORIZATION: 403,
+  // v0.6.0, ADR-030: AUTHENTICATION_FAILED/SESSION_NOT_FOUND/
+  // SESSION_EXPIRED/SESSION_REVOKED — nunca mapeados como VALIDATION.
+  AUTHENTICATION: 401
 });
 
 export function mapDomainErrorToHttp(error: DomainError): HttpErrorMapping {

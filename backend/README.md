@@ -1,12 +1,95 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.5.x — Credential Foundation (Fase C)**, que evolui a **v0.5.0 —
-Administrative Access Foundation**, a **v0.5.0 — Bootstrap da primeira
-Identity (Slice 2)**, a **v0.5.0 — Identity API, Vertical Slice 1
-(Identity Query API)**, a correção de empacotamento/entrypoint da v0.4.2,
-a **v0.4.2 — MariaDB Integration (preparação)**, a **v0.4.1 — Runtime
-Bootstrap** e a **v0.4.0 — Identity Core, Vertical Slice 1** anteriores.
+**v0.6.0 — Session Auth Foundation (Fase D)**, que evolui a **v0.5.x —
+Credential Foundation (Fase C)**, a **v0.5.0 — Administrative Access
+Foundation**, a **v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, a
+**v0.5.0 — Identity API, Vertical Slice 1 (Identity Query API)**, a
+correção de empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB
+Integration (preparação)**, a **v0.4.1 — Runtime Bootstrap** e a **v0.4.0
+— Identity Core, Vertical Slice 1** anteriores.
+
+## v0.6.0 — Session Auth Foundation (Fase D)
+
+Resolve a Fase D da ADR-027, formalizada em
+[`docs/adr/ADR-030-SESSAO-E-AUTENTICACAO.md`](../docs/adr/ADR-030-SESSAO-E-AUTENTICACAO.md)
+e detalhada em
+[`docs/03-dominio/SESSION-AUTH-DESIGN.md`](../docs/03-dominio/SESSION-AUTH-DESIGN.md):
+o primeiro login real via `POST /api/v1/sessions`.
+
+### O que este endpoint faz — e o que NÃO faz ainda
+
+`POST /api/v1/sessions` autentica `email`+`password` (Argon2id real
+contra a `Credential LOCAL_PASSWORD` da `Identity`), cria uma `Session`
+server-side opaca, e entrega o token bruto de sessão via cookie
+`HttpOnly`. **Não implementa** `RefreshToken` (permanece direção
+arquitetural futura, fora desta fatia — `MODELO-DE-DOMINIO.md`, seção
+12), **não implementa** logout (`DELETE /api/v1/sessions/current` fica
+para a próxima fatia — deixado de fora deliberadamente para não ampliar
+o escopo desta entrega), **não implementa** middleware de validação de
+sessão para rotas autenticadas futuras, **não resolve**
+`ApplicationAccess` (autenticação e autorização permanecem separadas,
+ADR-030), **não implementa** rate limiting real (requisito mínimo
+definido em ADR-030, não implementado ainda), **não implementa** CSRF
+token dedicado (validação de `Origin`/`Referer` preparada em
+`csrfGuard.ts`, mas não aplicada ao login em si — ver ADR-030).
+
+### Sessão stateful opaca — não JWT
+
+Token bruto: `crypto.randomBytes(32)` (256 bits) → `base64url`. Banco
+armazena apenas `SHA-256` (hex, 64 caracteres) do token — nunca o valor
+bruto. Justificativa completa da escolha stateful vs. JWT em ADR-030,
+"Session model" (critério decisivo: revogação real imediata, impossível
+em JWT puro sem blocklist).
+
+### Anti-enumeração e timing attack
+
+Todos os seis casos de falha de login (e-mail inexistente, senha
+incorreta, `Identity` não `ACTIVE`, `loginEnabled=false`, `Credential`
+inexistente, `Credential` `REVOKED`) produzem a mesma resposta externa:
+`AUTHENTICATION_FAILED`, HTTP 401, mensagem genérica. Um hash `Argon2id`
+dummy (`DummyPasswordHash.ts`) é sempre computado nos caminhos sem
+`Credential` real, nivelando o tempo de resposta com o caminho real.
+
+### Nova classificação de erro `AUTHENTICATION` → 401
+
+`DomainErrorClassification` ganhou um quarto valor, `AUTHENTICATION`
+(401) — extensão aditiva, `VALIDATION`/`CONFLICT`/`AUTHORIZATION`
+inalterados. Distinta de `AUTHORIZATION` (403): `AUTHENTICATION` responde
+"quem é você?"; `AUTHORIZATION` responde "você está autenticado, mas não
+pode fazer isto" (ver ADR-030).
+
+### Extensões a `IdentityRepository`/`CredentialRepository` (v0.5.x)
+
+Dois gaps reais encontrados e corrigidos durante esta implementação:
+`IdentityRepository.findByNormalizedEmail()` (só existia
+`existsByNormalizedEmail`, um boolean — o lookup de login precisa da
+entidade completa) e `CredentialRepository.update()` (não existia
+nenhuma forma de persistir `lastAuthenticatedAt` — adicionado com o
+mesmo padrão de optimistic locking por version absoluta já corrigido em
+`MariaDbIdentityRepository.update()`, v0.5.x).
+
+### Cookie
+
+Nome centralizado (`SESSION_COOKIE_NAME`, `sessionCookie.ts`) —
+`HttpOnly`/`SameSite=Lax`/`Path=/` sempre; `Secure` configurável via
+`SESSION_COOKIE_SECURE` (env), com gate que impede `Secure=false` em
+`NODE_ENV=production` mesmo que a variável tente forçar isso.
+
+### Configuração nova
+
+| Variável | Default | Observação |
+|---|---|---|
+| `SESSION_TTL_SECONDS` | `28800` (8h) | Só para development/test — não é recomendação de produção (ADR-030). |
+| `SESSION_COOKIE_SECURE` | `true` | Nunca `false` em produção (gate em `loadEnv()`). |
+
+### Migration desta fatia
+
+`0009_create_sessions` — `UNIQUE(public_id)`, `UNIQUE(token_hash)`,
+`status` fechado em `ACTIVE`/`REVOKED` (`EXPIRED` é estado derivado de
+`expires_at`, nunca persistido — ADR-030), FK para `identities.public_id`
+com `ON DELETE RESTRICT ON UPDATE RESTRICT`. **Não executada nesta
+entrega.**
 
 ## v0.5.x — Credential Foundation (Fase C)
 

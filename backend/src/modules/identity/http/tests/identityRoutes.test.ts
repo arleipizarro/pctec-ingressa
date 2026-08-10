@@ -17,6 +17,10 @@ class InMemoryIdentityRepository implements IdentityRepository {
     return this.stored.get(publicId.toString());
   }
 
+  public async findByNormalizedEmail(): Promise<Identity | undefined> {
+    return undefined;
+  }
+
   public async existsByNormalizedEmail(): Promise<boolean> {
     return false;
   }
@@ -41,6 +45,10 @@ class InMemoryIdentityRepository implements IdentityRepository {
 /** Simula uma falha inesperada (bug, driver, etc.) — não um DomainError — para exercitar o handler de erro 500 genérico. */
 class BrokenIdentityRepository implements IdentityRepository {
   public async findByPublicId(): Promise<Identity | undefined> {
+    throw new Error("ECONNREFUSED 127.0.0.1:3306 (mensagem de driver simulada, nunca deveria vazar)");
+  }
+
+  public async findByNormalizedEmail(): Promise<Identity | undefined> {
     throw new Error("ECONNREFUSED 127.0.0.1:3306 (mensagem de driver simulada, nunca deveria vazar)");
   }
 

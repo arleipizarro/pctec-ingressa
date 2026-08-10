@@ -63,10 +63,10 @@ export class Credential {
   private readonly type: CredentialType;
   private readonly passwordHash: PasswordHash;
   private readonly status: CredentialStatus;
-  private readonly lastAuthenticatedAt: Date | undefined;
-  private readonly version: number;
+  private lastAuthenticatedAt: Date | undefined;
+  private version: number;
   private readonly createdAt: Date;
-  private readonly updatedAt: Date;
+  private updatedAt: Date;
 
   private readonly domainEvents: CredentialCreatedEvent[] = [];
 
@@ -202,6 +202,28 @@ export class Credential {
 
   public getUpdatedAt(): Date {
     return this.updatedAt;
+  }
+
+  /**
+   * Registra uma autenticação bem-sucedida — v0.6.0, Fase D (ADR-030,
+   * "`last_authenticated_at` — quando atualizar"). Chamado exclusivamente
+   * por `AuthenticateIdentityService`, exclusivamente após
+   * `Argon2id.verify()` retornar verdadeiro (nunca em falha de senha,
+   * nunca em validação de sessão já existente, nunca em refresh futuro —
+   * ver ADR-030 para os três não-gatilhos formais).
+   *
+   * Não produz nenhum `Domain Event` — `authentication.succeeded` é log
+   * operacional/telemetria, não evento de domínio (decisão explícita de
+   * ADR-030, "Eventos": a mudança de estado real e auditável é a criação
+   * da `Session`, já coberta por `session.created`).
+   *
+   * Incrementa `version` — a persistência (`CredentialRepository.update`)
+   * usa optimistic locking, mesmo padrão já usado para `Identity`.
+   */
+  public recordSuccessfulAuthentication(now: Date = new Date()): void {
+    this.lastAuthenticatedAt = now;
+    this.updatedAt = now;
+    this.version += 1;
   }
 
   /** Uso exclusivo da camada de infraestrutura — nunca exposto por getter público comum. */

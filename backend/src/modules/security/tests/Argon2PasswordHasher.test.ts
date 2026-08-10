@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { Argon2PasswordHasher, ARGON2ID_PARAMS } from "../infrastructure/hashing/Argon2PasswordHasher.js";
 import { PlainPassword } from "../domain/value-objects/PlainPassword.js";
 import { PasswordHash } from "../domain/value-objects/PasswordHash.js";
+import { DUMMY_PASSWORD_HASH } from "../infrastructure/hashing/DummyPasswordHash.js";
 
 /**
  * Único arquivo desta suíte que chama a biblioteca `argon2` de verdade —
@@ -92,4 +93,70 @@ describe("Argon2PasswordHasher — 8. Argon2id real", () => {
     },
     20_000
   );
+});
+
+describe("DUMMY_PASSWORD_HASH — validade real contra Argon2id de verdade (revisão crítica, item 2)", () => {
+  it("é uma string PHC Argon2id sintaticamente válida (já garantido por PasswordHash.fromPhcString, mas confirmado aqui explicitamente)", () => {
+    expect(() => PasswordHash.fromPhcString(DUMMY_PASSWORD_HASH.toString())).not.toThrow();
+    expect(DUMMY_PASSWORD_HASH.toString()).toMatch(/^\$argon2id\$v=\d+\$/);
+  });
+
+  it(
+    "Argon2PasswordHasher.verify(dummyHash, senha-qualquer) executa sem erro e retorna false",
+    async () => {
+      const hasher = new Argon2PasswordHasher();
+      const anyPassword = PlainPassword.forVerification("uma-senha-qualquer-para-o-teste-999");
+
+      const result = await hasher.verify(anyPassword, DUMMY_PASSWORD_HASH);
+
+      expect(result).toBe(false);
+    },
+    20_000
+  );
+
+  it(
+    "verify() com o dummy hash tem custo computacional real — mede um tempo mínimo consistente com hashing de verdade (não um atalho/mock disfarçado)",
+    async () => {
+      const hasher = new Argon2PasswordHasher();
+      const anyPassword = PlainPassword.forVerification("outra-senha-qualquer-888");
+
+      const start = process.hrtime.bigint();
+      await hasher.verify(anyPassword, DUMMY_PASSWORD_HASH);
+      const elapsedMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+
+      // Não é um benchmark preciso (task, seção 8, explícito) — só uma
+      // prova estrutural de que o dummy verify não é instantâneo (o que
+      // indicaria que não está de fato executando Argon2id). Um valor
+      // baixo e frouxo (1ms) é suficiente para essa prova sem tornar o
+      // teste frágil em CI mais rápido/mais lento.
+      expect(elapsedMs).toBeGreaterThan(1);
+    },
+    20_000
+  );
+
+  it("os parâmetros embutidos no PHC do dummy correspondem aos mesmos ARGON2ID_PARAMS usados para hash real (m, p, t idênticos)", () => {
+    const match = DUMMY_PASSWORD_HASH.toString().match(/^\$argon2id\$v=\d+\$m=(\d+),p=(\d+),t=(\d+)\$/);
+    expect(match).not.toBeNull();
+
+    const [, memoryCost, parallelism, timeCost] = match as RegExpMatchArray;
+    expect(Number(memoryCost)).toBe(ARGON2ID_PARAMS.memoryCost);
+    expect(Number(parallelism)).toBe(ARGON2ID_PARAMS.parallelism);
+    expect(Number(timeCost)).toBe(ARGON2ID_PARAMS.timeCost);
+  });
+
+  it("nenhuma senha real é usada para gerar o dummy em runtime — é uma constante fixa no código-fonte, nunca recalculada dinamicamente", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(
+      new URL("../infrastructure/hashing/DummyPasswordHash.ts", import.meta.url),
+      "utf-8"
+    );
+
+    // A constante é construída via PasswordHash.fromPhcString(<literal
+    // fixo>) — nunca via Argon2PasswordHasher.hash() (que exigiria uma
+    // senha de entrada e geraria um valor novo a cada execução).
+    expect(source).not.toContain("import { Argon2PasswordHasher");
+    expect(source).not.toContain("new Argon2PasswordHasher");
+    expect(source).not.toContain(".hash(");
+    expect(source).toContain("PasswordHash.fromPhcString(");
+  });
 });

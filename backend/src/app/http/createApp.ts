@@ -8,6 +8,14 @@ import type { IdentityRepository } from "../../modules/identity/domain/IdentityR
 import { MariaDbIdentityRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityRepository.js";
 import { GetIdentityByPublicIdService } from "../../modules/identity/application/GetIdentityByPublicIdService.js";
 import { createIdentityRoutes } from "../../modules/identity/http/identityRoutes.js";
+import { MariaDbCredentialRepository } from "../../modules/security/infrastructure/persistence/MariaDbCredentialRepository.js";
+import { MariaDbSessionRepository } from "../../modules/security/infrastructure/persistence/MariaDbSessionRepository.js";
+import { MariaDbAuditEventRepository } from "../../modules/audit/infrastructure/MariaDbAuditEventRepository.js";
+import { Argon2PasswordHasher } from "../../modules/security/infrastructure/hashing/Argon2PasswordHasher.js";
+import { CryptoSessionTokenGenerator } from "../../modules/security/infrastructure/token/SessionTokenGenerator.js";
+import { LoginService } from "../../modules/security/application/LoginService.js";
+import { createSessionRoutes } from "../../modules/security/http/sessionRoutes.js";
+import type { SessionCookieConfig } from "../../modules/security/http/sessionCookie.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -34,18 +42,48 @@ export interface CreateAppOptions {
    * tocam rede.
    */
   readonly identityRepository?: IdentityRepository;
+  /**
+   * Injetável para testes — v0.6.0, Fase D. Quando omitido, `createApp()`
+   * constrói um `LoginService` real (Argon2id real, MariaDB real via
+   * `loadEnv()`).
+   */
+  readonly loginService?: LoginService;
+  /**
+   * Injetável para testes — controla `Secure` do cookie de sessão.
+   * Quando omitido, lido de `SESSION_COOKIE_SECURE` (env).
+   */
+  readonly sessionCookieConfig?: SessionCookieConfig;
 }
 
-function defaultIdentityRepository(): IdentityRepository {
+/**
+ * Pool único, compartilhado entre `IdentityRepository` e `LoginService`
+ * quando nenhum dos dois é injetado — evita abrir dois pools mysql2
+ * separados para o mesmo banco. Nunca abre conexão de verdade aqui
+ * (mysql2 é preguiçoso).
+ */
+function createDefaultPool(): ReturnType<typeof createPool> {
   const env = loadEnv();
-  const pool = createPool({
+  return createPool({
     host: env.DB_HOST,
     port: env.DB_PORT,
     database: env.DB_NAME,
     user: env.DB_USER,
     password: env.DB_PASSWORD
   });
-  return new MariaDbIdentityRepository(pool);
+}
+
+function defaultLoginService(pool: ReturnType<typeof createPool>): LoginService {
+  const env = loadEnv();
+  return new LoginService(
+    pool,
+    (connection) => new MariaDbIdentityRepository(connection),
+    (connection) => new MariaDbCredentialRepository(connection),
+    (connection) => new MariaDbSessionRepository(connection),
+    (connection) => new MariaDbAuditEventRepository(connection),
+    new Argon2PasswordHasher(),
+    new CryptoSessionTokenGenerator(),
+    env.SESSION_TTL_SECONDS
+  );
 }
 
 /**
@@ -63,15 +101,27 @@ function defaultIdentityRepository(): IdentityRepository {
  */
 export function createApp(options: CreateAppOptions = {}): Express {
   const app = express();
-  const identityRepository = options.identityRepository ?? defaultIdentityRepository();
+
+  // Pool compartilhado — só construído se algo precisar dele (nenhuma
+  // conexão real é aberta pela simples criação do Pool).
+  const needsDefaultPool = options.identityRepository === undefined || options.loginService === undefined;
+  const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
+
+  const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
   const getIdentityByPublicId = new GetIdentityByPublicIdService(identityRepository);
+
+  const loginService = options.loginService ?? defaultLoginService(sharedPool!);
+  const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
+    secure: loadEnv().SESSION_COOKIE_SECURE
+  };
 
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
 
-  // Corpo de requisição pequeno e explícito — nenhuma rota desta fatia
-  // usa body (GET simples), mas mantemos o limite por precaução, em vez
-  // de aceitar o padrão do Express (100kb) sem uma decisão deliberada.
+  // Corpo de requisição pequeno e explícito — `POST /api/v1/sessions`
+  // (v0.6.0) é a primeira rota desta fatia que de fato usa body; o
+  // limite de 10kb já existia por precaução deliberada, mais que
+  // suficiente para um payload de e-mail/senha.
   app.use(express.json({ limit: "10kb" }));
 
   // Conforme API-CONTRACT-V1.md: todo request/response carrega
@@ -83,6 +133,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   app.use("/api/v1/identities", createIdentityRoutes(getIdentityByPublicId));
+  app.use("/api/v1/sessions", createSessionRoutes(loginService, sessionCookieConfig));
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404
   // uniforme, nunca 405, para não revelar quais métodos existiriam em

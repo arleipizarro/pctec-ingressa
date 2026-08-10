@@ -108,6 +108,25 @@ export class MariaDbIdentityRepository implements IdentityRepository {
     return Identity.reconstitute(mapRowToPersistedState(row));
   }
 
+  public async findByNormalizedEmail(normalizedEmail: string): Promise<Identity | undefined> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, type, full_name, email, email_normalized, cpf, cpf_normalized,
+              status, login_enabled, version, created_at, created_by_identity_public_id,
+              updated_at, updated_by_identity_public_id, deleted_at, deleted_by_identity_public_id,
+              deletion_reason
+         FROM identities
+        WHERE email_normalized = ?
+        LIMIT 1`,
+      [normalizedEmail]
+    );
+    const rowList = rows as IdentityRow[];
+    const row = rowList[0];
+    if (row === undefined) {
+      return undefined;
+    }
+    return Identity.reconstitute(mapRowToPersistedState(row));
+  }
+
   public async existsByNormalizedEmail(normalizedEmail: string): Promise<boolean> {
     const [rows] = await this.connection.execute(
       `SELECT 1 FROM identities WHERE email_normalized = ? LIMIT 1`,

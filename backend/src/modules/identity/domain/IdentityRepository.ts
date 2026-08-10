@@ -11,6 +11,17 @@ import type { PublicId } from "./value-objects/PublicId.js";
 export interface IdentityRepository {
   findByPublicId(publicId: PublicId): Promise<Identity | undefined>;
 
+  /**
+   * Busca a Identity completa por e-mail normalizado — usado
+   * exclusivamente pelo lookup de autenticação (v0.6.0, Fase D,
+   * ADR-030, `AuthenticateIdentityService`). Extensão mínima ao
+   * contrato: distinto de `existsByNormalizedEmail` (que só confirma
+   * existência, usado na criação de Identity), este método retorna a
+   * entidade completa, necessária para checar `status`/`loginEnabled`
+   * no fluxo de login.
+   */
+  findByNormalizedEmail(normalizedEmail: string): Promise<Identity | undefined>;
+
   existsByNormalizedEmail(normalizedEmail: string): Promise<boolean>;
 
   existsByNormalizedCpf(normalizedCpf: string): Promise<boolean>;

@@ -34,3 +34,20 @@ export class IdentityNotFoundForCredentialError extends DomainError {
     super(`Identity não encontrada: ${identityPublicId}.`);
   }
 }
+
+/**
+ * Conflito de optimistic locking em `Credential` — v0.6.0, Fase D.
+ * Mesmo padrão de `IdentityVersionConflictError` (ADR-024): o `UPDATE`
+ * não afetou nenhuma linha porque a `version` no banco já não era mais a
+ * esperada.
+ */
+export class CredentialVersionConflictError extends DomainError {
+  public readonly code = "CREDENTIAL_VERSION_CONFLICT";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(expectedVersion: number, actualVersion: number) {
+    super(
+      `Conflito de concorrência otimista em Credential: versão esperada ${expectedVersion}, versão atual ${actualVersion}.`
+    );
+  }
+}

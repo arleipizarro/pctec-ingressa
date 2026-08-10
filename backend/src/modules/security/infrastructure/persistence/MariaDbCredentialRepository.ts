@@ -2,6 +2,7 @@ import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { CredentialRepository } from "../../domain/CredentialRepository.js";
 import { Credential, type CredentialPersistedState } from "../../domain/Credential.js";
 import type { CredentialType } from "../../domain/value-objects/CredentialType.js";
+import { CredentialVersionConflictError } from "../../domain/errors/CredentialErrors.js";
 
 type CredentialRow = Record<string, unknown>;
 
@@ -111,5 +112,37 @@ export class MariaDbCredentialRepository implements CredentialRepository {
       type.toString()
     ]);
     return (rows as unknown[]).length > 0;
+  }
+
+  /**
+   * `SET version = ?` recebe o valor ABSOLUTO atual de
+   * `credential.getVersion()` (não um incremento relativo hardcoded) —
+   * mesmo princípio já corrigido em `MariaDbIdentityRepository.update()`
+   * (v0.5.x): evita divergência entre memória e banco se, no futuro, mais
+   * de uma mutação de domínio ocorrer antes de uma única chamada a
+   * `update()`.
+   */
+  public async update(credential: Credential, expectedVersion: number): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE credentials
+          SET last_authenticated_at = ?,
+              status = ?,
+              version = ?,
+              updated_at = ?
+        WHERE public_id = ?
+          AND version = ?`,
+      [
+        credential.getLastAuthenticatedAt() ?? null,
+        credential.getStatus().toString(),
+        credential.getVersion(),
+        credential.getUpdatedAt(),
+        credential.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    const updateResult = result as { affectedRows: number };
+    if (updateResult.affectedRows === 0) {
+      throw new CredentialVersionConflictError(expectedVersion, credential.getVersion());
+    }
   }
 }
