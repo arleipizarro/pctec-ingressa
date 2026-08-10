@@ -303,17 +303,17 @@ export class Identity {
       createdAt: state.createdAt,
       createdByPublicId:
         state.createdByPublicId !== undefined
-          ? ActorPublicId.required(state.createdByPublicId)
+          ? ActorPublicId.fromPersistence(state.createdByPublicId)
           : undefined,
       updatedAt: state.updatedAt,
       updatedByPublicId:
         state.updatedByPublicId !== undefined
-          ? ActorPublicId.required(state.updatedByPublicId)
+          ? ActorPublicId.fromPersistence(state.updatedByPublicId)
           : undefined,
       deletedAt: state.deletedAt,
       deletedByPublicId:
         state.deletedByPublicId !== undefined
-          ? ActorPublicId.required(state.deletedByPublicId)
+          ? ActorPublicId.fromPersistence(state.deletedByPublicId)
           : undefined,
       deletionReason:
         state.deletionReason !== undefined ? DeletionReason.create(state.deletionReason) : undefined

@@ -288,3 +288,69 @@ describe("MariaDbIdentityRepository", () => {
     expect(call?.sql.toUpperCase()).not.toContain("WHERE");
   });
 });
+
+describe("MariaDbIdentityRepository — [REGRESSÃO DO BUG REAL, v0.6.0 pós-publicação] linha persistida com updated_by_identity_public_id='BOOTSTRAP'", () => {
+  /**
+   * Reproduz EXATAMENTE a linha real encontrada no DEV: uma Identity
+   * cuja coluna `updated_by_identity_public_id` contém `"BOOTSTRAP"` —
+   * gravada legitimamente por `activateForCredentialBootstrap()`/
+   * `enableLoginForCredentialBootstrap()` (ADR-029). Antes da correção,
+   * `findByPublicId()`/`findByNormalizedEmail()` lançavam
+   * `InvalidPublicIdError` (→ HTTP 422) ao tentar reconstituir essa
+   * linha, mesmo a senha estando correta — o bug ocorria ANTES da
+   * verificação de senha, na própria reconstituição da Identity.
+   */
+  function bootstrapUpdatedRow(publicId: string, emailNormalized: string): Record<string, unknown> {
+    return {
+      id: 1,
+      public_id: publicId,
+      type: "HUMAN",
+      full_name: "Pessoa Bootstrap",
+      email: emailNormalized,
+      email_normalized: emailNormalized,
+      cpf: null,
+      cpf_normalized: null,
+      status: "ACTIVE",
+      login_enabled: 1,
+      version: 3,
+      created_at: new Date("2026-01-01T00:00:00Z"),
+      created_by_identity_public_id: null,
+      updated_at: new Date("2026-01-02T00:00:00Z"),
+      updated_by_identity_public_id: "BOOTSTRAP",
+      deleted_at: null,
+      deleted_by_identity_public_id: null,
+      deletion_reason: null
+    };
+  }
+
+  it("findByPublicId NÃO lança mais — reconstrói normalmente uma Identity com updated_by_identity_public_id='BOOTSTRAP'", async () => {
+    const publicId = PublicId.generate().toString();
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM identities") && sql.includes("public_id = ?"),
+      () => [[bootstrapUpdatedRow(publicId, "pessoa-bootstrap@example.com")], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    const result = await repository.findByPublicId(PublicId.fromString(publicId));
+
+    expect(result).toBeInstanceOf(Identity);
+    expect(result?.getUpdatedByPublicIdForPersistence()).toBe("BOOTSTRAP");
+  });
+
+  it("findByNormalizedEmail (usado pelo login) NÃO lança mais — mesma linha real do bug reportado", async () => {
+    const publicId = PublicId.generate().toString();
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM identities") && sql.includes("email_normalized = ?"),
+      () => [[bootstrapUpdatedRow(publicId, "pessoa-bootstrap@example.com")], []]
+    );
+    const repository = new MariaDbIdentityRepository(fake);
+
+    const result = await repository.findByNormalizedEmail("pessoa-bootstrap@example.com");
+
+    expect(result).toBeInstanceOf(Identity);
+    expect(result?.getStatus().toString()).toBe("ACTIVE");
+    expect(result?.isLoginEnabled()).toBe(true);
+  });
+});

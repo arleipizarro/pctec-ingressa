@@ -25,6 +25,14 @@ export class FakeLoginConnection implements BootstrapConnection {
   public identityExists = true;
   public identityStatus = "ACTIVE";
   public identityLoginEnabled = true;
+  /**
+   * Configurável — v0.6.0, regressão do bug real de reconstituição.
+   * Default `null` (comportamento pré-existente); testes de regressão
+   * setam `"BOOTSTRAP"` para reproduzir exatamente a linha real
+   * encontrada no DEV (`updated_by_identity_public_id = "BOOTSTRAP"`,
+   * gravada legitimamente pelo bootstrap de Credential, ADR-029).
+   */
+  public identityUpdatedByPublicId: string | null = null;
 
   public credentialExists = true;
   public credentialStatus = "ACTIVE";
@@ -63,7 +71,7 @@ export class FakeLoginConnection implements BootstrapConnection {
             created_at: new Date("2026-01-01T00:00:00Z"),
             created_by_identity_public_id: null,
             updated_at: new Date("2026-01-01T00:00:00Z"),
-            updated_by_identity_public_id: null,
+            updated_by_identity_public_id: this.identityUpdatedByPublicId,
             deleted_at: null,
             deleted_by_identity_public_id: null,
             deletion_reason: null

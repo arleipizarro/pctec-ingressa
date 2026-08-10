@@ -416,3 +416,73 @@ describe("Identity.createFoundational() — bootstrap da primeira Identity (v0.5
     ).toThrow();
   });
 });
+
+describe("Identity.reconstitute — correção do bug real de carregamento (v0.6.0, pós-publicação)", () => {
+  const BASE_STATE = {
+    internalId: 1,
+    publicId: "66231e51-66fb-466d-af4f-ac7b925ca9ec",
+    type: "HUMAN",
+    fullName: "Pessoa Reconstituída",
+    email: "reconstituida@example.com",
+    emailNormalized: "reconstituida@example.com",
+    status: "ACTIVE",
+    loginEnabled: true,
+    version: 3,
+    createdAt: new Date("2026-01-01T00:00:00Z"),
+    updatedAt: new Date("2026-01-02T00:00:00Z")
+  };
+
+  it("E) reconstitute com updatedByPublicId='BOOTSTRAP' funciona — getUpdatedByPublicIdForPersistence() === 'BOOTSTRAP'", () => {
+    const identity = Identity.reconstitute({
+      ...BASE_STATE,
+      updatedByPublicId: "BOOTSTRAP"
+    });
+
+    expect(identity.getUpdatedByPublicIdForPersistence()).toBe("BOOTSTRAP");
+  });
+
+  it("F) reconstitute com createdByPublicId='SYSTEM', updatedByPublicId='BOOTSTRAP', deletedByPublicId=UUID válido — todos preservados corretamente", () => {
+    const validUuid = "88888888-8888-8888-8888-888888888888";
+
+    const identity = Identity.reconstitute({
+      ...BASE_STATE,
+      status: "DELETED",
+      createdByPublicId: "SYSTEM",
+      updatedByPublicId: "BOOTSTRAP",
+      deletedAt: new Date("2026-01-03T00:00:00Z"),
+      deletedByPublicId: validUuid
+    });
+
+    expect(identity.getCreatedAtActorPublicIdForPersistence()).toBe("SYSTEM");
+    expect(identity.getUpdatedByPublicIdForPersistence()).toBe("BOOTSTRAP");
+    expect(identity.getDeletedByPublicIdForPersistence()).toBe(validUuid);
+  });
+
+  it("G) reconstitute com string arbitrária persistida ('NAO-E-UUID') continua falhando — nunca aceita silenciosamente", () => {
+    expect(() =>
+      Identity.reconstitute({
+        ...BASE_STATE,
+        updatedByPublicId: "NAO-E-UUID"
+      })
+    ).toThrow();
+  });
+
+  it("reconstitute com um UUID válido em updatedByPublicId (caso comum, não-marcador) continua funcionando normalmente", () => {
+    const validUuid = "99999999-9999-9999-9999-999999999999";
+
+    const identity = Identity.reconstitute({
+      ...BASE_STATE,
+      updatedByPublicId: validUuid
+    });
+
+    expect(identity.getUpdatedByPublicIdForPersistence()).toBe(validUuid);
+  });
+
+  it("reconstitute sem nenhum dos três campos de auditoria (todos undefined) continua funcionando normalmente", () => {
+    const identity = Identity.reconstitute(BASE_STATE);
+
+    expect(identity.getUpdatedByPublicIdForPersistence()).toBeUndefined();
+    expect(identity.getDeletedByPublicIdForPersistence()).toBeUndefined();
+    expect(identity.getCreatedAtActorPublicIdForPersistence()).toBeUndefined();
+  });
+});

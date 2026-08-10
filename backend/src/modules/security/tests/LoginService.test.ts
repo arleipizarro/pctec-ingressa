@@ -480,3 +480,82 @@ describe("LoginService - [PROVA ABRANGENTE, revisão crítica, item 6] raw token
     expect(result.sessionPublicId).not.toContain(KNOWN_RAW_TOKEN);
   });
 });
+
+describe("LoginService - [REGRESSÃO DO BUG REAL, v0.6.0 pós-publicação] Identity com updated_by_identity_public_id='BOOTSTRAP' no banco", () => {
+  /**
+   * Reproduz o bug real confirmado no DEV: uma Identity cuja coluna
+   * `updated_by_identity_public_id` contém `"BOOTSTRAP"` (gravada
+   * legitimamente pelo bootstrap de Credential, ADR-029) fazia
+   * `Identity.reconstitute()` lançar `InvalidPublicIdError`
+   * (`IDENTITY_PUBLIC_ID_INVALID`, HTTP 422) ao tentar carregar essa
+   * Identity durante o login — MESMO com a senha correta, porque o bug
+   * ocorria na etapa de `SELECT_IDENTITY`/reconstituição, ANTES da
+   * verificação de senha (`VERIFY_PASSWORD`) sequer acontecer.
+   *
+   * Não hardcoda o publicId real do Product Owner — usa o mesmo
+   * `IDENTITY_PUBLIC_ID` fixo já usado por todos os outros testes deste
+   * arquivo (um UUID de teste, não o publicId real de produção).
+   */
+  it("login com senha CORRETA e Identity persistida com updated_by_identity_public_id='BOOTSTRAP': NÃO lança IDENTITY_PUBLIC_ID_INVALID, autentica normalmente", async () => {
+    const connection = new FakeLoginConnection();
+    connection.identityUpdatedByPublicId = "BOOTSTRAP"; // reproduz exatamente a linha real do bug
+    const { service } = createService(connection, new RealMatchPasswordVerifier());
+
+    const result = await service.execute({ email: VALID_EMAIL, password: VALID_PASSWORD });
+
+    expect(result.identityPublicId).toBe("66231e51-66fb-466d-af4f-ac7b925ca9ec");
+    expect(result.sessionPublicId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("a timeline completa ocorre normalmente (nada é abortado antes de VERIFY_PASSWORD)", async () => {
+    const connection = new FakeLoginConnection();
+    connection.identityUpdatedByPublicId = "BOOTSTRAP";
+    const trackingPasswordVerifier = {
+      async verify(): Promise<boolean> {
+        connection.timeline.push("VERIFY_PASSWORD");
+        return true;
+      }
+    };
+    const pool = new FakeLoginConnectionPool(() => connection);
+    const service = new LoginService(
+      pool,
+      (conn) => new MariaDbIdentityRepository(conn),
+      (conn) => new MariaDbCredentialRepository(conn),
+      (conn) => new MariaDbSessionRepository(conn),
+      (conn) => new MariaDbAuditEventRepository(conn),
+      trackingPasswordVerifier,
+      new FixedTokenGenerator(),
+      3600
+    );
+
+    await service.execute({ email: VALID_EMAIL, password: VALID_PASSWORD });
+
+    expect(connection.timeline).toEqual([
+      "BEGIN",
+      "SELECT_IDENTITY",
+      "SELECT_CREDENTIAL",
+      "VERIFY_PASSWORD",
+      "UPDATE_CREDENTIAL",
+      "INSERT_SESSION",
+      "INSERT_AUDIT_1",
+      "COMMIT",
+      "RELEASE_CONNECTION"
+    ]);
+  });
+
+  it("também funciona quando updated_by_identity_public_id='SYSTEM' (marcador pré-existente, já funcionava antes)", async () => {
+    const connection = new FakeLoginConnection();
+    connection.identityUpdatedByPublicId = "SYSTEM";
+    const { service } = createService(connection, new RealMatchPasswordVerifier());
+
+    await expect(service.execute({ email: VALID_EMAIL, password: VALID_PASSWORD })).resolves.toBeDefined();
+  });
+
+  it("também funciona quando updated_by_identity_public_id é null (Identity nunca atualizada, caso comum)", async () => {
+    const connection = new FakeLoginConnection();
+    connection.identityUpdatedByPublicId = null;
+    const { service } = createService(connection, new RealMatchPasswordVerifier());
+
+    await expect(service.execute({ email: VALID_EMAIL, password: VALID_PASSWORD })).resolves.toBeDefined();
+  });
+});

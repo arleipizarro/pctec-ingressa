@@ -99,6 +99,58 @@ export class ActorPublicId {
     return ActorPublicId.fromIdentityPublicId(PublicId.fromString(value));
   }
 
+  /**
+   * Constrói um ActorPublicId a partir de um valor JÁ PERSISTIDO no
+   * banco (dado confiável, nunca uma entrada externa não confiável) —
+   * v0.6.0, correção de bug pós-publicação. Uso exclusivo de
+   * `Identity.reconstitute()`, para `created_by`/`updated_by`/
+   * `deleted_by_identity_public_id`.
+   *
+   * **Diferença deliberada em relação a `required()`:** `required()`
+   * faz parsing de uma string EXTERNA, na borda de um Application
+   * Service (ex.: um header HTTP, um corpo de requisição) — por isso
+   * nunca reconhece `"BOOTSTRAP"` (ver nota da classe acima, e
+   * ADR-027: nunca ampliar `ActorPublicId` genericamente só para
+   * acomodar bootstrap a partir de entrada não confiável).
+   * `fromPersistence()` é diferente: lê um valor que a própria
+   * plataforma já gravou no banco, legitimamente, através de um
+   * `Application Service` de bootstrap (`activateForCredentialBootstrap()`/
+   * `enableLoginForCredentialBootstrap()`, ADR-029) — nesse contexto,
+   * `"BOOTSTRAP"` é um dado confiável esperado, não uma tentativa de
+   * personificação vinda de fora.
+   *
+   * **Bug real corrigido:** antes desta correção,
+   * `Identity.reconstitute()` usava `required()` para esses três
+   * campos — como o bootstrap de `Credential` legitimamente grava
+   * `"BOOTSTRAP"` em `updated_by_identity_public_id`, toda tentativa de
+   * carregar essa `Identity` (incluindo durante login) falhava com
+   * `IDENTITY_PUBLIC_ID_INVALID` (422), mesmo com senha correta — o
+   * bug ocorria antes da verificação de senha, na reconstituição da
+   * entidade a partir do banco.
+   *
+   * Semântica:
+   * - `"SYSTEM"` → `ActorPublicId.system()`
+   * - `"BOOTSTRAP"` → `ActorPublicId.bootstrap()`
+   * - UUID válido → `fromIdentityPublicId(PublicId.fromString(value))`
+   * - qualquer outro valor → erro (`PublicId.fromString` lança
+   *   `InvalidPublicIdError`) — uma string persistida corrompida/
+   *   inesperada continua falhando, nunca aceita silenciosamente.
+   *
+   * Não trata ausência (`undefined`/`null`/vazio) — o chamador
+   * (`Identity.reconstitute()`) já guarda essa checagem antes de
+   * invocar este método, mesmo padrão já usado por
+   * `createdByPublicId`/`updatedByPublicId`/`deletedByPublicId`.
+   */
+  public static fromPersistence(value: string): ActorPublicId {
+    if (value === ActorPublicId.SYSTEM_MARKER) {
+      return ActorPublicId.system();
+    }
+    if (value === ActorPublicId.BOOTSTRAP_MARKER) {
+      return ActorPublicId.bootstrap();
+    }
+    return ActorPublicId.fromIdentityPublicId(PublicId.fromString(value));
+  }
+
   public isSystemActor(): boolean {
     return this.isSystem;
   }
