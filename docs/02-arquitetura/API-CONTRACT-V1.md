@@ -200,6 +200,20 @@ Exemplo mínimo de payload de concessão:
 Erros esperados: `APPLICATION_ACCESS_ALREADY_GRANTED`,
 `APPLICATION_ACCESS_NOT_FOUND`.
 
+**Nota de correção (v0.6.x — Fase F, ADR-028):** esta seção documenta a
+concessão/revogação de acesso (ainda não implementada em rota HTTP,
+task de fase futura). O **uso** de um acesso já concedido para
+autorizar rotas protegidas é diferente e já implementado — `GET
+/api/v1/admin/whoami` e qualquer rota administrativa futura retornam
+`APPLICATION_ACCESS_DENIED` (403, classificação `AUTHORIZATION`) como
+código externo único, colapsando aplicação inexistente/inativa, acesso
+inexistente/`REVOKED`, e perfil insuficiente — nunca expõe qual causa
+específica ocorreu. Mesma filosofia de `AUTHENTICATION_FAILED`/
+`SESSION_INVALID` (ver ADR-030), mas **nunca 401** — a autorização
+pressupõe que a autenticação já ocorreu; `403` sempre significa "você é
+quem diz ser, mas não pode fazer isto". Ver ADR-028, seção "Status", e
+`AuthorizeApplicationAccessService.ts`, para o desenho completo.
+
 ## 7. `/api/v1/sessions`
 
 **Responsabilidade:** gestão do ciclo de vida de sessões autenticadas.

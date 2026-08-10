@@ -20,6 +20,12 @@ import { createSessionRoutes } from "../../modules/security/http/sessionRoutes.j
 import { createMeRoutes } from "../../modules/security/http/meRoutes.js";
 import { createRequireAuthenticatedSession } from "../../modules/security/http/requireAuthenticatedSession.js";
 import type { SessionCookieConfig } from "../../modules/security/http/sessionCookie.js";
+import { MariaDbApplicationRepository } from "../../modules/application/infrastructure/persistence/MariaDbApplicationRepository.js";
+import { MariaDbApplicationAccessRepository } from "../../modules/application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
+import { PCTEC_INGRESSA_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import { AuthorizeApplicationAccessService } from "../../modules/authorization/application/AuthorizeApplicationAccessService.js";
+import { createRequireApplicationAccess } from "../../modules/authorization/http/requireApplicationAccess.js";
+import { createAdminWhoamiRoutes } from "../../modules/authorization/http/adminRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -74,6 +80,13 @@ export interface CreateAppOptions {
    * `ALLOWED_ORIGINS` (env).
    */
   readonly allowedOrigins?: readonly string[];
+  /**
+   * Injetável para testes — v0.6.x, Fase F. Quando omitido,
+   * `createApp()` constrói um `AuthorizeApplicationAccessService` real,
+   * usado pelo middleware `requireApplicationAccess`
+   * (`GET /api/v1/admin/whoami`).
+   */
+  readonly authorizeApplicationAccessService?: AuthorizeApplicationAccessService;
 }
 
 /**
@@ -123,6 +136,15 @@ function defaultValidateSessionService(
   return new ValidateSessionService(new MariaDbSessionRepository(pool), identityRepository);
 }
 
+function defaultAuthorizeApplicationAccessService(
+  pool: ReturnType<typeof createPool>
+): AuthorizeApplicationAccessService {
+  return new AuthorizeApplicationAccessService(
+    new MariaDbApplicationRepository(pool),
+    new MariaDbApplicationAccessRepository(pool)
+  );
+}
+
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
  * `listen()` é `server.ts`. Separar `createApp` de `server.ts` permite
@@ -145,7 +167,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.identityRepository === undefined ||
     options.loginService === undefined ||
     options.logoutService === undefined ||
-    options.validateSessionService === undefined;
+    options.validateSessionService === undefined ||
+    options.authorizeApplicationAccessService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -155,6 +178,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const logoutService = options.logoutService ?? defaultLogoutService(sharedPool!);
   const validateSessionService =
     options.validateSessionService ?? defaultValidateSessionService(sharedPool!, identityRepository);
+  const authorizeApplicationAccessService =
+    options.authorizeApplicationAccessService ?? defaultAuthorizeApplicationAccessService(sharedPool!);
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
@@ -186,6 +211,21 @@ export function createApp(options: CreateAppOptions = {}): Express {
     "/api/v1/me",
     createRequireAuthenticatedSession(validateSessionService),
     createMeRoutes()
+  );
+  // GET /api/v1/admin/whoami — v0.6.x, Fase F. Ordem OBRIGATÓRIA:
+  // requireAuthenticatedSession (autenticação) SEMPRE antes de
+  // requireApplicationAccess (autorização) — nunca o contrário (task,
+  // seção 15). ADMIN/applicationAccesses continuam fora de
+  // req.auth/AuthenticatedPrincipal — só em req.authorization, anexado
+  // pelo segundo middleware.
+  app.use(
+    "/api/v1/admin",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
+      profile: "ADMIN"
+    }),
+    createAdminWhoamiRoutes()
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

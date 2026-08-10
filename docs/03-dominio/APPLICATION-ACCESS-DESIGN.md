@@ -218,3 +218,32 @@ Nenhum dado sensível — apenas UUIDs e o perfil (enum fechado).
   B (`ApplicationAccess`) — testes de integração preparados, não
   executados. (A Fase A, criação da Identity fundacional, já foi
   executada e validada no DEV real — ver ADR-027.)
+
+---
+
+## Atualização — v0.6.x, Fase F: Enforcement (uso do acesso concedido)
+
+Este documento (Fase B) cobre a **concessão** de `ApplicationAccess`. A
+Fase F (`AuthorizeApplicationAccessService`, módulo
+`src/modules/authorization/`) cobre o **uso** de um acesso já concedido
+para autorizar rotas protegidas — consumidora deste modelo, não uma
+mudança nele.
+
+Decisões da Fase F, resumidas (ver ADR-028, seção "Status", para o texto
+completo):
+
+- Código externo único `APPLICATION_ACCESS_DENIED` (403,
+  `AUTHORIZATION`) para toda causa de negação.
+- Sem cache — cada requisição protegida consulta
+  `ApplicationAccessRepository.findByIdentityAndApplication()` (novo
+  método desta fase) diretamente; uma revogação futura teria efeito
+  imediato na próxima requisição, nunca esperando um TTL de cache
+  expirar.
+- Aplicação resolvida por código (`ApplicationCodes`), nunca por UUID
+  hardcoded.
+- Autenticação (`req.auth`/`AuthenticatedPrincipal`) e autorização
+  (`req.authorization`/`AuthorizedApplicationAccess`) permanecem tipos e
+  middlewares completamente separados — `ADMIN`/perfil de acesso nunca
+  entram em `AuthenticatedPrincipal`.
+- Nenhum `Role`/`Permission`/RBAC fino/policy engine — ADR-007 continua
+  válida.

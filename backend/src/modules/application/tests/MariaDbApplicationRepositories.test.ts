@@ -116,4 +116,69 @@ describe("MariaDbApplicationAccessRepository", () => {
     expect(insertCall?.params).toContain(IDENTITY_PUBLIC_ID); // valor vai como parâmetro
     expect(insertCall?.params?.[6]).toBeNull(); // granted_by_identity_public_id
   });
+
+  it("[v0.6.x, Fase F] findByIdentityAndApplication retorna undefined quando não há linha correspondente", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM application_accesses") && sql.includes("identity_public_id = ?"),
+      () => [[], []]
+    );
+    const repository = new MariaDbApplicationAccessRepository(fake);
+
+    const result = await repository.findByIdentityAndApplication(IDENTITY_PUBLIC_ID, APPLICATION_PUBLIC_ID);
+
+    expect(result).toBeUndefined();
+  });
+
+  it("[v0.6.x, Fase F] findByIdentityAndApplication reconstrói uma ApplicationAccess a partir da linha encontrada", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM application_accesses") && sql.includes("identity_public_id = ?"),
+      () => [
+        [
+          {
+            id: 3,
+            public_id: "55555555-5555-5555-5555-555555555555",
+            identity_public_id: IDENTITY_PUBLIC_ID,
+            application_public_id: APPLICATION_PUBLIC_ID,
+            access_profile: "ADMIN",
+            status: "GRANTED",
+            granted_at: new Date("2026-01-01T00:00:00Z"),
+            granted_by_identity_public_id: null,
+            revoked_at: null,
+            revoked_by_identity_public_id: null,
+            version: 1,
+            created_at: new Date("2026-01-01T00:00:00Z"),
+            updated_at: new Date("2026-01-01T00:00:00Z")
+          }
+        ],
+        []
+      ]
+    );
+    const repository = new MariaDbApplicationAccessRepository(fake);
+
+    const result = await repository.findByIdentityAndApplication(IDENTITY_PUBLIC_ID, APPLICATION_PUBLIC_ID);
+
+    expect(result).toBeInstanceOf(ApplicationAccess);
+    expect(result?.getIdentityPublicId()).toBe(IDENTITY_PUBLIC_ID);
+    expect(result?.getApplicationPublicId()).toBe(APPLICATION_PUBLIC_ID);
+    expect(result?.isGranted()).toBe(true);
+  });
+
+  it("[v0.6.x, Fase F] findByIdentityAndApplication usa SQL parametrizado (sem concatenação) e ORDER BY para desempate determinístico", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM application_accesses") && sql.includes("identity_public_id = ?"),
+      () => [[], []]
+    );
+    const repository = new MariaDbApplicationAccessRepository(fake);
+
+    await repository.findByIdentityAndApplication(IDENTITY_PUBLIC_ID, APPLICATION_PUBLIC_ID);
+
+    const call = fake.calls.find((c) => c.sql.includes("FROM application_accesses"));
+    expect(call?.sql).not.toContain(IDENTITY_PUBLIC_ID);
+    expect(call?.sql).not.toContain(APPLICATION_PUBLIC_ID);
+    expect(call?.params).toEqual([IDENTITY_PUBLIC_ID, APPLICATION_PUBLIC_ID]);
+    expect(call?.sql).toContain("ORDER BY");
+  });
 });

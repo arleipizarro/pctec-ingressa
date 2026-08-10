@@ -35,4 +35,23 @@ export interface ApplicationAccessRepository {
    * gerado pelo banco.
    */
   insert(applicationAccess: ApplicationAccess): Promise<void>;
+
+  /**
+   * Busca a `ApplicationAccess` completa (entidade, não boolean) para a
+   * combinação (identidade, aplicação) — v0.6.x, Fase F. Distinto dos
+   * métodos `existsGranted*` (que só confirmam existência de um acesso
+   * GRANTED específico, usados no guard de bootstrap): este método
+   * retorna a entidade inteira, necessária para `AuthorizeApplicationAccessService`
+   * poder inspecionar `status`/`accessProfile` e decidir a causa exata
+   * de uma eventual negação (mesmo que a causa não seja exposta
+   * externamente — precisa existir internamente para o `reason` do
+   * erro). Se a identidade tiver mais de um `ApplicationAccess` para a
+   * mesma aplicação (não deveria acontecer pela regra de negócio atual,
+   * mas não impedido por constraint de banco), retorna o mais
+   * recentemente criado.
+   */
+  findByIdentityAndApplication(
+    identityPublicId: string,
+    applicationPublicId: string
+  ): Promise<ApplicationAccess | undefined>;
 }

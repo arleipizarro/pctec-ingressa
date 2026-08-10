@@ -1,8 +1,9 @@
 # PCTEC Ingressa — Backend
 
 Backend do PCTEC Ingressa. Este README cobre o estado cumulativo até a
-**v0.6.x — Session Validation & Current Principal (Fase E)**, que evolui
-a **v0.6.0 — Session Auth Foundation (Fase D)** (incluindo a correção de
+**v0.6.x — Authorization / ApplicationAccess Enforcement (Fase F)**, que
+evolui a **v0.6.x — Session Validation & Current Principal (Fase E)**, a
+**v0.6.0 — Session Auth Foundation (Fase D)** (incluindo a correção de
 reconstituição do actor `BOOTSTRAP` pós-publicação), a **v0.5.x —
 Credential Foundation (Fase C)**, a **v0.5.0 — Administrative Access
 Foundation**, a **v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, a
@@ -10,6 +11,60 @@ Foundation**, a **v0.5.0 — Bootstrap da primeira Identity (Slice 2)**, a
 correção de empacotamento/entrypoint da v0.4.2, a **v0.4.2 — MariaDB
 Integration (preparação)**, a **v0.4.1 — Runtime Bootstrap** e a **v0.4.0
 — Identity Core, Vertical Slice 1** anteriores.
+
+## v0.6.x — Authorization / ApplicationAccess Enforcement (Fase F)
+
+Resolve a Fase F da ADR-027: separação formal entre **autenticação**
+("quem é esta identidade?") e **autorização** ("esta identidade pode
+acessar esta aplicação?").
+
+### Novo módulo `src/modules/authorization/`
+
+Separação estrutural, não só conceitual — o novo módulo nunca conhece
+cookie/Session (isso é `security`), e o módulo `security` nunca conhece
+`ApplicationAccess` (isso é `application`/`authorization`).
+
+### `AuthorizeApplicationAccessService`
+
+Decide se uma `Identity` **já autenticada** pode acessar uma aplicação
+com um perfil mínimo exigido. As 8 regras (ADR-028): `Identity`
+autenticada (pressuposto), `Application` existe, `Application.status =
+ACTIVE`, `ApplicationAccess` existe, pertence à mesma `Identity` e à
+aplicação correta, `status = GRANTED`, `accessProfile` satisfaz o
+exigido. Resolve aplicação por **código** (`ApplicationCodes`), nunca por
+UUID hardcoded. Nunca retorna `Session`, nunca autentica senha, nunca
+valida cookie, nunca cria `AuthenticatedPrincipal` novo.
+
+### `APPLICATION_ACCESS_DENIED` — código único externo
+
+Todas as causas de negação (aplicação inexistente/inativa, access
+inexistente/`REVOKED`, perfil insuficiente) colapsam externamente em
+`APPLICATION_ACCESS_DENIED` (403, `AUTHORIZATION`) — mesma filosofia já
+aplicada a `AUTHENTICATION_FAILED`/`SESSION_INVALID`. **Nunca 401 aqui**
+— a autenticação já ocorreu antes (via `requireAuthenticatedSession`).
+
+### `GET /api/v1/admin/whoami` — primeira rota administrativa
+
+Ordem de middlewares **obrigatória**: `requireAuthenticatedSession` →
+`requireApplicationAccess` → handler — nunca o contrário. `req.auth`
+(autenticação) e `req.authorization` (autorização) permanecem tipos
+separados, extensões locais de `Request` (nunca `declare global`).
+`ADMIN`/perfil de acesso continuam **fora** de `AuthenticatedPrincipal` —
+só aparecem em `req.authorization`, produzido pelo segundo middleware.
+
+### `GET /api/v1/me` não muda
+
+Continua só autenticação — nunca exige `ApplicationAccess`/`ADMIN`.
+Provado por teste dedicado: uma sessão válida sem nenhum
+`ApplicationAccess` ainda autentica `/me` normalmente.
+
+### Sem cache, sem Role/Permission/RBAC
+
+Cada requisição protegida consulta o banco — nenhum cache de
+`ApplicationAccess` nesta fase (garante que uma revogação tem efeito
+imediato na próxima requisição). `Role`/`Permission`/RBAC fino/policy
+engine **não implementados** — ADR-007 continua válida; esta fase é
+apenas acesso global da própria aplicação.
 
 ## v0.6.x — Session Validation & Current Principal (Fase E)
 

@@ -312,3 +312,18 @@ v0.5.0, Administrative Access Foundation. Implementado em código
 `bootstrap:first-admin-access`, migrations 0005–0007, catálogo de erros
 formalizado) — não executado ainda contra o MariaDB DEV real, nenhuma
 concessão real efetuada.
+
+**Atualização — v0.6.x, Fase F (Authorization / ApplicationAccess
+Enforcement):** o *uso* de `ApplicationAccess` para autorizar acesso a
+rotas protegidas foi implementado (`AuthorizeApplicationAccessService`,
+middleware `requireApplicationAccess`, primeira rota `GET
+/api/v1/admin/whoami`). Decisões fechadas nesta fase: código externo
+único `APPLICATION_ACCESS_DENIED` (403, `AUTHORIZATION`) para todas as
+causas de negação; nenhum cache de `ApplicationAccess` (cada requisição
+protegida consulta o banco, garantindo que uma revogação tem efeito
+imediato); autenticação (`req.auth`) e autorização (`req.authorization`)
+permanecem tipos e middlewares completamente separados — `ADMIN`/perfil
+de acesso nunca entram em `AuthenticatedPrincipal`. Ver
+`APPLICATION-ACCESS-DESIGN.md` e `backend/README.md`, seção "v0.6.x —
+Authorization / ApplicationAccess Enforcement (Fase F)", para o desenho
+completo.
