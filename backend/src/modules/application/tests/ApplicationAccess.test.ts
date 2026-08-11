@@ -115,10 +115,15 @@ describe("AccessProfile — 5/6. perfil válido/inválido", () => {
     expect(AccessProfile.admin().toString()).toBe("ADMIN");
   });
 
-  it("qualquer outro valor é rejeitado com APPLICATION_ACCESS_INVALID_PROFILE", () => {
-    expect(() => AccessProfile.create("USER")).toThrow(ApplicationAccessInvalidProfileError);
+  it("USER é válido (G3, ADR-032 — acesso comum a aplicação consumidora)", () => {
+    expect(() => AccessProfile.create("USER")).not.toThrow();
+    expect(AccessProfile.user().toString()).toBe("USER");
+  });
+
+  it("qualquer valor fora do conjunto fechado é rejeitado com APPLICATION_ACCESS_INVALID_PROFILE", () => {
     expect(() => AccessProfile.create("SUPERADMIN")).toThrow(ApplicationAccessInvalidProfileError);
     expect(() => AccessProfile.create("")).toThrow(ApplicationAccessInvalidProfileError);
+    expect(() => AccessProfile.create("user")).toThrow(ApplicationAccessInvalidProfileError); // case-sensitive
   });
 
   it("o código de erro é exatamente APPLICATION_ACCESS_INVALID_PROFILE", () => {
@@ -128,5 +133,94 @@ describe("AccessProfile — 5/6. perfil válido/inválido", () => {
     } catch (error) {
       expect((error as ApplicationAccessInvalidProfileError).code).toBe("APPLICATION_ACCESS_INVALID_PROFILE");
     }
+  });
+});
+
+describe("ApplicationAccess.grant — G3 (concessão genérica, com Actor real)", () => {
+  const GRANTED_BY_PUBLIC_ID = "0b13f6f0-8f3a-4a1e-9c2d-000000000077";
+  const PORTAL_APPLICATION_PUBLIC_ID = "3f9c1a2e-7d4b-4e5a-9c3f-000000000001";
+
+  it("cria a concessão com status GRANTED, accessProfile e application solicitados, version=1", () => {
+    const applicationAccess = ApplicationAccess.grant({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+      accessProfile: "USER",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+
+    expect(applicationAccess.getStatus()).toBe("GRANTED");
+    expect(applicationAccess.isGranted()).toBe(true);
+    expect(applicationAccess.getAccessProfile().toString()).toBe("USER");
+    expect(applicationAccess.getApplicationPublicId()).toBe(PORTAL_APPLICATION_PUBLIC_ID);
+    expect(applicationAccess.getVersion()).toBe(1);
+  });
+
+  it("também aceita ADMIN (não é exclusivo de USER — perfil é parâmetro, não fixo)", () => {
+    const applicationAccess = ApplicationAccess.grant({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+      accessProfile: "ADMIN",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+
+    expect(applicationAccess.getAccessProfile().toString()).toBe("ADMIN");
+  });
+
+  it("rejeita accessProfile fora do conjunto fechado", () => {
+    expect(() =>
+      ApplicationAccess.grant({
+        identityPublicId: IDENTITY_PUBLIC_ID,
+        applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+        accessProfile: "SUPERADMIN",
+        grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+        correlationId: CORRELATION_ID
+      })
+    ).toThrow(ApplicationAccessInvalidProfileError);
+  });
+
+  it("grantedByIdentityPublicId é SEMPRE um valor real — nunca undefined, nunca o marcador BOOTSTRAP", () => {
+    const applicationAccess = ApplicationAccess.grant({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+      accessProfile: "USER",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+
+    expect(applicationAccess.getGrantedByIdentityPublicId()).toBe(GRANTED_BY_PUBLIC_ID);
+    expect(applicationAccess.getGrantedByIdentityPublicId()).not.toBe(
+      APPLICATION_ACCESS_BOOTSTRAP_EVENT_ACTOR_MARKER
+    );
+  });
+
+  it("o evento gerado é application-access.granted com actorPublicId = grantedByIdentityPublicId (nunca BOOTSTRAP)", () => {
+    const applicationAccess = ApplicationAccess.grant({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+      accessProfile: "USER",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+    const [event] = applicationAccess.pullDomainEvents();
+
+    expect(event?.eventType).toBe("application-access.granted");
+    expect(event?.actorPublicId).toBe(GRANTED_BY_PUBLIC_ID);
+    expect(event?.actorPublicId).not.toBe(APPLICATION_ACCESS_BOOTSTRAP_EVENT_ACTOR_MARKER);
+  });
+
+  it("não expõe internalId publicamente", () => {
+    const applicationAccess = ApplicationAccess.grant({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      applicationPublicId: PORTAL_APPLICATION_PUBLIC_ID,
+      accessProfile: "USER",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+
+    expect(applicationAccess.getInternalIdForPersistence()).toBeUndefined();
+    applicationAccess.assignInternalIdFromPersistence(5);
+    expect(applicationAccess.getInternalIdForPersistence()).toBe(5);
   });
 });

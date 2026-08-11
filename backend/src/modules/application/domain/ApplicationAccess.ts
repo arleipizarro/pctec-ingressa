@@ -15,6 +15,16 @@ export interface GrantFoundationalAdminAccessProps {
   readonly now?: Date | undefined;
 }
 
+export interface GrantApplicationAccessProps {
+  readonly identityPublicId: string;
+  readonly applicationPublicId: string;
+  readonly accessProfile: string;
+  readonly grantedByIdentityPublicId: string;
+  readonly correlationId: string;
+  readonly causationId?: string | undefined;
+  readonly now?: Date | undefined;
+}
+
 /** Estado completo, como persistido — usado exclusivamente por `reconstitute`. */
 export interface ApplicationAccessPersistedState {
   readonly internalId: number;
@@ -56,6 +66,17 @@ export const APPLICATION_ACCESS_BOOTSTRAP_EVENT_ACTOR_MARKER = "BOOTSTRAP" as co
  * fatia futura, quando existir autenticação (Fase C/D do ADR-027) — não
  * implementados aqui para não ampliar o escopo além do que esta entrega
  * exige.
+ *
+ * **G3 (v0.6.x): `grant()` genérico implementado** — a fatia futura
+ * mencionada acima chegou (Fase D/E já entregaram autenticação real).
+ * `grant()` concede `ApplicationAccess` para QUALQUER `Application`
+ * (não só `PCTEC_INGRESSA`) e QUALQUER `accessProfile` do conjunto
+ * fechado (`ADMIN`/`USER`, ADR-032), sempre com um
+ * `grantedByIdentityPublicId` real (nunca o marcador `BOOTSTRAP`, que
+ * continua reservado exclusivamente a
+ * `grantFoundationalAdminAccess()`). `revoke()` continua fora de escopo
+ * — G3 não implementa revogação, mesmo princípio de minimalismo já
+ * aplicado a `Membership`/`OrganizationExternalReference` em G2.
  */
 export class ApplicationAccess {
   private internalId: number | undefined;
@@ -151,6 +172,59 @@ export class ApplicationAccess {
         {
           aggregatePublicId: publicId.toString(),
           actorPublicId: APPLICATION_ACCESS_BOOTSTRAP_EVENT_ACTOR_MARKER,
+          correlationId: props.correlationId,
+          ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+          occurredAt: now
+        },
+        {
+          applicationAccessPublicId: publicId.toString(),
+          identityPublicId: props.identityPublicId,
+          applicationPublicId: props.applicationPublicId,
+          accessProfile: accessProfile.toString()
+        }
+      )
+    );
+
+    return applicationAccess;
+  }
+
+  /**
+   * Concede uma `ApplicationAccess` genérica — G3 (v0.6.x). Diferente de
+   * `grantFoundationalAdminAccess()`:
+   * - aceita `accessProfile` como parâmetro (validado contra o conjunto
+   *   fechado de `AccessProfile`, nunca uma string livre);
+   * - aceita `applicationPublicId` de QUALQUER Application, não só
+   *   `PCTEC_INGRESSA`;
+   * - sempre exige `grantedByIdentityPublicId` real — nunca `undefined`,
+   *   nunca o marcador `BOOTSTRAP` (reservado exclusivamente à concessão
+   *   fundacional).
+   */
+  public static grant(props: GrantApplicationAccessProps): ApplicationAccess {
+    const publicId = PublicId.generate();
+    const accessProfile = AccessProfile.create(props.accessProfile);
+    const now = props.now ?? new Date();
+
+    const applicationAccess = new ApplicationAccess({
+      internalId: undefined,
+      publicId,
+      identityPublicId: props.identityPublicId,
+      applicationPublicId: props.applicationPublicId,
+      accessProfile,
+      status: "GRANTED",
+      grantedAt: now,
+      grantedByIdentityPublicId: props.grantedByIdentityPublicId,
+      revokedAt: undefined,
+      revokedByIdentityPublicId: undefined,
+      version: 1,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    applicationAccess.domainEvents.push(
+      createApplicationAccessGrantedEvent(
+        {
+          aggregatePublicId: publicId.toString(),
+          actorPublicId: props.grantedByIdentityPublicId,
           correlationId: props.correlationId,
           ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
           occurredAt: now

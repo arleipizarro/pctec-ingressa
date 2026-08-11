@@ -26,6 +26,15 @@ export interface MembershipRepository {
   /** Usado por `GetMembershipsByIdentityService`. */
   findAllByIdentityPublicId(identityPublicId: string): Promise<Membership[]>;
 
+  /**
+   * Usado por `GetPortalContextService` (G3) — retorna só os Memberships
+   * `status='ACTIVE'` de uma Identity. Deliberadamente um método
+   * próprio, não um filtro em memória sobre `findAllByIdentityPublicId`:
+   * o boundary de "o que conta para o PortalContext" fica explícito no
+   * contrato do repository, não espalhado em cada chamador.
+   */
+  findActiveByIdentityPublicId(identityPublicId: string): Promise<Membership[]>;
+
   findByPublicId(publicId: PublicId): Promise<Membership | undefined>;
 
   insert(membership: Membership): Promise<void>;

@@ -22,10 +22,15 @@ import { createRequireAuthenticatedSession } from "../../modules/security/http/r
 import type { SessionCookieConfig } from "../../modules/security/http/sessionCookie.js";
 import { MariaDbApplicationRepository } from "../../modules/application/infrastructure/persistence/MariaDbApplicationRepository.js";
 import { MariaDbApplicationAccessRepository } from "../../modules/application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
-import { PCTEC_INGRESSA_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import { PCTEC_INGRESSA_APPLICATION_CODE, PCTEC_PORTAL_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
 import { AuthorizeApplicationAccessService } from "../../modules/authorization/application/AuthorizeApplicationAccessService.js";
 import { createRequireApplicationAccess } from "../../modules/authorization/http/requireApplicationAccess.js";
 import { createAdminWhoamiRoutes } from "../../modules/authorization/http/adminRoutes.js";
+import { MariaDbMembershipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbMembershipRepository.js";
+import { MariaDbOrganizationRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRepository.js";
+import { MariaDbOrganizationRelationshipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRelationshipRepository.js";
+import { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
+import { createPortalContextRoutes } from "../../modules/portal/http/portalContextRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -87,6 +92,12 @@ export interface CreateAppOptions {
    * (`GET /api/v1/admin/whoami`).
    */
   readonly authorizeApplicationAccessService?: AuthorizeApplicationAccessService;
+  /**
+   * Injetável para testes — G3 (v0.6.x). Quando omitido, `createApp()`
+   * constrói um `GetPortalContextService` real, usado por
+   * `GET /api/v1/portal/context`.
+   */
+  readonly getPortalContextService?: GetPortalContextService;
 }
 
 /**
@@ -145,6 +156,14 @@ function defaultAuthorizeApplicationAccessService(
   );
 }
 
+function defaultGetPortalContextService(pool: ReturnType<typeof createPool>): GetPortalContextService {
+  return new GetPortalContextService(
+    new MariaDbMembershipRepository(pool),
+    new MariaDbOrganizationRepository(pool),
+    new MariaDbOrganizationRelationshipRepository(pool)
+  );
+}
+
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
  * `listen()` é `server.ts`. Separar `createApp` de `server.ts` permite
@@ -168,7 +187,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.loginService === undefined ||
     options.logoutService === undefined ||
     options.validateSessionService === undefined ||
-    options.authorizeApplicationAccessService === undefined;
+    options.authorizeApplicationAccessService === undefined ||
+    options.getPortalContextService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -180,6 +200,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.validateSessionService ?? defaultValidateSessionService(sharedPool!, identityRepository);
   const authorizeApplicationAccessService =
     options.authorizeApplicationAccessService ?? defaultAuthorizeApplicationAccessService(sharedPool!);
+  const getPortalContextService =
+    options.getPortalContextService ?? defaultGetPortalContextService(sharedPool!);
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
@@ -226,6 +248,24 @@ export function createApp(options: CreateAppOptions = {}): Express {
       profile: "ADMIN"
     }),
     createAdminWhoamiRoutes()
+  );
+  // GET /api/v1/portal/context — G3 (v0.6.x). Mesma ordem obrigatória:
+  // requireAuthenticatedSession (autenticação) SEMPRE antes de
+  // requireApplicationAccess (autorização). PCTEC_PORTAL é uma
+  // Application DISTINTA de PCTEC_INGRESSA (ADR-031 §1) — um ADMIN de
+  // PCTEC_INGRESSA sem ApplicationAccess(PCTEC_PORTAL, USER) próprio
+  // recebe 403 aqui, mesmo sendo administrador da plataforma (task G3,
+  // seção 6, testado explicitamente). `requireOrganizationAccess`
+  // (módulo portal) NÃO é montado em nenhuma rota nesta entrega — task
+  // G3, seção 22 ("não inventar endpoint comercial falso").
+  app.use(
+    "/api/v1/portal",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_PORTAL_APPLICATION_CODE,
+      profile: "USER"
+    }),
+    createPortalContextRoutes(getPortalContextService)
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

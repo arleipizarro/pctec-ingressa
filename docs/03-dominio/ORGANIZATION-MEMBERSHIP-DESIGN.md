@@ -161,6 +161,12 @@ a resolver), mas a prova no backend continua acontecendo do mesmo jeito.
 
 ## 7. `GetPortalContextService` / `GET /api/v1/portal/context`
 
+**Status: implementado — G3 (v0.6.x).** `requireApplicationAccess`
+reutilizado exatamente como previsto abaixo, com `profile=USER`
+(ADR-032, extensão formal de `AccessProfile` — Fase F previa só
+`ADMIN`). Contrato de resposta e tabela 401×403 formalizados em
+`API-CONTRACT-V1.md`, seção 9.
+
 Fluxo:
 
 ```

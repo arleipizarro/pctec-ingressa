@@ -28,6 +28,9 @@ class InMemoryMembershipRepository implements MembershipRepository {
   public async findAllByIdentityPublicId(identityPublicId: string): Promise<Membership[]> {
     return this.stored.filter((m) => m.getIdentityPublicId() === identityPublicId);
   }
+  public async findActiveByIdentityPublicId(identityPublicId: string): Promise<Membership[]> {
+    return this.stored.filter((m) => m.getIdentityPublicId() === identityPublicId && m.isActive());
+  }
   public async findByPublicId(publicId: PublicId): Promise<Membership | undefined> {
     return this.stored.find((m) => m.getPublicId().equals(publicId));
   }

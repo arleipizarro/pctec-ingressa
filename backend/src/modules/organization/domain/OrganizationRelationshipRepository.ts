@@ -18,5 +18,16 @@ export interface OrganizationRelationshipRepository {
    */
   existsByChildOrganizationPublicId(childOrganizationPublicId: PublicId): Promise<boolean>;
 
+  /**
+   * Usado por `GetPortalContextService` (G3) para expandir
+   * `scope=ORGANIZATION_AND_DESCENDANTS`: dado um `BUSINESS_GROUP`,
+   * retorna todos os relacionamentos em que ele é `parent` (ou seja,
+   * todas as `COMPANY` filhas). Não valida que `parentPublicId` é
+   * realmente `BUSINESS_GROUP` — quem chama já sabe disso (mesmo
+   * princípio de `CreateOrganizationRelationshipService`: a validação de
+   * tipo é responsabilidade de quem orquestra, não deste repository).
+   */
+  findChildrenByParentPublicId(parentPublicId: PublicId): Promise<OrganizationRelationship[]>;
+
   insert(relationship: OrganizationRelationship): Promise<void>;
 }

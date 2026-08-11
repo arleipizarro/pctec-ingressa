@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 13 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 15 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -18,7 +18,9 @@ describe("loadMigrationDefinitions", () => {
       "0010_create_organizations",
       "0011_create_organization_relationships",
       "0012_create_memberships",
-      "0013_create_organization_external_references"
+      "0013_create_organization_external_references",
+      "0014_seed_pctec_portal_application",
+      "0015_add_user_access_profile"
     ]);
 
     for (const migration of migrations) {
@@ -27,11 +29,13 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004 é ALTER TABLE, 0007 é seed INSERT/DELETE)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015 são ALTER TABLE, 0007/0014 são seed INSERT/DELETE)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
-      "0007_seed_pctec_ingressa_application"
+      "0007_seed_pctec_ingressa_application",
+      "0014_seed_pctec_portal_application",
+      "0015_add_user_access_profile"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -47,6 +51,16 @@ describe("loadMigrationDefinitions", () => {
     const seedMigration = migrations.find((m) => m.id === "0007_seed_pctec_ingressa_application");
     expect(seedMigration?.up.toUpperCase()).toContain("INSERT INTO APPLICATIONS");
     expect(seedMigration?.down.toUpperCase()).toContain("DELETE FROM APPLICATIONS");
+
+    const portalSeedMigration = migrations.find((m) => m.id === "0014_seed_pctec_portal_application");
+    expect(portalSeedMigration?.up.toUpperCase()).toContain("INSERT INTO APPLICATIONS");
+    expect(portalSeedMigration?.down.toUpperCase()).toContain("DELETE FROM APPLICATIONS");
+
+    const accessProfileMigration = migrations.find((m) => m.id === "0015_add_user_access_profile");
+    expect(accessProfileMigration?.up.toUpperCase()).toContain("ALTER TABLE");
+    expect(accessProfileMigration?.up).toContain("ENUM('ADMIN','USER')");
+    expect(accessProfileMigration?.down.toUpperCase()).toContain("ALTER TABLE");
+    expect(accessProfileMigration?.down).toContain("ENUM('ADMIN')");
   });
 
   it("a migration de identities usa id BIGINT interno + public_id CHAR(36), nunca BINARY(16)", () => {
@@ -325,6 +339,38 @@ describe("loadMigrationDefinitions", () => {
     expect(downTrimmed).toContain("DROP TABLE IF EXISTS organization_external_references;");
   });
 
+  it("seed_pctec_portal_application (0014) [G3]: INSERT determinístico, public_id distinto de PCTEC_INGRESSA, down remove só por public_id", () => {
+    const migrations = loadMigrationDefinitions();
+    const portalSeedMigration = migrations.find((m) => m.id === "0014_seed_pctec_portal_application");
+
+    expect(portalSeedMigration).toBeDefined();
+    expect(portalSeedMigration?.up).toContain("'3f9c1a2e-7d4b-4e5a-9c3f-000000000001'");
+    expect(portalSeedMigration?.up).toContain("'PCTEC_PORTAL'");
+    expect(portalSeedMigration?.up).toContain("'ACTIVE'");
+    // public_id distinto do de PCTEC_INGRESSA (0007).
+    expect(portalSeedMigration?.up).not.toContain("0b13f6f0-8f3a-4a1e-9c2d-000000000001");
+
+    const downTrimmed = portalSeedMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DELETE FROM applications WHERE public_id = '3f9c1a2e-7d4b-4e5a-9c3f-000000000001';");
+    // Nunca um DELETE genérico por code isolado.
+    expect(downTrimmed.toUpperCase()).not.toContain("WHERE CODE");
+  });
+
+  it("add_user_access_profile (0015) [G3]: ALTER TABLE application_accesses, ENUM('ADMIN','USER') no up, ENUM('ADMIN') no down, não toca 0006", () => {
+    const migrations = loadMigrationDefinitions();
+    const accessProfileMigration = migrations.find((m) => m.id === "0015_add_user_access_profile");
+    const originalAccessesMigration = migrations.find((m) => m.id === "0006_create_application_accesses");
+
+    expect(accessProfileMigration).toBeDefined();
+    expect(accessProfileMigration?.up).toContain("ALTER TABLE application_accesses");
+    expect(accessProfileMigration?.up).toContain("MODIFY COLUMN access_profile ENUM('ADMIN','USER') NOT NULL");
+    expect(accessProfileMigration?.down).toContain("ALTER TABLE application_accesses");
+    expect(accessProfileMigration?.down).toContain("MODIFY COLUMN access_profile ENUM('ADMIN') NOT NULL");
+    // 0006 original permanece com ENUM('ADMIN') — nunca editada
+    // retroativamente (mesmo princípio já verificado para 0001-0013).
+    expect(originalAccessesMigration?.up).toContain("ENUM('ADMIN')  NOT NULL");
+  });
+
   it("as migrations que criam tabela usam utf8mb4_unicode_520_ci, nunca utf8mb4_general_ci como padrão", () => {
     const migrations = loadMigrationDefinitions();
     const tableCreatingMigrations = migrations.filter((m) => m.id !== "0007_seed_pctec_ingressa_application");
@@ -335,9 +381,9 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("nenhuma migration contém DELETE físico operacional sobre identities (dado pessoal) — exceção documentada: reversão do seed técnico de applications", () => {
+  it("nenhuma migration contém DELETE físico operacional sobre identities (dado pessoal) — exceção documentada: reversão dos seeds técnicos de applications", () => {
     const migrations = loadMigrationDefinitions();
-    const seedMigrationId = "0007_seed_pctec_ingressa_application";
+    const seedMigrationIds = new Set(["0007_seed_pctec_ingressa_application", "0014_seed_pctec_portal_application"]);
 
     for (const migration of migrations) {
       // DELETE FROM nunca é aceitável sobre `identities` (dado pessoal —
@@ -349,19 +395,21 @@ describe("loadMigrationDefinitions", () => {
       expect(migration.up.toUpperCase()).not.toMatch(/DELETE FROM\s+APPLICATION_ACCESSES/);
       expect(migration.down.toUpperCase()).not.toMatch(/DELETE FROM\s+APPLICATION_ACCESSES/);
 
-      if (migration.id !== seedMigrationId) {
-        // Fora da migration de seed, nenhum DELETE FROM em lugar nenhum
-        // — nem mesmo em `applications`.
+      if (!seedMigrationIds.has(migration.id)) {
+        // Fora das migrations de seed, nenhum DELETE FROM em lugar
+        // nenhum — nem mesmo em `applications`.
         expect(migration.up.toUpperCase()).not.toContain("DELETE FROM");
         expect(migration.down.toUpperCase()).not.toContain("DELETE FROM");
       }
     }
 
-    // A única exceção explícita e documentada: o down da migration de
-    // seed reverte exclusivamente a própria linha semeada, por
+    // A única exceção explícita e documentada: o down de cada migration
+    // de seed reverte exclusivamente a própria linha semeada, por
     // public_id — nunca um DELETE genérico por code isolado.
-    const seedMigration = migrations.find((m) => m.id === seedMigrationId);
-    expect(seedMigration?.down.toUpperCase()).toContain("DELETE FROM APPLICATIONS WHERE PUBLIC_ID =");
+    for (const seedMigrationId of seedMigrationIds) {
+      const seedMigration = migrations.find((m) => m.id === seedMigrationId);
+      expect(seedMigration?.down.toUpperCase()).toContain("DELETE FROM APPLICATIONS WHERE PUBLIC_ID =");
+    }
   });
 
   it("0007 (seed): o down.sql remove SOMENTE a linha pelo public_id fixo — nunca um DELETE genérico por code", () => {

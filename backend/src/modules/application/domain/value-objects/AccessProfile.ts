@@ -1,16 +1,23 @@
 import { DomainError } from "../../../../shared/errors/DomainError.js";
 
 /**
- * Perfis de acesso global previstos. Apenas `ADMIN` tem significado
- * definido nesta entrega (v0.5.0) — os demais valores não existem ainda;
- * a lista é deliberadamente pequena e fechada, não um enum genérico
- * aberto a qualquer string (ver ADR-028, seção "Decisão sobre ADMIN").
+ * Perfis de acesso global previstos.
+ *
+ * **G3 (v0.6.x) — extensão formal, conforme ADR-028 já previa
+ * explicitamente ("Novos perfis exigem nova decisão formal... nunca uma
+ * string arbitrária aceita silenciosamente"):** `USER` foi adicionado —
+ * ver ADR-032 para o raciocínio completo. `ADMIN` continua
+ * representando administração da PRÓPRIA aplicação (ex.: administração
+ * da plataforma Ingressa); `USER` representa uso comum de uma aplicação
+ * consumidora (ex.: um cliente final autorizado a usar o Portal) — a
+ * mesma distinção "administração da plataforma ou uso comum" que
+ * ADR-028 já registrava em prosa, agora com um segundo valor formal.
  *
  * `accessProfile` é uma distinção de nível de acesso GLOBAL à própria
  * aplicação (ex.: administração da plataforma Ingressa) — nunca uma
  * permissão fina de negócio de um produto consumidor (ADR-007).
  */
-export const ACCESS_PROFILES = ["ADMIN"] as const;
+export const ACCESS_PROFILES = ["ADMIN", "USER"] as const;
 
 export type AccessProfileValue = (typeof ACCESS_PROFILES)[number];
 
@@ -44,6 +51,10 @@ export class AccessProfile {
 
   public static admin(): AccessProfile {
     return new AccessProfile("ADMIN");
+  }
+
+  public static user(): AccessProfile {
+    return new AccessProfile("USER");
   }
 
   public toString(): AccessProfileValue {

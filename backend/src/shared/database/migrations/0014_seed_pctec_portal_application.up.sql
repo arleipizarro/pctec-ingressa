@@ -1,0 +1,33 @@
+-- Migration: 0014_seed_pctec_portal_application
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Seed técnico: a Application que representa o Portal do Cliente —
+-- mesma natureza de 0007 (seed de PCTEC_INGRESSA), mesma disciplina.
+-- `public_id` técnico determinístico documentado em
+-- `src/modules/application/domain/value-objects/ApplicationCodes.ts`
+-- (fonte única desse valor no código; esta migration só o replica em
+-- SQL, deliberadamente, pois migrations não importam TypeScript).
+--
+-- ADR-031 §1: cada produto consumidor possui Application própria —
+-- PCTEC_PORTAL nunca reaproveita PCTEC_INGRESSA.
+--
+-- Idempotência: NÃO é responsabilidade deste SQL (mesmo princípio já
+-- documentado em 0007) — a idempotência operacional é fornecida pelo
+-- MigrationRunner/schema_migrations. Nenhuma cláusula de "ignorar
+-- duplicidade" aqui; um estado divergente pré-existente deve FALHAR
+-- explicitamente (violação de UNIQUE KEY), nunca ser mascarado.
+--
+-- Não cria nenhum ApplicationAccess/Membership real — só a Application.
+-- Conceder acesso a uma Identity específica é bootstrap/homologação
+-- posterior (seção 23/24 do prompt de implementação G3), nunca
+-- hardcoded em migration (mesmo princípio já aplicado em 0007/0005:
+-- seed de catálogo, nunca de dado pessoal/vínculo).
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+-- Depende de `applications` (0005) já existir.
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA (G3 — v0.6.x).
+
+INSERT INTO applications (public_id, code, name, status, version, created_at, updated_at)
+VALUES ('3f9c1a2e-7d4b-4e5a-9c3f-000000000001', 'PCTEC_PORTAL', 'PCTEC Portal', 'ACTIVE', 1, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3));

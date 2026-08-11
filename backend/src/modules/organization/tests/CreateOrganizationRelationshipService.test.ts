@@ -43,6 +43,10 @@ class InMemoryOrganizationRelationshipRepository implements OrganizationRelation
     return this.stored.some((r) => r.getChildOrganizationPublicId().equals(childOrganizationPublicId));
   }
 
+  public async findChildrenByParentPublicId(parentPublicId: PublicId): Promise<OrganizationRelationship[]> {
+    return this.stored.filter((r) => r.getParentOrganizationPublicId().equals(parentPublicId));
+  }
+
   public async insert(relationship: OrganizationRelationship): Promise<void> {
     this.stored.push(relationship);
     relationship.assignInternalIdFromPersistence(this.stored.length);

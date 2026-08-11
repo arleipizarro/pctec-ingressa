@@ -95,6 +95,18 @@ export class MariaDbMembershipRepository implements MembershipRepository {
     return (rows as MembershipRow[]).map((row) => Membership.reconstitute(mapRowToPersistedState(row)));
   }
 
+  public async findActiveByIdentityPublicId(identityPublicId: string): Promise<Membership[]> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, identity_public_id, organization_public_id, profile, scope,
+              status, started_at, ended_at, version, created_at, updated_at
+         FROM memberships
+        WHERE identity_public_id = ? AND status = 'ACTIVE'
+        ORDER BY created_at ASC`,
+      [identityPublicId]
+    );
+    return (rows as MembershipRow[]).map((row) => Membership.reconstitute(mapRowToPersistedState(row)));
+  }
+
   public async existsByIdentityOrganizationAndProfile(
     identityPublicId: string,
     organizationPublicId: string,

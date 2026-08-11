@@ -301,6 +301,71 @@ Erros esperados: `MAGIC_LINK_EXPIRED`, `MAGIC_LINK_ALREADY_CONSUMED`,
 
 ---
 
+## 9. `/api/v1/portal/context`
+
+**Status: implementado — G3 (v0.6.x).** Diferente das seções 1–8 acima
+(em grande parte ainda conceituais/pré-implementação), esta seção
+documenta o contrato REAL, já em código.
+
+**Responsabilidade:** resolver, para uma Identity já autenticada, quais
+`Organization`s ela pode enxergar no Portal — nunca decide "o que ela
+pode fazer" dentro de cada uma (isso é escopo comercial de cada rota
+futura, G4+).
+
+**`GET /api/v1/portal/context`**
+
+Pipeline: `requireAuthenticatedSession` → `requireApplicationAccess`
+(`applicationCode=PCTEC_PORTAL`, `profile=USER` — ADR-032) → handler.
+Nessa ordem, sempre — nunca o contrário.
+
+Contrato de resposta:
+
+```json
+{
+  "identity": { "publicId": "..." },
+  "organizations": [
+    { "publicId": "...", "type": "BUSINESS_GROUP", "legalName": "...", "tradeName": null },
+    { "publicId": "...", "type": "COMPANY", "legalName": "...", "tradeName": null }
+  ]
+}
+```
+
+`organizations: []` é uma resposta `200` legítima (Identity com
+`PCTEC_PORTAL` mas sem nenhum `Membership` ainda) — nunca um erro.
+**Contrato fechado, sem ambiguidade (revisão pré-commit de G3, item 5):**
+sessão válida + `ApplicationAccess(PCTEC_PORTAL, USER)` válido + zero
+`Membership` `ACTIVE` sempre retornam `200` com `organizations: []`,
+nunca `403`. Acesso à aplicação (`ApplicationAccess`) e escopo comercial
+(`Membership`) são conceitos independentes (ADR-031 §6) — uma Identity
+pode estar corretamente autenticada e autorizada a usar o Portal sem
+ainda ter nenhuma `Organization` atribuída; isso não é um estado de
+erro, é um estado inicial legítimo (ex.: acesso acabou de ser concedido,
+vínculo comercial ainda não cadastrado).
+Nunca inclui `legacyId`/`internalId`/`documentNumber`/CNPJ/Credential/
+Session token/`ApplicationAccess` cru.
+
+**Contrato 401 × 403 (ADR-032, formalizado aqui):**
+
+| Situação | Código | Classificação | HTTP |
+|---|---|---|---|
+| Sem sessão | `SESSION_INVALID` | `AUTHENTICATION` | 401 |
+| Sessão válida, sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Sessão + Portal access válidos, mas `organizationPublicId` fora do `PortalContext` efetivo | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+
+Nunca misturado. Um `ADMIN` de `PCTEC_INGRESSA` sem
+`ApplicationAccess(PCTEC_PORTAL, USER)` próprio recebe `403` na segunda
+linha — os dois eixos são independentes (ADR-031 §6).
+
+**`requireOrganizationAccess` (boundary reutilizável, preparado, não
+montado em rota real nesta entrega):** dado um `organizationPublicId`
+recebido do frontend, prova
+`organizationPublicId ∈ PortalContext(identity)` antes de qualquer
+operação comercial — a seleção de contexto pelo frontend **nunca é
+autoridade** (ORGANIZATION-MEMBERSHIP-DESIGN.md §6, decisão da Fase G
+reafirmada aqui). Falha sempre com `ORGANIZATION_ACCESS_DENIED` — nunca
+`404`, mesmo quando a Organization não existe ou não está `ACTIVE`
+(esconder essa distinção é deliberado, não uma lacuna).
+
 ## Questões pendentes de decisão
 
 - Mecanismo de autenticação serviço a serviço para chamadas de consumidores

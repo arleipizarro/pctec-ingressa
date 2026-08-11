@@ -71,7 +71,7 @@ describe("build", () => {
     expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_CREDENTIAL_JS)).toBe(true);
   });
 
-  it("gera dist/shared/database/migrations/ com exatamente as 26 migrations atuais (0001-0013, up/down)", () => {
+  it("gera dist/shared/database/migrations/ com exatamente as 30 migrations atuais (0001-0015, up/down)", () => {
     expect(existsSync(DIST_MIGRATIONS_DIR)).toBe(true);
     const distFiles = readdirSync(DIST_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     expect(distFiles).toEqual([
@@ -100,13 +100,17 @@ describe("build", () => {
       "0012_create_memberships.down.sql",
       "0012_create_memberships.up.sql",
       "0013_create_organization_external_references.down.sql",
-      "0013_create_organization_external_references.up.sql"
+      "0013_create_organization_external_references.up.sql",
+      "0014_seed_pctec_portal_application.down.sql",
+      "0014_seed_pctec_portal_application.up.sql",
+      "0015_add_user_access_profile.down.sql",
+      "0015_add_user_access_profile.up.sql"
     ]);
   });
 
   it("cada arquivo copiado para dist/ tem SHA-256 idêntico ao arquivo fonte em src/ (cópia byte-a-byte)", () => {
     const srcFiles = readdirSync(SRC_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql"));
-    expect(srcFiles.length).toBe(26);
+    expect(srcFiles.length).toBe(30);
     for (const name of srcFiles) {
       const srcHash = sha256(path.join(SRC_MIGRATIONS_DIR, name));
       const distHash = sha256(path.join(DIST_MIGRATIONS_DIR, name));
@@ -114,7 +118,7 @@ describe("build", () => {
     }
   });
 
-  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 13 migrations (0001-0013) sem depender de src/ nem de banco", async () => {
+  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 15 migrations (0001-0015) sem depender de src/ nem de banco", async () => {
     const compiledModuleUrl = pathToFileURL(path.join(DIST_DIR, "shared", "database", "loadMigrationDefinitions.js")).href;
     const { loadMigrationDefinitions } = (await import(compiledModuleUrl)) as {
       loadMigrationDefinitions: () => Array<{ id: string; up: string; down: string }>;
@@ -135,7 +139,9 @@ describe("build", () => {
       "0010_create_organizations",
       "0011_create_organization_relationships",
       "0012_create_memberships",
-      "0013_create_organization_external_references"
+      "0013_create_organization_external_references",
+      "0014_seed_pctec_portal_application",
+      "0015_add_user_access_profile"
     ]);
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);

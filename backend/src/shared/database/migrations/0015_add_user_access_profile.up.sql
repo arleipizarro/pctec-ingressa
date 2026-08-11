@@ -1,0 +1,38 @@
+-- Migration: 0015_add_user_access_profile
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- G3 (v0.6.x). Referência: docs/adr/ADR-032-ACCESS-PROFILE-USER.md.
+--
+-- ADR-028 já previa esta situação explicitamente: "Novos perfis exigem
+-- nova decisão formal (extensão do Value Object + ALTER TABLE na coluna
+-- ENUM('ADMIN') de application_accesses)". Esta migration é essa
+-- alteração. NÃO modifica 0006 (já aplicada no DEV, nunca editada
+-- retroativamente — mesmo princípio já aplicado em 0004 sobre
+-- 0001/0002/0003).
+--
+-- Motivo: PCTEC_PORTAL precisa distinguir "usuário comum autorizado a
+-- usar o Portal" de "administrador da plataforma Ingressa" —
+-- accessProfile=ADMIN seria semanticamente incorreto para um cliente
+-- final. USER representa acesso comum a uma aplicação consumidora,
+-- continua sendo só uma distinção de nível GLOBAL de acesso (ADR-007),
+-- nunca uma permissão fina de negócio.
+--
+-- MODIFY COLUMN em vez de novo ALTER incremental porque MariaDB não tem
+-- "ADD VALUE TO ENUM" — redefine a lista completa. Ordem preservada
+-- (ADMIN primeiro, USER novo em seguida) para não alterar os índices
+-- internos de valores ENUM já persistidos (MariaDB armazena ENUM
+-- internamente por posição ordinal; ADMIN continua na posição 1).
+--
+-- Nenhum dado existente é afetado — todas as linhas atuais de
+-- application_accesses têm access_profile='ADMIN' (única Application
+-- com ApplicationAccess concedido até aqui é PCTEC_INGRESSA), que
+-- continua válido no novo ENUM.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+-- Depende de `application_accesses` (0006) já existir.
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA (G3 — v0.6.x).
+
+ALTER TABLE application_accesses
+  MODIFY COLUMN access_profile ENUM('ADMIN','USER') NOT NULL COMMENT 'Nível de acesso global à aplicação (ADR-028, ADR-032) — nunca permissão fina de negócio (ADR-007).';
