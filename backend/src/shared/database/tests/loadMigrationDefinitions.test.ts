@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 9 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 11 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -14,7 +14,9 @@ describe("loadMigrationDefinitions", () => {
       "0006_create_application_accesses",
       "0007_seed_pctec_ingressa_application",
       "0008_create_credentials",
-      "0009_create_sessions"
+      "0009_create_sessions",
+      "0010_create_organizations",
+      "0011_create_organization_relationships"
     ]);
 
     for (const migration of migrations) {
@@ -168,6 +170,70 @@ describe("loadMigrationDefinitions", () => {
     // cria automaticamente para colunas de FK sem índice compatível).
     expect(sql).toContain("KEY idx_app_access_granted_by (granted_by_identity_public_id)");
     expect(sql).toContain("KEY idx_app_access_revoked_by (revoked_by_identity_public_id)");
+  });
+
+  it("organizations (0010) [G1]: segue a convenção id BIGINT interno + public_id CHAR(36) (ADR-021), type ENUM fechado, document_number nullable e unique(document_number, type)", () => {
+    const migrations = loadMigrationDefinitions();
+    const organizationsMigration = migrations.find((m) => m.id === "0010_create_organizations");
+
+    expect(organizationsMigration).toBeDefined();
+    expect(organizationsMigration?.up).toContain("public_id");
+    expect(organizationsMigration?.up).toContain("CHAR(36)");
+    // BINARY(16) só deve aparecer em comentário (explicando a
+    // divergência da convenção v0.2.0), nunca como tipo de coluna real
+    // no SQL executável — checagem restrita ao SQL sem comentários.
+    const organizationsSqlWithoutComments = (organizationsMigration?.up ?? "").replace(/--[^\n]*/g, "");
+    expect(organizationsSqlWithoutComments).not.toContain("BINARY(16)");
+    expect(organizationsSqlWithoutComments).not.toContain("internal_id");
+    expect(organizationsMigration?.up).toContain("ENUM('BUSINESS_GROUP','COMPANY')");
+    expect(organizationsMigration?.up).toContain("ENUM('ACTIVE','INACTIVE')");
+    // document_number é NULLABLE — nenhum NOT NULL nessa coluna (G1:
+    // opcional para AMBOS os tipos, ADR-031 §2).
+    expect(organizationsMigration?.up).toMatch(/document_number\s+VARCHAR\(20\)\s+NULL/);
+    expect(organizationsMigration?.up).toContain(
+      "UNIQUE KEY uk_organizations_document_type (document_number, type)"
+    );
+    expect(organizationsMigration?.up).toContain("UNIQUE KEY uk_organizations_public_id (public_id)");
+    expect(organizationsMigration?.up).toContain("utf8mb4_unicode_520_ci");
+
+    const downTrimmed = organizationsMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DROP TABLE IF EXISTS organizations;");
+    expect(downTrimmed.toUpperCase()).not.toContain("ORGANIZATION_RELATIONSHIPS");
+  });
+
+  it("organization_relationships (0011) [G1]: FKs referenciam organizations.public_id (não internal_id), RESTRICT/RESTRICT, uk_org_rel_child garante no máximo 1 grupo por empresa", () => {
+    const migrations = loadMigrationDefinitions();
+    const relationshipsMigration = migrations.find((m) => m.id === "0011_create_organization_relationships");
+
+    expect(relationshipsMigration).toBeDefined();
+    expect(relationshipsMigration?.up).toContain("public_id");
+    expect(relationshipsMigration?.up).toContain("CHAR(36)");
+    expect(relationshipsMigration?.up).not.toContain("BINARY(16)");
+    expect(relationshipsMigration?.up).toContain(
+      "FOREIGN KEY (parent_organization_public_id) REFERENCES organizations (public_id)"
+    );
+    expect(relationshipsMigration?.up).toContain(
+      "FOREIGN KEY (child_organization_public_id) REFERENCES organizations (public_id)"
+    );
+    const restrictCount = (relationshipsMigration?.up.match(/ON DELETE RESTRICT ON UPDATE RESTRICT/g) ?? []).length;
+    expect(restrictCount).toBe(2);
+    expect(relationshipsMigration?.up.toUpperCase()).not.toContain("CASCADE");
+    expect(relationshipsMigration?.up.toUpperCase()).not.toContain("SET NULL");
+    // uk_org_rel_child: no MVP, uma COMPANY pertence a no máximo um
+    // BUSINESS_GROUP.
+    expect(relationshipsMigration?.up).toContain("UNIQUE KEY uk_org_rel_child (child_organization_public_id)");
+    expect(relationshipsMigration?.up).toContain("UNIQUE KEY uk_org_rel_public_id (public_id)");
+    // Sem status/updated_at nesta fatia — G1 só implementa criação (ver
+    // comentário da migration e OrganizationRelationship.ts). Checagem
+    // restrita ao SQL executável, sem comentários (que mencionam essas
+    // palavras ao EXPLICAR a ausência delas).
+    const relationshipsSqlWithoutComments = (relationshipsMigration?.up ?? "").replace(/--[^\n]*/g, "");
+    expect(relationshipsSqlWithoutComments.toUpperCase()).not.toContain(" STATUS ");
+    expect(relationshipsSqlWithoutComments).not.toContain("updated_at");
+
+    const downTrimmed = relationshipsMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DROP TABLE IF EXISTS organization_relationships;");
+    expect(downTrimmed.toUpperCase()).not.toContain(" ORGANIZATIONS;");
   });
 
   it("as migrations que criam tabela usam utf8mb4_unicode_520_ci, nunca utf8mb4_general_ci como padrão", () => {

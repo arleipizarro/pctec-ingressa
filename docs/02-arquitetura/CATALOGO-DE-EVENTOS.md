@@ -195,12 +195,45 @@ contexto.
 
 - **Produtor:** `organization`.
 - **Finalidade:** notificar alteração de dados cadastrais de uma
-  organização, incluindo mudanças em `OrganizationRelationship`.
+  organização (ex.: `legal_name`, `trade_name`, `status`).
 - **Identificador da entidade:** `organization_id`.
 - **Versão:** 1.
 - **Payload mínimo:** `organization_id`, campos alterados.
 - **Nunca publicar:** dados financeiros ou contratuais (não pertencem ao
   domínio do Ingressa).
+
+**Nota de correção (G1 — v0.6.x, ADR-031):** este evento **não cobre
+mais** mudanças em `OrganizationRelationship` — a frase original
+("incluindo mudanças em OrganizationRelationship") foi removida.
+`OrganizationRelationship` é um Aggregate próprio, com seu próprio
+`public_id`/tabela, estruturalmente equivalente a `ApplicationAccess`
+(vínculo entre duas entidades, com identidade e ciclo de vida próprios)
+— e `ApplicationAccess` já tem evento dedicado
+(`application-access.granted`, abaixo), não é dobrado em
+`identity.updated`/`application.updated`. Pelo mesmo precedente, criação
+de `OrganizationRelationship` é reportada por `organization-relationship.created`
+(nova entrada, abaixo), não por `organization.updated`. Nenhuma coluna de
+`organizations` muda quando um `OrganizationRelationship` é criado (sem
+`version`/`updated_at` bump em `organizations` na migration 0010) —
+reaproveitar `organization.updated` sem uma mudança de estado real na
+Organization seria semanticamente incorreto, além de ambíguo (uma
+relação envolve DUAS Organizations — parent e child — e
+`organization.updated` só suporta um `aggregatePublicId`).
+
+### organization-relationship.created
+
+- **Produtor:** bounded context `organization`.
+- **Finalidade:** notificar a criação de um vínculo hierárquico
+  `BUSINESS_GROUP` → `COMPANY`.
+- **Identificador da entidade:** `organization_relationship_id` (o
+  `public_id` do próprio `OrganizationRelationship`, não o de nenhuma das
+  duas `Organization` vinculadas).
+- **Versão:** 1.
+- **Payload mínimo:** `organization_relationship_id`,
+  `parent_organization_id`, `child_organization_id`.
+- **Nunca publicar:** nenhum dado cadastral das Organizations vinculadas
+  além dos seus `public_id`s (nome/documento não pertencem a este
+  evento).
 
 ### membership.created
 
