@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 11 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 13 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -16,7 +16,9 @@ describe("loadMigrationDefinitions", () => {
       "0008_create_credentials",
       "0009_create_sessions",
       "0010_create_organizations",
-      "0011_create_organization_relationships"
+      "0011_create_organization_relationships",
+      "0012_create_memberships",
+      "0013_create_organization_external_references"
     ]);
 
     for (const migration of migrations) {
@@ -234,6 +236,93 @@ describe("loadMigrationDefinitions", () => {
     const downTrimmed = relationshipsMigration?.down.trim() ?? "";
     expect(downTrimmed).toContain("DROP TABLE IF EXISTS organization_relationships;");
     expect(downTrimmed.toUpperCase()).not.toContain(" ORGANIZATIONS;");
+  });
+
+  it("memberships (0012) [G2]: FKs por public_id, profile/scope ENUM fechados com os valores reconfirmados, uk_membership_unique, sem status/started_at/ended_at fora de contexto", () => {
+    const migrations = loadMigrationDefinitions();
+    const membershipsMigration = migrations.find((m) => m.id === "0012_create_memberships");
+
+    expect(membershipsMigration).toBeDefined();
+    expect(membershipsMigration?.up).toContain("public_id");
+    expect(membershipsMigration?.up).toContain("CHAR(36)");
+    const membershipsSqlWithoutComments = (membershipsMigration?.up ?? "").replace(/--[^\n]*/g, "");
+    expect(membershipsSqlWithoutComments).not.toContain("BINARY(16)");
+    expect(membershipsSqlWithoutComments).not.toContain("internal_id");
+    expect(membershipsMigration?.up).toContain(
+      "ENUM('EMPLOYEE','CUSTOMER','PARTNER','SUPPLIER','SERVICE_ACCOUNT')"
+    );
+    expect(membershipsMigration?.up).toContain("ENUM('ORGANIZATION_ONLY','ORGANIZATION_AND_DESCENDANTS')");
+    expect(membershipsMigration?.up).toContain("ENUM('ACTIVE','INACTIVE')");
+    expect(membershipsMigration?.up).toContain(
+      "FOREIGN KEY (identity_public_id) REFERENCES identities (public_id)"
+    );
+    expect(membershipsMigration?.up).toContain(
+      "FOREIGN KEY (organization_public_id) REFERENCES organizations (public_id)"
+    );
+    const restrictCount = (membershipsMigration?.up.match(/ON DELETE RESTRICT ON UPDATE RESTRICT/g) ?? []).length;
+    expect(restrictCount).toBe(2);
+    expect(membershipsMigration?.up.toUpperCase()).not.toContain("CASCADE");
+    expect(membershipsMigration?.up).toContain(
+      "UNIQUE KEY uk_membership_unique (identity_public_id, organization_public_id, profile)"
+    );
+    expect(membershipsMigration?.up).toContain("UNIQUE KEY uk_memberships_public_id (public_id)");
+    expect(membershipsMigration?.up).toContain("started_at");
+    expect(membershipsMigration?.up).toContain("ended_at");
+
+    const downTrimmed = membershipsMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DROP TABLE IF EXISTS memberships;");
+  });
+
+  it("organization_external_references (0013) [G2]: system_code ENUM fechado (3 sistemas), entity_type VARCHAR aberto, legacy_id BIGINT, active_match_key + uk_org_ext_ref_active_match (unicidade condicional sob concorrência real), FK RESTRICT/RESTRICT", () => {
+    const migrations = loadMigrationDefinitions();
+    const referencesMigration = migrations.find((m) => m.id === "0013_create_organization_external_references");
+
+    expect(referencesMigration).toBeDefined();
+    expect(referencesMigration?.up).toContain("public_id");
+    expect(referencesMigration?.up).toContain("CHAR(36)");
+    expect(referencesMigration?.up).toContain("ENUM('PCTEC_HUB','PCTEC_HELPDESK','PCTEC_PORTAL')");
+    // Nenhum sistema fictício.
+    expect(referencesMigration?.up).not.toContain("PCTEC_INGRESSA'");
+    expect(referencesMigration?.up).toContain("entity_type");
+    expect(referencesMigration?.up).toContain("VARCHAR(64)");
+    expect(referencesMigration?.up).toContain("legacy_id");
+    expect(referencesMigration?.up).toContain("BIGINT");
+    expect(referencesMigration?.up).toContain("ENUM('ACTIVE','SUPERSEDED')");
+    // Coluna gerada (VIRTUAL) que colapsa para NULL quando não-ACTIVE —
+    // base da unicidade condicional sob concorrência real (ver migration
+    // 0013 para o raciocínio completo comparando as alternativas).
+    expect(referencesMigration?.up).toContain("active_match_key");
+    expect(referencesMigration?.up).toContain("GENERATED ALWAYS AS");
+    expect(referencesMigration?.up).toContain("VIRTUAL");
+    expect(referencesMigration?.up).toContain(
+      "CASE WHEN status = 'ACTIVE' THEN CONCAT(system_code, ':', entity_type, ':', legacy_id) ELSE NULL END"
+    );
+    // A UNIQUE real está sobre a coluna gerada, não diretamente sobre as
+    // 3 colunas — isso é o que permite múltiplas linhas SUPERSEDED
+    // coexistirem (todas com active_match_key=NULL) enquanto garante, no
+    // banco, no máximo 1 ACTIVE por chave lógica.
+    expect(referencesMigration?.up).toContain("UNIQUE KEY uk_org_ext_ref_active_match (active_match_key)");
+    expect(referencesMigration?.up).not.toContain(
+      "UNIQUE KEY uk_org_ext_ref_system_entity_legacy (system_code, entity_type, legacy_id)"
+    );
+    // Índice comum (não único) para consultas por todas as linhas,
+    // incluindo histórico SUPERSEDED.
+    expect(referencesMigration?.up).toContain(
+      "KEY idx_org_ext_ref_system_entity_legacy (system_code, entity_type, legacy_id)"
+    );
+    expect(referencesMigration?.up).toContain("UNIQUE KEY uk_org_ext_ref_public_id (public_id)");
+    expect(referencesMigration?.up).toContain(
+      "FOREIGN KEY (organization_public_id) REFERENCES organizations (public_id)"
+    );
+    const restrictCount = (referencesMigration?.up.match(/ON DELETE RESTRICT ON UPDATE RESTRICT/g) ?? []).length;
+    expect(restrictCount).toBe(1);
+    // Sem version nesta fatia (G2 não implementa update/SUPERSEDED
+    // ainda) — checagem restrita ao SQL sem comentários.
+    const referencesSqlWithoutComments = (referencesMigration?.up ?? "").replace(/--[^\n]*/g, "");
+    expect(referencesSqlWithoutComments).not.toContain("version");
+
+    const downTrimmed = referencesMigration?.down.trim() ?? "";
+    expect(downTrimmed).toContain("DROP TABLE IF EXISTS organization_external_references;");
   });
 
   it("as migrations que criam tabela usam utf8mb4_unicode_520_ci, nunca utf8mb4_general_ci como padrão", () => {

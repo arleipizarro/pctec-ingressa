@@ -88,9 +88,21 @@ simultaneamente.** Casos cobertos:
 - Troca de grupo/empresa → não remove Memberships antigos; apenas muda
   qual é o **contexto ativo** da sessão (§7).
 
-Unicidade: `uk_membership_unique (identity_internal_id,
-organization_internal_id, profile)` impede vínculo duplicado ativo com a
-mesma classificação — já coberto no desenho relacional existente.
+**Decisão fechada sobre reativação (revisão do Product Owner, antes do
+commit de G2):** se um vínculo encerrado (mesma `identity` + `organization`
++ `profile`) precisar voltar a ficar ativo, isso **reativa a mesma
+linha** (`status=ACTIVE`, `ended_at=NULL` de novo, `version` incrementada)
+— nunca cria uma segunda linha. Essa é a razão de
+`uk_membership_unique` não ser condicionada a `status`: há sempre, no
+máximo, uma linha por classificação, para sempre, então a constraint
+nunca entra em tensão com o lifecycle planejado. `end()`/`reactivate()`
+são comandos futuros (fora de escopo G2), mas o schema já é compatível
+com eles sem qualquer migration adicional.
+
+Unicidade: `uk_membership_unique (identity_public_id,
+organization_public_id, profile)` garante no máximo uma linha por
+classificação, independente de status — já coberto no desenho
+relacional existente e fechado pela decisão acima.
 
 ### 4.1 `Membership.profile` — relação, não autorização
 
@@ -231,15 +243,59 @@ OrganizationExternalReference
   updated_at              DATETIME
 ```
 
-Invariante obrigatória: **`UNIQUE(system_code, entity_type, legacy_id)`**
-— um registro legado específico só pode apontar para uma
-`Organization` por vez. Quanto a "quantas referências do mesmo sistema
-uma `Organization` pode ter": no caso comum é 1 (uma `Organization`
-↔ um registro legado por sistema); múltiplas referências do mesmo
-`system_code` para a mesma `Organization` só devem existir
-temporariamente durante uma correção de matching (a antiga marcada
-`SUPERSEDED`, nunca deletada, preservando a rastreabilidade histórica
-mencionada no §9.3).
+**Invariante — versão final, fechada na revisão do Product Owner antes
+do commit de G2 (duas correções em sequência sobre a primeira versão
+desta seção):**
+
+- **Não é `UNIQUE(system_code, entity_type, legacy_id)` global.** Essa
+  primeira versão entrava em tensão direta com `SUPERSEDED`: se uma
+  correção de matching precisa apontar o mesmo registro legado para
+  OUTRA `Organization`, preservando a referência antiga como histórico
+  (o próprio propósito de `SUPERSEDED`), uma UNIQUE cobrindo todas as
+  linhas bloquearia a inserção da linha corrigida enquanto a antiga
+  existisse — `SUPERSEDED` ficaria decorativo, nunca utilizável de fato.
+- **Também não é só "camada de aplicação" (check-then-insert sem UNIQUE
+  nenhuma).** Essa segunda tentativa de correção abria uma janela de
+  corrida real (TOCTOU): duas transações concorrentes checando "existe
+  ACTIVE?" ao mesmo tempo (nenhuma vê a outra), cada uma inserindo uma
+  linha ACTIVE — resultando em duas ACTIVE para a mesma chave lógica,
+  exatamente o que a invariante deveria impedir.
+- **Solução final: coluna gerada (`VIRTUAL`) + `UNIQUE KEY`
+  condicional**, implementada na migration 0013:
+  ```
+  active_match_key VARCHAR(154) GENERATED ALWAYS AS (
+    CASE WHEN status = 'ACTIVE'
+         THEN CONCAT(system_code, ':', entity_type, ':', legacy_id)
+         ELSE NULL END
+  ) VIRTUAL
+  UNIQUE KEY uk_org_ext_ref_active_match (active_match_key)
+  ```
+  MariaDB/InnoDB trata cada `NULL` como distinto dentro de uma
+  `UNIQUE KEY` (comportamento padrão SQL) — então linhas `SUPERSEDED`
+  (sempre `active_match_key = NULL`) nunca colidem entre si nem com a
+  linha `ACTIVE`, mas duas tentativas de `ACTIVE` para a mesma chave
+  lógica colidem sempre, **garantido pelo próprio banco, atomicamente,
+  sem janela de corrida** — o InnoDB rejeita o segundo INSERT
+  concorrente com um erro de chave duplicada real. A checagem otimista
+  em `CreateOrganizationExternalReferenceService`
+  (`existsActiveBySystemCodeEntityTypeAndLegacyId`) continua existindo,
+  mas só como *fast fail* para uma mensagem de erro de domínio amigável
+  no caso comum — a garantia real é a `UNIQUE KEY` sobre a coluna
+  gerada; se a checagem otimista perder a corrida, o `INSERT` ainda
+  falha no banco, e `MariaDbOrganizationExternalReferenceRepository`
+  traduz esse erro de volta para o mesmo erro de domínio
+  (`OrganizationExternalReferenceAlreadyExistsError`).
+- Um índice comum (não único), `idx_org_ext_ref_system_entity_legacy`,
+  continua existindo sobre `(system_code, entity_type, legacy_id)` para
+  consultas por todo o histórico (ACTIVE + SUPERSEDED).
+
+Quanto a "quantas referências do mesmo sistema uma `Organization` pode
+ter": no caso comum é 1 ACTIVE (uma `Organization` ↔ um registro legado
+por sistema); múltiplas linhas `SUPERSEDED` para a mesma
+`(system_code, entity_type, legacy_id)` são esperadas ao longo do tempo
+— cada correção de matching sucessiva adiciona uma nova `SUPERSEDED`
+sem jamais apagar as anteriores (rastreabilidade histórica completa,
+§9.3).
 
 Isso evita a tentativa (frágil e já comprovadamente falsa) de assumir que
 `id=13` no HUB, no Portal e no Helpdesk se referem à mesma empresa. Cada
@@ -256,23 +312,39 @@ sem depender de os IDs internos coincidirem.
    como acesso direto a banco.
 2. Para cada `cliente`/`clientes_grupo` do HUB, criar `Organization` com
    novo `public_id` e registrar uma linha em
-   `organization_external_refs` (`system_code='PCTEC_HUB'`).
+   `organization_external_references` (`system_code='PCTEC_HUB'`).
 3. **Portal**: para cada `cliente` do Portal, tentar correlacionar por
    `document_number` (CNPJ) com uma `Organization` já criada a partir do
    HUB, usando `document_number` estritamente como **evidência de
    correlação**, nunca como identificador (§9.1-bis). O resultado de cada
    tentativa de matching é classificado, nunca resolvido silenciosamente:
-   - `MATCHED` — um único CNPJ bate com uma única `Organization`; cria-se
-     a `OrganizationExternalReference` (`system_code='PCTEC_PORTAL'`).
+   - `MATCHED` — o CNPJ bate com uma `Organization` existente e os dados
+     conferem; cria-se a `OrganizationExternalReference`
+     (`system_code='PCTEC_PORTAL'`).
    - `UNMATCHED` — nenhuma `Organization` com esse CNPJ; reportado como
      GAP (cliente existe no Portal mas não no HUB, ou documento não bate).
-   - `AMBIGUOUS` — mais de uma `Organization` candidata para o mesmo CNPJ;
-     reportado para decisão manual, nunca escolhido automaticamente.
    - `CONFLICT` — o mesmo CNPJ aparece com dados incompatíveis entre
      sistemas (ex.: razão social muito divergente); reportado, não
      mesclado.
+
+   **Revisão do Product Owner (G2, antes do commit): a quarta
+   classificação originalmente prevista aqui, `AMBIGUOUS` ("mais de uma
+   Organization candidata para o mesmo CNPJ"), foi removida.** Esta
+   seção foi escrita antes de G1 implementar
+   `UNIQUE KEY uk_organizations_document_type (document_number, type)`
+   em `organizations` (migration 0010) — essa constraint garante, no
+   próprio banco, no máximo UMA `Organization` por `(document_number,
+   type)`. Com isso, "mais de uma Organization candidata para o mesmo
+   CNPJ+type" tornou-se estruturalmente impossível: qualquer consulta
+   por `document_number`+`type` retorna no máximo 1 linha, sempre. Se
+   isso um dia ocorrer mesmo assim, não é um caso de negócio a
+   classificar — é uma violação de invariante (dado corrompido, ou a
+   constraint contornada fora da aplicação), tratada como erro rígido
+   (`OrganizationDocumentUniquenessInvariantViolatedError`), nunca como
+   uma linha reportável do bootstrap. `MATCHED`/`UNMATCHED`/`CONFLICT`
+   já são exaustivos para o resultado de uma correlação normal.
 4. **Helpdesk**: mesmo processo de correlação e mesma classificação
-   MATCHED/UNMATCHED/AMBIGUOUS/CONFLICT (o Helpdesk hoje só tem
+   MATCHED/UNMATCHED/CONFLICT (o Helpdesk hoje só tem
    `name`/`cnpj` na própria `clients`, e depende do HUB só para grupo) —
    cada `client_id` local que resultar em `MATCHED` ganha sua
    `OrganizationExternalReference` (`system_code='PCTEC_HELPDESK'`).
@@ -299,7 +371,7 @@ integração no lugar do `publicId`.
 
 ### 9.3 Correspondência sem perda
 
-Nenhum `id` legado é descartado — `organization_external_refs` preserva
+Nenhum `id` legado é descartado — `organization_external_references` preserva
 a rastreabilidade completa (`system_code` + `legacy_id`) indefinidamente,
 mesmo depois que um sistema para de ser dono e passa a só consumir. Isso
 permite auditoria retroativa ("esse cliente do Portal correspondia a
@@ -329,7 +401,7 @@ para `BUSINESS_GROUP` (§2). Sem `Membership` ainda.
 **G2 — Membership + bootstrap DEV**
 Implementar `Membership` (domínio + testes) e
 `OrganizationExternalReference` (§9.1). Rodar o bootstrap de dados reais
-a partir do HUB e a correlação MATCHED/UNMATCHED/AMBIGUOUS/CONFLICT com
+a partir do HUB e a correlação MATCHED/UNMATCHED/CONFLICT com
 Portal e Helpdesk (§9.2), em DEV, com o mesmo rigor de hermeticidade já
 demonstrado na integração da Fase F. GAPs de matching são reportados,
 não resolvidos automaticamente.
@@ -364,3 +436,15 @@ autorização; endpoint do Helpdesk não comprometido prematuramente;
 roadmap G1–G4). **G1 autorizado para código. G2–G4 aguardam aprovação
 própria antes de cada entrega.** Sem migration, seed ou código produzido
 nesta entrega.
+
+**Atualização (revisão pré-commit de G2):** a invariante de
+`OrganizationExternalReference` descrita acima como
+`UNIQUE(system_code, entity_type, legacy_id)` foi corrigida — não é mais
+uma UNIQUE global (entraria em tensão com `SUPERSEDED`), nem pura
+camada de aplicação (janela de corrida real). Solução final: coluna
+gerada + `UNIQUE KEY` condicional, sem janela de corrida, detalhada em
+§9.1. `AMBIGUOUS` também foi removido da classificação de matching
+contra `Organization` canônica (§9.2) — estruturalmente impossível dado
+`uk_organizations_document_type` (G1). Decisão de lifecycle de
+`Membership` fechada em §4: reativação futura reusa a mesma linha,
+nunca cria uma segunda para a mesma `(identity, organization, profile)`.

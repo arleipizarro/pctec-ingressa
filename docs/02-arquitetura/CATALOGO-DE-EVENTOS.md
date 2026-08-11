@@ -259,6 +259,34 @@ relação envolve DUAS Organizations — parent e child — e
 - **Nunca publicar:** histórico completo de vínculos anteriores no mesmo
   evento (cada mudança é um evento próprio).
 
+### organization-external-reference.created
+
+- **Produtor:** bounded context `organization`.
+- **Finalidade:** notificar o registro de uma nova ponte de
+  rastreabilidade entre uma `Organization` canônica e um registro de
+  sistema legado (HUB/Helpdesk/Portal).
+- **Identificador da entidade:** `organization_external_reference_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `organization_external_reference_id`,
+  `organization_id`, `system_code`, `entity_type`.
+- **Nunca publicar:** `legacy_id` (não é identificador cross-system,
+  ADR-031 — não deve circular fora do bounded context `organization`
+  sem necessidade).
+- **Nota (G2, v0.6.x):** decisão de emitir evento formalizada com base
+  no precedente do repositório, comparado explicitamente contra dois
+  casos análogos: `application-access.granted` (vínculo entre `Identity`
+  e `Application`, evento próprio, não dobrado em `identity.updated`/
+  `application.updated`) e `organization-relationship.created` (vínculo
+  entre duas `Organization`, evento próprio, decidido em G1 pela mesma
+  razão). `OrganizationExternalReference` está na mesma categoria
+  estrutural: entidade com `public_id` próprio, criada por comando de
+  domínio explícito, que não altera nenhuma coluna da entidade que
+  referencia (`organizations`). Regra geral observada: toda entidade
+  com comando de criação de domínio emite `.created` (exceção única:
+  `Application`, que não tem comando de criação nenhum, só seed técnico
+  de migration). Ver `OrganizationExternalReferenceDomainEvents.ts` para
+  o raciocínio completo.
+
 ### application.created
 
 - **Produtor:** bounded context `application`.

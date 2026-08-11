@@ -98,7 +98,7 @@ de propriedade e a arquitetura-alvo antes de qualquer migração de dados.
   de `/api/v1/memberships` em `API-CONTRACT-V1.md` — GAP documental a
   corrigir na próxima revisão desse arquivo).
 - Cria-se a necessidade de uma tabela de mapeamento de legado,
-  `organization_external_refs`, detalhada em `ORGANIZATION-MEMBERSHIP-DESIGN.md`,
+  `organization_external_references`, detalhada em `ORGANIZATION-MEMBERSHIP-DESIGN.md`,
   para correlacionar os `id`s de HUB/Portal/Helpdesk ao `public_id`
   canônico durante a transição, sem forçar equivalência entre os `id=N`
   de bancos diferentes.
@@ -117,16 +117,35 @@ autorização para código — incorporadas nesta revisão e detalhadas em
    em toda chamada, sem exceção (endurece o item 6/§8 já existente; não
    é mudança de decisão, é remoção de qualquer ambiguidade sobre "estado
    de frontend" ser suficiente).
-2. `OrganizationExternalReference` (renomeada de
-   `organization_external_refs`) precisa de identidade própria, `status`
-   e timestamps, com `UNIQUE(system_code, entity_type, legacy_id)` como
-   invariante — não é só uma tabela de apoio, é a ponte de rastreabilidade
-   da migração inteira.
+2. `OrganizationExternalReference` precisa de identidade própria (não é
+   só uma tabela crua de mapeamento — é uma entidade formal, com seu
+   próprio `public_id`, `status` e timestamps) — não é só uma tabela de
+   apoio, é a ponte de rastreabilidade da migração inteira. **A
+   invariante "no máximo 1 ACTIVE por (system_code, entity_type,
+   legacy_id)" foi fechada em duas correções sucessivas, já dentro de
+   G2** (a migration 0013 nunca chegou a ser executada, então ambas as
+   correções aconteceram antes de qualquer impacto real): primeiro
+   descobriu-se que uma `UNIQUE` global sobre as 3 colunas entra em
+   tensão direta com `SUPERSEDED` (bloquearia a correção de um
+   mapeamento errado); depois, que mover a invariante inteiramente para
+   a camada de aplicação abre uma janela de corrida real (TOCTOU) entre
+   duas transações concorrentes. Solução final: coluna gerada
+   (`active_match_key`, `NULL` quando não-`ACTIVE`) com `UNIQUE KEY`
+   sobre ela — garante, no próprio banco, no máximo 1 `ACTIVE` por
+   chave lógica, sem janela de corrida, enquanto linhas `SUPERSEDED`
+   coexistem livremente como histórico. Ver
+   `ORGANIZATION-MEMBERSHIP-DESIGN.md` §9.1 para o raciocínio completo.
 3. CNPJ/`document_number` é **evidência de correlação durante a
    migração**, nunca identificador cross-system. O único identificador
    cross-system, antes e depois da reconciliação, é `Organization.publicId`.
-   Matching produz `MATCHED`/`UNMATCHED`/`AMBIGUOUS`/`CONFLICT` — nunca
+   Matching produz `MATCHED`/`UNMATCHED`/`CONFLICT` — nunca
    cria ou mescla `Organization` silenciosamente em caso duvidoso.
+   **Correção pós-G1 (antes do commit de G2):** a quarta classificação
+   originalmente aqui, `AMBIGUOUS`, foi removida — `uk_organizations_document_type`
+   (migration 0010, item 4 abaixo) garante no máximo 1 `Organization`
+   por `(document_number, type)`, tornando "múltiplas candidatas para o
+   mesmo CNPJ+type" estruturalmente impossível contra o schema real. Ver
+   `ORGANIZATION-MEMBERSHIP-DESIGN.md` §9.2 para o raciocínio completo.
 4. `BUSINESS_GROUP.document_number` pode ser `NULL` (grupos comerciais
    frequentemente não têm CNPJ próprio); a unicidade de `document_number`
    por `type` aplica-se só a valores não nulos; um `BUSINESS_GROUP` nunca
