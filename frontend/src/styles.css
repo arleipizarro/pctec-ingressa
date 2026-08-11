@@ -1,0 +1,352 @@
+:root {
+  --color-navy: #0f1e4d;
+  --color-navy-dark: #0a1436;
+  --color-purple: #6d2ea0;
+  --color-purple-light: #8a4bc2;
+  --color-gray: #6b7280;
+  --color-gray-light: #e5e7eb;
+  --color-bg: #ffffff;
+  --color-bg-subtle: #f7f7fa;
+  --color-text: #1a1a2e;
+  --color-danger: #b3261e;
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: var(--color-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* ---------- Login ---------- */
+
+.login-screen {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+@media (max-width: 860px) {
+  .login-screen {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+  }
+}
+
+.login-brand-panel {
+  background: var(--color-navy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+}
+
+.login-brand-panel img {
+  max-width: 320px;
+  width: 60%;
+  height: auto;
+}
+
+.login-form-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 2rem;
+}
+
+.login-form {
+  width: 100%;
+  max-width: 360px;
+}
+
+.login-form h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--color-navy);
+}
+
+.login-form p.subtitle {
+  color: var(--color-gray);
+  margin: 0 0 2.5rem;
+  font-size: 0.95rem;
+}
+
+.field {
+  margin-bottom: 1.25rem;
+}
+
+.field label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+  color: var(--color-text);
+}
+
+.field input {
+  width: 100%;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--color-gray-light);
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.field input:focus {
+  outline: none;
+  border-color: var(--color-purple);
+  box-shadow: 0 0 0 3px rgba(109, 46, 160, 0.15);
+}
+
+.submit-button {
+  width: 100%;
+  padding: 0.8rem;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-purple);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 0.5rem;
+}
+
+.submit-button:hover {
+  background: var(--color-purple-light);
+}
+
+.submit-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form-error {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+  margin-top: -0.5rem;
+  margin-bottom: 1rem;
+}
+
+/* ---------- Full-screen states (loading, error, unauthorized) ---------- */
+
+.full-screen-state {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem;
+  gap: 1rem;
+}
+
+.full-screen-state h1 {
+  color: var(--color-navy);
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+.full-screen-state p {
+  color: var(--color-gray);
+  max-width: 420px;
+  margin: 0;
+}
+
+.retry-button {
+  padding: 0.6rem 1.4rem;
+  border: 1px solid var(--color-navy);
+  background: transparent;
+  color: var(--color-navy);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.retry-button:hover {
+  background: var(--color-bg-subtle);
+}
+
+/* ---------- Shell ---------- */
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  background: var(--color-navy);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 1.5rem;
+}
+
+.app-header-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.app-header-brand img {
+  height: 28px;
+  width: auto;
+}
+
+.app-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-size: 0.85rem;
+}
+
+.app-header-meta .org-name {
+  color: var(--color-purple-light);
+  font-weight: 600;
+}
+
+.app-header-meta .identity-id {
+  color: rgba(255, 255, 255, 0.7);
+  font-family: monospace;
+  font-size: 0.78rem;
+}
+
+.logout-button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: white;
+  padding: 0.4rem 0.9rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.logout-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.app-main {
+  flex: 1;
+  padding: 3rem 2rem;
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* ---------- Dashboard ---------- */
+
+.dashboard h1 {
+  color: var(--color-navy);
+  font-size: 1.4rem;
+  margin: 0 0 2rem;
+}
+
+.dashboard-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.dashboard-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-gray-light);
+}
+
+.dashboard-fact .label {
+  font-size: 0.78rem;
+  color: var(--color-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dashboard-fact .value {
+  font-size: 1.05rem;
+  color: var(--color-text);
+}
+
+/* ---------- Organization switcher ---------- */
+
+.org-switcher h1 {
+  color: var(--color-navy);
+  font-size: 1.3rem;
+  margin: 0 0 0.5rem;
+}
+
+.org-switcher p.subtitle {
+  color: var(--color-gray);
+  margin: 0 0 2rem;
+}
+
+.org-switcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.org-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--color-gray-light);
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+.org-option:hover {
+  border-color: var(--color-purple);
+}
+
+.org-option .org-option-name {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.org-option .org-option-type {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-gray);
+  margin-top: 0.2rem;
+}
+
+/* ---------- Empty organization state ---------- */
+
+.empty-org-state {
+  text-align: left;
+}
+
+.empty-org-state h1 {
+  color: var(--color-navy);
+  font-size: 1.3rem;
+  margin: 0 0 1rem;
+}
+
+.empty-org-state p {
+  color: var(--color-gray);
+  line-height: 1.5;
+}
