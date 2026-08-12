@@ -28,7 +28,13 @@ export interface HttpErrorMapping {
  */
 const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.freeze({
   IDENTITY_NOT_FOUND: 404,
-  IDENTITY_PUBLIC_ID_INVALID: 422
+  IDENTITY_PUBLIC_ID_INVALID: 422,
+  // P1 Portal (v0.7.x): mesmo padrão de IDENTITY_NOT_FOUND — a
+  // Organization já foi confirmada autorizada por
+  // requireOrganizationAccess (403 próprio, ORGANIZATION_ACCESS_DENIED)
+  // antes deste erro ser sequer possível; aqui é genuinamente "recurso
+  // (mapeamento legado) inexistente", não falta de autorização.
+  ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND: 404
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({

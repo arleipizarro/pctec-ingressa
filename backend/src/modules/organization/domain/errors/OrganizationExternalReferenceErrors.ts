@@ -31,3 +31,27 @@ export class OrganizationExternalReferenceAlreadyExistsError extends DomainError
     super("Já existe uma OrganizationExternalReference ACTIVE para este (systemCode, entityType, legacyId).");
   }
 }
+
+/**
+ * `GetActiveOrganizationExternalReferenceService` (P1, v0.7.x) não
+ * encontrou nenhuma referência `ACTIVE` para
+ * `(organizationPublicId, systemCode, entityType)`. **Distinto de
+ * `ORGANIZATION_ACCESS_DENIED`** (403, `portal/domain/errors/PortalErrors.ts`):
+ * este erro só é alcançado DEPOIS que `requireOrganizationAccess` já
+ * confirmou que a Organization pertence ao `PortalContext` da Identity
+ * — a Organization é legítima e autorizada, só ainda não tem o
+ * mapeamento legado cadastrado (`OrganizationExternalReference`).
+ * Mapeado para HTTP 404 (`mapDomainErrorToHttp.ts`, mesmo padrão já
+ * usado por `IDENTITY_NOT_FOUND`) — nunca usado para esconder falta de
+ * autorização, que já tem seu próprio 403 nesta mesma rota.
+ */
+export class OrganizationExternalReferenceNotFoundError extends DomainError {
+  public readonly code = "ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND";
+  public readonly classification = "VALIDATION" as const;
+
+  constructor(organizationPublicId: string, systemCode: string, entityType: string) {
+    super(
+      `Nenhuma OrganizationExternalReference ACTIVE encontrada para organizationPublicId=${organizationPublicId}, systemCode=${systemCode}, entityType=${entityType}.`
+    );
+  }
+}

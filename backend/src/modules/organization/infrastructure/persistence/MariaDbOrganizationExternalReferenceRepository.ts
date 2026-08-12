@@ -96,6 +96,24 @@ export class MariaDbOrganizationExternalReferenceRepository implements Organizat
     return (rows as OrganizationExternalReferenceRow[]).length > 0;
   }
 
+  public async findActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<OrganizationExternalReference | undefined> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, organization_public_id, system_code, entity_type, legacy_id,
+              status, created_at, updated_at
+         FROM organization_external_references
+        WHERE organization_public_id = ? AND system_code = ? AND entity_type = ? AND status = 'ACTIVE'
+        LIMIT 1`,
+      [organizationPublicId.toString(), systemCode.toString(), entityType.toString()]
+    );
+    const rowList = rows as OrganizationExternalReferenceRow[];
+    const row = rowList[0];
+    return row === undefined ? undefined : OrganizationExternalReference.reconstitute(mapRowToPersistedState(row));
+  }
+
   /**
    * A checagem otimista (`existsActiveBySystemCodeEntityTypeAndLegacyId`,
    * chamada pelo Application Service antes deste `insert`) cobre o caso

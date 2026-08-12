@@ -356,8 +356,8 @@ Nunca misturado. Um `ADMIN` de `PCTEC_INGRESSA` sem
 `ApplicationAccess(PCTEC_PORTAL, USER)` próprio recebe `403` na segunda
 linha — os dois eixos são independentes (ADR-031 §6).
 
-**`requireOrganizationAccess` (boundary reutilizável, preparado, não
-montado em rota real nesta entrega):** dado um `organizationPublicId`
+**`requireOrganizationAccess` (boundary reutilizável — G3, primeira
+montagem real em P1, seção 10 abaixo):** dado um `organizationPublicId`
 recebido do frontend, prova
 `organizationPublicId ∈ PortalContext(identity)` antes de qualquer
 operação comercial — a seleção de contexto pelo frontend **nunca é
@@ -365,6 +365,55 @@ autoridade** (ORGANIZATION-MEMBERSHIP-DESIGN.md §6, decisão da Fase G
 reafirmada aqui). Falha sempre com `ORGANIZATION_ACCESS_DENIED` — nunca
 `404`, mesmo quando a Organization não existe ou não está `ACTIVE`
 (esconder essa distinção é deliberado, não uma lacuna).
+
+---
+
+## 10. `/api/v1/portal/organizations/:organizationPublicId/external-references/PCTEC_PORTAL`
+
+**Status: implementado — P1 Portal (v0.7.x).** Primeira rota real do
+Ingressa a servir a integração com um sistema legado (`pctec-portal`)
+— e a primeira rota a montar de fato `requireOrganizationAccess` (G3,
+preparado desde então, nunca usado em rota real até aqui).
+
+**Responsabilidade:** dado um `organizationPublicId` já confirmado
+pertencente ao `PortalContext` da Identity chamadora, resolver o
+mapeamento legado (`OrganizationExternalReference` `ACTIVE`) para o
+sistema `PCTEC_PORTAL`, entidade `clientes` — nunca `clientes_grupo`,
+que nunca produz contexto comercial (decisão do piloto AFIP).
+
+**`GET /api/v1/portal/organizations/:organizationPublicId/external-references/PCTEC_PORTAL`**
+
+Pipeline: `requireAuthenticatedSession` → `requireApplicationAccess`
+(`PCTEC_PORTAL`, `USER`) → `requireOrganizationAccess` → handler.
+`PCTEC_PORTAL` é um segmento **literal** da URL (não um parâmetro) —
+qualquer outro valor nesse segmento nunca alcança a autenticação,
+resolve como `404` de rota do próprio Express antes disso.
+
+Contrato de resposta:
+
+```json
+{
+  "organization": { "publicId": "..." },
+  "externalReference": { "systemCode": "PCTEC_PORTAL", "entityType": "clientes", "legacyId": 75 }
+}
+```
+
+Nunca inclui `internalId`/`documentNumber`/`Membership`/`Credential`/
+Session token/dado de auditoria/referências de outros sistemas.
+
+**Contrato 401 × 403 × 404:**
+
+| Situação | Código | Classificação | HTTP |
+|---|---|---|---|
+| Sem sessão | `SESSION_INVALID` | `AUTHENTICATION` | 401 |
+| Sessão válida, sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Sessão + Portal access válidos, mas `organizationPublicId` fora do `PortalContext` efetivo | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Organization autorizada, mas sem `OrganizationExternalReference` `ACTIVE` para `PCTEC_PORTAL`/`clientes` | `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
+
+`404` nunca é usado para esconder falta de autorização — essa já tem
+seu `403` próprio, avaliado antes. `404` aqui é genuinamente "recurso
+(mapeamento legado) inexistente" para uma Organization já legítima e
+autorizada.
 
 ## Questões pendentes de decisão
 

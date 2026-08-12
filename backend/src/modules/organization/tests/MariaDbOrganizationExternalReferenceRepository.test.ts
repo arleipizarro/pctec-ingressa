@@ -110,6 +110,82 @@ describe("MariaDbOrganizationExternalReferenceRepository", () => {
       reference.getUpdatedAt()
     ]);
   });
+
+  it("findActiveByOrganizationSystemCodeAndEntityType (P1 Portal, v0.7.x) retorna undefined quando nenhuma linha ACTIVE é encontrada", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) =>
+        sql.includes("FROM organization_external_references") &&
+        sql.includes("organization_public_id = ?") &&
+        sql.includes("status = 'ACTIVE'"),
+      () => [[], []]
+    );
+    const repository = new MariaDbOrganizationExternalReferenceRepository(fake);
+
+    const result = await repository.findActiveByOrganizationSystemCodeAndEntityType(
+      PublicId.fromString(ORGANIZATION_PUBLIC_ID),
+      SystemCode.create("PCTEC_PORTAL"),
+      EntityType.create("clientes")
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("findActiveByOrganizationSystemCodeAndEntityType reconstrói a referência quando encontrada, com legacyId correto", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) =>
+        sql.includes("FROM organization_external_references") &&
+        sql.includes("organization_public_id = ?") &&
+        sql.includes("status = 'ACTIVE'"),
+      () => [
+        [
+          {
+            id: 1,
+            public_id: REFERENCE_PUBLIC_ID,
+            organization_public_id: ORGANIZATION_PUBLIC_ID,
+            system_code: "PCTEC_PORTAL",
+            entity_type: "clientes",
+            legacy_id: 75,
+            status: "ACTIVE",
+            created_at: new Date("2026-01-01T00:00:00Z"),
+            updated_at: new Date("2026-01-01T00:00:00Z")
+          }
+        ],
+        []
+      ]
+    );
+    const repository = new MariaDbOrganizationExternalReferenceRepository(fake);
+
+    const result = await repository.findActiveByOrganizationSystemCodeAndEntityType(
+      PublicId.fromString(ORGANIZATION_PUBLIC_ID),
+      SystemCode.create("PCTEC_PORTAL"),
+      EntityType.create("clientes")
+    );
+
+    expect(result?.getLegacyId().toNumber()).toBe(75);
+    expect(result?.isActive()).toBe(true);
+  });
+
+  it("findActiveByOrganizationSystemCodeAndEntityType usa SQL parametrizado, filtra status='ACTIVE' explicitamente (SUPERSEDED nunca é retornada)", async () => {
+    const fake = new FakeQueryable();
+    fake.whenExecute(
+      (sql) => sql.includes("FROM organization_external_references") && sql.includes("organization_public_id = ?"),
+      () => [[], []]
+    );
+    const repository = new MariaDbOrganizationExternalReferenceRepository(fake);
+
+    await repository.findActiveByOrganizationSystemCodeAndEntityType(
+      PublicId.fromString(ORGANIZATION_PUBLIC_ID),
+      SystemCode.create("PCTEC_PORTAL"),
+      EntityType.create("clientes")
+    );
+
+    const call = fake.calls.find((c) => c.sql.includes("organization_public_id = ?"));
+    expect(call?.sql).toContain("status = 'ACTIVE'");
+    expect(call?.sql).not.toContain(ORGANIZATION_PUBLIC_ID);
+    expect(call?.params).toEqual([ORGANIZATION_PUBLIC_ID, "PCTEC_PORTAL", "clientes"]);
+  });
 });
 
 describe("MariaDbOrganizationDocumentMatchRepository", () => {

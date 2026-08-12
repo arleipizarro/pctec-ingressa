@@ -29,8 +29,13 @@ import { createAdminWhoamiRoutes } from "../../modules/authorization/http/adminR
 import { MariaDbMembershipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbMembershipRepository.js";
 import { MariaDbOrganizationRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRepository.js";
 import { MariaDbOrganizationRelationshipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRelationshipRepository.js";
+import { MariaDbOrganizationExternalReferenceRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationExternalReferenceRepository.js";
+import { GetActiveOrganizationExternalReferenceService } from "../../modules/organization/application/GetActiveOrganizationExternalReferenceService.js";
 import { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
+import { RequireOrganizationAccessService } from "../../modules/portal/application/RequireOrganizationAccessService.js";
 import { createPortalContextRoutes } from "../../modules/portal/http/portalContextRoutes.js";
+import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
+import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -98,6 +103,20 @@ export interface CreateAppOptions {
    * `GET /api/v1/portal/context`.
    */
   readonly getPortalContextService?: GetPortalContextService;
+  /**
+   * Injetável para testes — P1 Portal (v0.7.x). Quando omitido,
+   * `createApp()` constrói um `RequireOrganizationAccessService` real,
+   * usado pelo middleware `requireOrganizationAccess` — primeira rota
+   * real a montá-lo desde G3.
+   */
+  readonly requireOrganizationAccessService?: RequireOrganizationAccessService;
+  /**
+   * Injetável para testes — P1 Portal (v0.7.x). Quando omitido,
+   * `createApp()` constrói um `GetActiveOrganizationExternalReferenceService`
+   * real, usado por
+   * `GET /api/v1/portal/organizations/:organizationPublicId/external-references/PCTEC_PORTAL`.
+   */
+  readonly getActiveOrganizationExternalReferenceService?: GetActiveOrganizationExternalReferenceService;
 }
 
 /**
@@ -164,6 +183,18 @@ function defaultGetPortalContextService(pool: ReturnType<typeof createPool>): Ge
   );
 }
 
+function defaultRequireOrganizationAccessService(
+  pool: ReturnType<typeof createPool>
+): RequireOrganizationAccessService {
+  return new RequireOrganizationAccessService(defaultGetPortalContextService(pool));
+}
+
+function defaultGetActiveOrganizationExternalReferenceService(
+  pool: ReturnType<typeof createPool>
+): GetActiveOrganizationExternalReferenceService {
+  return new GetActiveOrganizationExternalReferenceService(new MariaDbOrganizationExternalReferenceRepository(pool));
+}
+
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
  * `listen()` é `server.ts`. Separar `createApp` de `server.ts` permite
@@ -188,7 +219,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.logoutService === undefined ||
     options.validateSessionService === undefined ||
     options.authorizeApplicationAccessService === undefined ||
-    options.getPortalContextService === undefined;
+    options.getPortalContextService === undefined ||
+    options.requireOrganizationAccessService === undefined ||
+    options.getActiveOrganizationExternalReferenceService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -202,6 +235,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.authorizeApplicationAccessService ?? defaultAuthorizeApplicationAccessService(sharedPool!);
   const getPortalContextService =
     options.getPortalContextService ?? defaultGetPortalContextService(sharedPool!);
+  const requireOrganizationAccessService =
+    options.requireOrganizationAccessService ?? defaultRequireOrganizationAccessService(sharedPool!);
+  const getActiveOrganizationExternalReferenceService =
+    options.getActiveOrganizationExternalReferenceService ??
+    defaultGetActiveOrganizationExternalReferenceService(sharedPool!);
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
@@ -265,7 +303,19 @@ export function createApp(options: CreateAppOptions = {}): Express {
       applicationCode: PCTEC_PORTAL_APPLICATION_CODE,
       profile: "USER"
     }),
-    createPortalContextRoutes(getPortalContextService)
+    createPortalContextRoutes(getPortalContextService),
+    // GET /api/v1/portal/organizations/:organizationPublicId/external-references/PCTEC_PORTAL
+    // — P1 Portal (v0.7.x). Primeira rota real a montar
+    // requireOrganizationAccess (preparado desde G3, nunca usado até
+    // aqui). Pipeline completo: requireAuthenticatedSession (acima) →
+    // requireApplicationAccess (acima) → requireOrganizationAccess
+    // (abaixo, por rota, pois só esta rota tem :organizationPublicId —
+    // createPortalContextRoutes/GET /context não tem esse parâmetro) →
+    // handler.
+    createOrganizationExternalReferenceRoutes(
+      createRequireOrganizationAccess(requireOrganizationAccessService, { paramName: "organizationPublicId" }),
+      getActiveOrganizationExternalReferenceService
+    )
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

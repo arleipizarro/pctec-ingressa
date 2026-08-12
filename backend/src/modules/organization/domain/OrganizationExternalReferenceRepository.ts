@@ -33,5 +33,24 @@ export interface OrganizationExternalReferenceRepository {
 
   findByPublicId(publicId: PublicId): Promise<OrganizationExternalReference | undefined>;
 
+  /**
+   * Usado por `GetActiveOrganizationExternalReferenceService` — resolve
+   * a referência `ACTIVE` de uma Organization para um sistema/entidade
+   * legados específicos. Método novo, menor possível: não existia busca
+   * por `(organizationPublicId, systemCode, entityType, status=ACTIVE)`
+   * antes desta fatia — todos os métodos existentes exigiam já saber o
+   * `legacyId` (`existsActiveBySystemCodeEntityTypeAndLegacyId`) ou o
+   * `publicId` da própria referência (`findByPublicId`), nenhum dos
+   * dois serve para "dado uma Organization já autorizada, qual é o
+   * `legacyId` dela para este sistema?" — exatamente o que a API
+   * `GET /api/v1/portal/organizations/:publicId/external-references/PCTEC_PORTAL`
+   * precisa responder.
+   */
+  findActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<OrganizationExternalReference | undefined>;
+
   insert(reference: OrganizationExternalReference): Promise<void>;
 }

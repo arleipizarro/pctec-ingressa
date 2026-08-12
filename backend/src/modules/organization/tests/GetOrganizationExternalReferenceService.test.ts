@@ -20,6 +20,19 @@ class InMemoryOrganizationExternalReferenceRepository implements OrganizationExt
   public async findByPublicId(publicId: PublicId): Promise<OrganizationExternalReference | undefined> {
     return this.stored.find((r) => r.getPublicId().equals(publicId));
   }
+  public async findActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<OrganizationExternalReference | undefined> {
+    return this.stored.find(
+      (r) =>
+        r.isActive() &&
+        r.getOrganizationPublicId() === organizationPublicId.toString() &&
+        r.getSystemCode().equals(systemCode) &&
+        r.getEntityType().equals(entityType)
+    );
+  }
   public async insert(reference: OrganizationExternalReference): Promise<void> {
     this.stored.push(reference);
   }
