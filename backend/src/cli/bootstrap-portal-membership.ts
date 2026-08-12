@@ -28,12 +28,24 @@ import { CreateMembershipService } from "../modules/organization/application/Cre
  * **Nunca hardcode Identity/Organization** — ambos são argumentos
  * obrigatórios, nunca valores fixos no código.
  *
+ * **`--actor` obrigatório em `--execute`, sem fallback (correção,
+ * piloto AFIP)** — a versão original desta CLI usava
+ * `identityPublicId` como seu próprio actor por padrão quando `--actor`
+ * era omitido. Isso não é auto-atribuição correta para trilha de
+ * auditoria administrativa: quem de fato roda o comando (um
+ * administrador) pode não ser a Identity beneficiada pelo Membership —
+ * atribuir a ação a ela por default mascararia quem realmente agiu.
+ * Mesmo princípio já revisado e aplicado em `bootstrap-organization.ts`:
+ * nunca um default silencioso para uma mutação real do Cadastro Mestre.
+ * Em dry-run, `--actor` pode ser omitido (nada é escrito, não há o que
+ * auditar).
+ *
  * Uso (depois de `npm run build`):
- *   node dist/cli/bootstrap-portal-membership.js <identityPublicId> <organizationPublicId> <profile> <scope> [--execute] [--actor <publicId>]
+ *   node dist/cli/bootstrap-portal-membership.js <identityPublicId> <organizationPublicId> <profile> <scope> [--execute --actor <identityPublicId>]
  *
  * Mesmo gate duplo de `bootstrap-portal-access.ts`/
  * `bootstrap-organizations-from-legacy.ts` (G2): escrita real exige
- * `--execute` E `BOOTSTRAP_ALLOW_WRITE=true` simultaneamente;
+ * `--execute` E `--actor` E `BOOTSTRAP_ALLOW_WRITE=true` simultaneamente;
  * `NODE_ENV=production` recusa sempre.
  */
 
@@ -43,7 +55,8 @@ export interface CliArgs {
   readonly profile: string;
   readonly scope: string;
   readonly execute: boolean;
-  readonly actorPublicId: string;
+  /** `undefined` é válido em dry-run — só é exigido quando `execute=true` (ver `evaluatePortalMembershipWriteGate`). */
+  readonly actorPublicId: string | undefined;
 }
 
 export function parseArgs(argv: readonly string[]): CliArgs {
@@ -55,7 +68,7 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     scope === undefined
   ) {
     throw new Error(
-      "Uso: bootstrap-portal-membership.js <identityPublicId> <organizationPublicId> <profile> <scope> [--execute] [--actor <publicId>]"
+      "Uso: bootstrap-portal-membership.js <identityPublicId> <organizationPublicId> <profile> <scope> [--execute --actor <identityPublicId>]"
     );
   }
   const actorIndex = rest.indexOf("--actor");
@@ -69,7 +82,10 @@ export function parseArgs(argv: readonly string[]): CliArgs {
     profile,
     scope,
     execute: rest.includes("--execute"),
-    actorPublicId: actorPublicId ?? identityPublicId
+    // NUNCA default silencioso (nem "SYSTEM", nem identityPublicId) —
+    // omitido é omitido; a exigência (só quando execute=true) é
+    // responsabilidade do gate, não do parsing.
+    actorPublicId
   };
 }
 
@@ -79,10 +95,13 @@ export interface DestructiveGateEnv {
 }
 
 export type DestructiveGateDecision =
-  | { readonly allowed: true }
-  | { readonly allowed: false; readonly reason: "production" | "missing_execute_flag" | "missing_env_var" };
+  | { readonly allowed: true; readonly actorPublicId: string }
+  | {
+      readonly allowed: false;
+      readonly reason: "production" | "missing_execute_flag" | "missing_actor_for_execute" | "missing_env_var";
+    };
 
-/** Mesmo princípio de `evaluatePortalAccessWriteGate` (irmão) / `evaluateBootstrapWriteGate` (G2). */
+/** Mesmo princípio de `evaluateOrganizationWriteGate` (bootstrap-organization.ts). */
 export function evaluatePortalMembershipWriteGate(
   args: CliArgs,
   gateEnv: DestructiveGateEnv
@@ -93,10 +112,13 @@ export function evaluatePortalMembershipWriteGate(
   if (!args.execute) {
     return { allowed: false, reason: "missing_execute_flag" };
   }
+  if (args.actorPublicId === undefined) {
+    return { allowed: false, reason: "missing_actor_for_execute" };
+  }
   if (!gateEnv.allowWriteEnvVar) {
     return { allowed: false, reason: "missing_env_var" };
   }
-  return { allowed: true };
+  return { allowed: true, actorPublicId: args.actorPublicId };
 }
 
 async function main(): Promise<void> {
@@ -137,7 +159,7 @@ async function main(): Promise<void> {
       organizationPublicId: args.organizationPublicId,
       profile: args.profile,
       scope: args.scope,
-      actorPublicId: args.actorPublicId
+      actorPublicId: gateDecision.actorPublicId
     });
     // eslint-disable-next-line no-console
     console.log(`[bootstrap-portal-membership] Membership criado: ${membershipResult.publicId}`);
