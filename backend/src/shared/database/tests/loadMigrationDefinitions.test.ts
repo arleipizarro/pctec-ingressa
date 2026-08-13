@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 15 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 16 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -20,7 +20,8 @@ describe("loadMigrationDefinitions", () => {
       "0012_create_memberships",
       "0013_create_organization_external_references",
       "0014_seed_pctec_portal_application",
-      "0015_add_user_access_profile"
+      "0015_add_user_access_profile",
+      "0016_create_identity_external_references"
     ]);
 
     for (const migration of migrations) {
@@ -29,7 +30,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015 são ALTER TABLE, 0007/0014 são seed INSERT/DELETE)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015 são ALTER TABLE, 0007/0014 são seed INSERT/DELETE, 0016 cria tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
