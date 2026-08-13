@@ -469,6 +469,63 @@ CNPJ ou qualquer detalhe da referência além do `legacyId` em si.
 | Organization fora do `PortalContext` efetivo da Identity | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
 | Organization autorizada, sem `OrganizationExternalReference` `ACTIVE` `clientes` | `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
 
+## 12. `/api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`
+
+**Status: implementado — P1B.0 Fatia 4 (v0.7.x).** Fronteira
+**service-to-service**, protegida pela mesma infraestrutura de P1A.1
+(`requireServiceCredential`, `INGRESSA_PORTAL_SERVICE_CREDENTIAL`) —
+sem duplicação de middleware.
+
+**Propósito único: resolver `portal_acesso.id` → `Identity.publicId`.**
+
+O Portal tem `req.user.id` = `portal_acesso.id` (legacyId) e não tem como
+saber qual `Identity.publicId` do Ingressa corresponde a esse usuário.
+Caso real confirmado: `portal_acesso.id=33` e Identity
+`66231e51-66fb-466d-af4f-ac7b925ca9ec` são a mesma pessoa com e-mails
+diferentes — matching por e-mail não é suficiente; o vínculo precisa
+ter sido cadastrado explicitamente via CLI (Fatia 3).
+
+`PCTEC_PORTAL` e `portal_acesso` são segmentos **literais** da URL, não
+parâmetros — a rota não é genérica para qualquer sistema/entidade. Isso
+é intencional: outras combinações exigirão novas rotas (decisão deliberada).
+
+**Pipeline**:
+```
+requireServiceCredential
+→ GetActiveIdentityExternalReferenceService
+→ { "identityPublicId": "<uuid>" }
+```
+
+**Sem `AuthorizeApplicationAccessService` nem `RequireOrganizationAccessService`**:
+esses verificam o que uma Identity pode fazer — aqui não há
+`identityPublicId` como entrada; estamos justamente resolvendo qual é.
+Chamar esses services seria impossível por design.
+
+**Esta rota NÃO concede acesso comercial.** Ela apenas resolve o
+mapeamento de identidade. O Portal ainda precisará, na futura P1B,
+chamar a rota da seção 11 com o `identityPublicId` resolvido para
+verificar `ApplicationAccess` e `OrganizationAccess`.
+
+**`GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`**
+
+Autenticação: `X-Portal-Service-Credential: <segredo>` — mesma
+infraestrutura de P1A.1 (seção 11).
+
+Contrato de resposta — **mínimo**:
+```json
+{ "identityPublicId": "66231e51-66fb-466d-af4f-ac7b925ca9ec" }
+```
+Nunca inclui `legacyId`, `matchMethod`, e-mail, nome, CPF, status
+interno ou o `publicId` da própria `IdentityExternalReference`.
+
+**Contrato de erro:**
+
+| Situação | Código | Classificação | HTTP |
+|---|---|---|---|
+| Credencial ausente, inválida, ou não configurada no servidor | `SERVICE_CREDENTIAL_INVALID` | `AUTHENTICATION` | 401 |
+| Nenhuma `IdentityExternalReference` `ACTIVE` para esse `legacyId` | `IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
+| `legacyId` inválido (zero, negativo, não numérico) | `LEGACY_ID_INVALID` | `VALIDATION` | 422 |
+
 ## Questões pendentes de decisão
 
 - ~~Mecanismo de autenticação serviço a serviço para chamadas de
@@ -478,7 +535,7 @@ CNPJ ou qualquer detalhe da referência além do `legacyId` em si.
   um mecanismo genérico para qualquer consumidor futuro — decisão
   deliberadamente estreita, reavaliar se outro sistema precisar de algo
   parecido.
-- **Gap explícito para P1B (registrado, não resolvido nesta entrega)**:
+- ~~**Gap explícito para P1B (registrado, não resolvido nesta entrega)**:
   como mapear `portal_acesso`/usuário legado do Portal para
   `Identity.publicId` do Ingressa. A rota da seção 11 só é segura
   porque `identityPublicId` chega como prova server-to-server — a
@@ -489,7 +546,15 @@ CNPJ ou qualquer detalhe da referência além do `legacyId` em si.
   `OrganizationExternalReference`-like ou tabela própria — decisão
   ainda não tomada) é o próximo problema real da integração, percebido
   antes de codar qualquer middleware que aceitasse esse valor do
-  frontend.
+  frontend.~~ **Resolvido — P1B.0 (v0.7.x)**: implementado via
+  `IdentityExternalReference` (tabela paralela a
+  `organization_external_references`, migration 0016) + CLI de bootstrap
+  (`bootstrap-identity-external-reference`, Fatia 3) + rota
+  service-to-service (seção 12, Fatia 4). O Portal resolve
+  `portal_acesso.id` → `Identity.publicId` via `GET /api/v1/service/portal/
+  identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`
+  antes de qualquer chamada à seção 11. `identityPublicId` **nunca**
+  vem do browser.
 - Valor padrão e máximo de `limit` na paginação.
 - Onde e como o `refresh_token` é efetivamente entregue ao cliente.
   **Atualizado (v0.6.0 — ADR-030):** `RefreshToken` foi avaliado e

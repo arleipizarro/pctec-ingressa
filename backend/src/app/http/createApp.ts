@@ -38,6 +38,9 @@ import { createRequireOrganizationAccess } from "../../modules/portal/http/requi
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
 import { createServicePortalOrganizationExternalReferenceRoutes } from "../../modules/portal/http/servicePortalOrganizationExternalReferenceRoutes.js";
+import { GetActiveIdentityExternalReferenceService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceService.js";
+import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
+import { createServicePortalIdentityExternalReferenceRoutes } from "../../modules/portal/http/servicePortalIdentityExternalReferenceRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -127,6 +130,13 @@ export interface CreateAppOptions {
    * por omissão.
    */
   readonly serviceCredential?: string;
+  /**
+   * Injetável para testes — P1B.0 Fatia 4 (v0.7.x). Quando omitido,
+   * `createApp()` constrói um `GetActiveIdentityExternalReferenceService`
+   * real, usado por
+   * `GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`.
+   */
+  readonly getActiveIdentityExternalReferenceService?: GetActiveIdentityExternalReferenceService;
 }
 
 /**
@@ -231,7 +241,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.authorizeApplicationAccessService === undefined ||
     options.getPortalContextService === undefined ||
     options.requireOrganizationAccessService === undefined ||
-    options.getActiveOrganizationExternalReferenceService === undefined;
+    options.getActiveOrganizationExternalReferenceService === undefined ||
+    options.getActiveIdentityExternalReferenceService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -250,6 +261,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const getActiveOrganizationExternalReferenceService =
     options.getActiveOrganizationExternalReferenceService ??
     defaultGetActiveOrganizationExternalReferenceService(sharedPool!);
+  const getActiveIdentityExternalReferenceService =
+    options.getActiveIdentityExternalReferenceService ??
+    new GetActiveIdentityExternalReferenceService(new MariaDbIdentityExternalReferenceRepository(sharedPool!));
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
@@ -348,7 +362,14 @@ export function createApp(options: CreateAppOptions = {}): Express {
       authorizeApplicationAccessService,
       requireOrganizationAccessService,
       getActiveOrganizationExternalReferenceService
-    )
+    ),
+    // GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId
+    // — P1B.0 Fatia 4 (v0.7.x). Resolve portal_acesso.id → Identity.publicId.
+    // Mesmo namespace /api/v1/service/portal, mesmo requireServiceCredential
+    // já aplicado acima — nunca duplicado. Sem AuthorizeApplicationAccessService
+    // nem RequireOrganizationAccessService: esta rota não tem identityPublicId
+    // como entrada para verificar; está justamente RESOLVENDO qual é.
+    createServicePortalIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceService)
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

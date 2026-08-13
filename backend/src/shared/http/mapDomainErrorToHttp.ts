@@ -34,7 +34,14 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
   // requireOrganizationAccess (403 próprio, ORGANIZATION_ACCESS_DENIED)
   // antes deste erro ser sequer possível; aqui é genuinamente "recurso
   // (mapeamento legado) inexistente", não falta de autorização.
-  ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND: 404
+  ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND: 404,
+  // P1B.0 Fatia 4 (v0.7.x): mesmo padrão. Rota service-to-service
+  // /api/v1/service/portal/identity-external-references/... resolvendo
+  // portal_acesso.id → Identity.publicId — se não há referência ACTIVE
+  // para essa chave legada, o mapeamento ainda não foi cadastrado via
+  // CLI (bootstrap-identity-external-reference, Fatia 3). "Recurso
+  // inexistente" semanticamente, não falta de autorização.
+  IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND: 404
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({
