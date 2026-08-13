@@ -36,6 +36,8 @@ import { RequireOrganizationAccessService } from "../../modules/portal/applicati
 import { createPortalContextRoutes } from "../../modules/portal/http/portalContextRoutes.js";
 import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
+import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
+import { createServicePortalOrganizationExternalReferenceRoutes } from "../../modules/portal/http/servicePortalOrganizationExternalReferenceRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -117,6 +119,14 @@ export interface CreateAppOptions {
    * `GET /api/v1/portal/organizations/:organizationPublicId/external-references/PCTEC_PORTAL`.
    */
   readonly getActiveOrganizationExternalReferenceService?: GetActiveOrganizationExternalReferenceService;
+  /**
+   * Injetável para testes — P1A.1 (v0.7.x). Quando omitido, lido de
+   * `INGRESSA_PORTAL_SERVICE_CREDENTIAL` (env). String vazia (default
+   * do schema) significa "rota `/api/v1/service/portal/...`
+   * indisponível" — fail-closed absoluto, nunca um segredo funcional
+   * por omissão.
+   */
+  readonly serviceCredential?: string;
 }
 
 /**
@@ -244,6 +254,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
   const allowedOrigins = options.allowedOrigins ?? loadEnv().ALLOWED_ORIGINS;
+  const serviceCredential = options.serviceCredential ?? loadEnv().INGRESSA_PORTAL_SERVICE_CREDENTIAL;
 
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
@@ -314,6 +325,28 @@ export function createApp(options: CreateAppOptions = {}): Express {
     // handler.
     createOrganizationExternalReferenceRoutes(
       createRequireOrganizationAccess(requireOrganizationAccessService, { paramName: "organizationPublicId" }),
+      getActiveOrganizationExternalReferenceService
+    )
+  );
+
+  // GET /api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/external-references/PCTEC_PORTAL
+  // — P1A.1 (v0.7.x). Fronteira service-to-service Ingressa↔Portal,
+  // COMPLETAMENTE SEPARADA de /api/v1/portal/... (browser-facing) —
+  // decisão deliberada do Product Owner. Nunca usa
+  // requireAuthenticatedSession/requireApplicationAccess/
+  // requireOrganizationAccess como middleware de rota (esses exigem
+  // cookie de sessão, que não existe nesta chamada) — em vez disso,
+  // requireServiceCredential (credencial de máquina) protege o acesso,
+  // e AuthorizeApplicationAccessService/RequireOrganizationAccessService
+  // são chamados DIRETAMENTE dentro do handler da rota, com
+  // identityPublicId vindo do parâmetro de rota (nunca de sessão) —
+  // ambos reaproveitados sem nenhuma alteração.
+  app.use(
+    "/api/v1/service/portal",
+    createRequireServiceCredential(serviceCredential),
+    createServicePortalOrganizationExternalReferenceRoutes(
+      authorizeApplicationAccessService,
+      requireOrganizationAccessService,
       getActiveOrganizationExternalReferenceService
     )
   );

@@ -72,7 +72,19 @@ const envSchema = z.object({
         .split(",")
         .map((origin) => origin.trim())
         .filter((origin) => origin.length > 0)
-    )
+    ),
+  // --- Credencial service-to-service Ingressa↔Portal (P1A.1, v0.7.x) ---
+  // Default `""` deliberado — NUNCA um segredo funcional por omissão.
+  // `requireServiceCredential.ts` trata string vazia como
+  // "rota indisponível" (fail-closed absoluto, decisão do Product
+  // Owner): sem esta variável configurada, a rota
+  // `/api/v1/service/portal/...` nunca aceita nenhuma chamada, mesmo
+  // com um header presente — nunca "sem credencial configurada = aceita
+  // qualquer coisa". Mesmo nome nos dois sistemas (Ingressa e Portal)
+  // — decisão deliberada do Product Owner, deixa explícito que é um
+  // único segredo compartilhado entre os dois lados do canal, não dois
+  // segredos coincidentemente parecidos.
+  INGRESSA_PORTAL_SERVICE_CREDENTIAL: z.string().default("")
 });
 
 export type Env = z.infer<typeof envSchema>;

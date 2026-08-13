@@ -108,3 +108,27 @@ describe("loadEnv — SESSION_TTL_SECONDS (v0.6.0, Fase D, revisão crítica ite
     expect(() => loadEnv({ NODE_ENV: "test" })).not.toThrow();
   });
 });
+
+describe("loadEnv — INGRESSA_PORTAL_SERVICE_CREDENTIAL (P1A.1, v0.7.x — revisão pré-commit)", () => {
+  it("1) loadEnv() SEM INGRESSA_PORTAL_SERVICE_CREDENTIAL continua válido — nunca falha o carregamento por causa dela, em nenhum NODE_ENV, inclusive production", () => {
+    expect(() => loadEnv({})).not.toThrow();
+    expect(() => loadEnv({ NODE_ENV: "development" })).not.toThrow();
+    expect(() => loadEnv({ NODE_ENV: "test" })).not.toThrow();
+    expect(() => loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800" })).not.toThrow();
+  });
+
+  it("default é string vazia quando ausente — nunca um segredo funcional por omissão, mas também nunca um valor que impeça o boot", () => {
+    const env = loadEnv({});
+    expect(env.INGRESSA_PORTAL_SERVICE_CREDENTIAL).toBe("");
+  });
+
+  it("lê o valor real quando presente", () => {
+    const env = loadEnv({ INGRESSA_PORTAL_SERVICE_CREDENTIAL: "segredo-real-de-teste" });
+    expect(env.INGRESSA_PORTAL_SERVICE_CREDENTIAL).toBe("segredo-real-de-teste");
+  });
+
+  it("string vazia explícita também é aceita sem erro (mesmo resultado que ausência)", () => {
+    expect(() => loadEnv({ INGRESSA_PORTAL_SERVICE_CREDENTIAL: "" })).not.toThrow();
+    expect(loadEnv({ INGRESSA_PORTAL_SERVICE_CREDENTIAL: "" }).INGRESSA_PORTAL_SERVICE_CREDENTIAL).toBe("");
+  });
+});

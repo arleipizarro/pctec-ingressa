@@ -415,10 +415,81 @@ seu `403` próprio, avaliado antes. `404` aqui é genuinamente "recurso
 (mapeamento legado) inexistente" para uma Organization já legítima e
 autorizada.
 
+---
+
+## 11. `/api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/external-references/PCTEC_PORTAL`
+
+**Status: implementado — P1A.1 (v0.7.x).** Fronteira **service-to-service**
+Ingressa↔Portal, **completamente separada** da fronteira browser-facing
+(seção 10) — nunca a mesma rota, nunca o mesmo pipeline, nunca a mesma
+prova de identidade. Chamador esperado: o backend do `pctec-portal`
+(server-to-server), nunca um browser.
+
+**Motivação (achado real de infraestrutura, P1A.1):** `ingressa_session`
+é `HttpOnly` e host-only (sem `Domain` explícito) — o browser nunca
+consegue apresentá-lo a um hostname diferente do que o emitiu.
+`portal-dev.pctec.com.br` e `ingressa-dev.pctec.com.br` são hostnames
+distintos, confirmado por Nginx real — o cookie de sessão nunca chega
+ao Portal por design, e a decisão foi não abrir `Domain=.pctec.com.br`
+só para compartilhar sessão entre aplicações.
+
+**Autenticação**: header `X-Portal-Service-Credential: <segredo>` —
+comparado por digest SHA-256 + `crypto.timingSafeEqual` (nunca `===`
+direto no segredo, nunca um segredo funcional por omissão — variável
+`INGRESSA_PORTAL_SERVICE_CREDENTIAL` vazia/ausente = rota
+**indisponível**, fail-closed absoluto). Header ausente, valor
+incorreto, e configuração ausente no servidor produzem **o mesmo**
+erro externo — deliberadamente indistinguível.
+
+**`identityPublicId` só é uma entrada confiável aqui porque a chamada
+inteira já é service-to-service** — a credencial de máquina prova
+"quem está chamando" (o Portal), nunca "em nome de quem"; por isso o
+Ingressa **recomputa** `ApplicationAccess`/`PortalContext`/
+`OrganizationAccess` a partir do `identityPublicId` recebido, com os
+MESMOS services já usados na rota browser-facing
+(`AuthorizeApplicationAccessService`, `RequireOrganizationAccessService`),
+**nenhum dos dois alterado**. Esta API nunca deve ser chamada com um
+`identityPublicId` originado direto do browser sem prova server-side —
+essa é responsabilidade do chamador (o Portal), formalizado como
+pré-requisito de P1B (ver `ORGANIZATION-MEMBERSHIP-DESIGN.md`).
+
+Contrato de resposta — **ainda mais mínimo que a rota browser-facing**:
+```json
+{ "legacyId": 75 }
+```
+Nunca inclui `identityPublicId`, `organizationPublicId`, `Membership`,
+CNPJ ou qualquer detalhe da referência além do `legacyId` em si.
+
+**Contrato de erro:**
+
+| Situação | Código | Classificação | HTTP |
+|---|---|---|---|
+| Credencial ausente, inválida, ou não configurada no servidor | `SERVICE_CREDENTIAL_INVALID` | `AUTHENTICATION` | 401 |
+| Identity sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Organization fora do `PortalContext` efetivo da Identity | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Organization autorizada, sem `OrganizationExternalReference` `ACTIVE` `clientes` | `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
+
 ## Questões pendentes de decisão
 
-- Mecanismo de autenticação serviço a serviço para chamadas de consumidores
-  à API do Ingressa.
+- ~~Mecanismo de autenticação serviço a serviço para chamadas de
+  consumidores à API do Ingressa.~~ **Resolvido — P1A.1 (v0.7.x)**:
+  credencial dedicada (`INGRESSA_PORTAL_SERVICE_CREDENTIAL`), exclusiva
+  ao canal Ingressa↔Portal, aceita só na rota da seção 11 acima. Não é
+  um mecanismo genérico para qualquer consumidor futuro — decisão
+  deliberadamente estreita, reavaliar se outro sistema precisar de algo
+  parecido.
+- **Gap explícito para P1B (registrado, não resolvido nesta entrega)**:
+  como mapear `portal_acesso`/usuário legado do Portal para
+  `Identity.publicId` do Ingressa. A rota da seção 11 só é segura
+  porque `identityPublicId` chega como prova server-to-server — a
+  futura P1B **não pode** aceitar `identityPublicId` vindo do browser
+  como autoridade; o Portal precisa determinar, do próprio lado,
+  server-side, qual `Identity.publicId` corresponde ao usuário
+  autenticado nele. Esse mapeamento (provavelmente via um novo
+  `OrganizationExternalReference`-like ou tabela própria — decisão
+  ainda não tomada) é o próximo problema real da integração, percebido
+  antes de codar qualquer middleware que aceitasse esse valor do
+  frontend.
 - Valor padrão e máximo de `limit` na paginação.
 - Onde e como o `refresh_token` é efetivamente entregue ao cliente.
   **Atualizado (v0.6.0 — ADR-030):** `RefreshToken` foi avaliado e

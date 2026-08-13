@@ -27,3 +27,25 @@ export class OrganizationAccessDeniedError extends DomainError {
     super("Acesso negado a esta Organization.");
   }
 }
+
+/**
+ * Erro externo único para TODA falha de credencial de serviço
+ * (Ingressa↔Portal, P1A.1, v0.7.x) — header ausente, valor incorreto,
+ * ou a própria variável de ambiente `INGRESSA_PORTAL_SERVICE_CREDENTIAL`
+ * não configurada no servidor. **Deliberadamente indistinguível
+ * externamente** (revisão pré-implementação do Product Owner): o
+ * chamador nunca aprende se o problema foi "esqueci o header", "errei
+ * o valor" ou "o servidor não está configurado" — as três situações
+ * são, do ponto de vista de quem chama, exatamente a mesma coisa
+ * ("esta chamada não é aceita"), e diferenciar externamente só
+ * ajudaria um atacante a testar hipóteses. Sempre 401
+ * (`AUTHENTICATION`) — mesma classificação de `SESSION_INVALID`.
+ */
+export class ServiceCredentialInvalidError extends DomainError {
+  public readonly code = "SERVICE_CREDENTIAL_INVALID";
+  public readonly classification = "AUTHENTICATION" as const;
+
+  constructor() {
+    super("Credencial de serviço ausente ou inválida.");
+  }
+}
