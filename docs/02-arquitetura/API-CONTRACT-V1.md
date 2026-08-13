@@ -546,15 +546,21 @@ interno ou o `publicId` da própria `IdentityExternalReference`.
   `OrganizationExternalReference`-like ou tabela própria — decisão
   ainda não tomada) é o próximo problema real da integração, percebido
   antes de codar qualquer middleware que aceitasse esse valor do
-  frontend.~~ **Resolvido — P1B.0 (v0.7.x)**: implementado via
-  `IdentityExternalReference` (tabela paralela a
+  frontend.~~ **Parcialmente resolvido — P1B.0 (v0.7.x)**: o mecanismo
+  de resolução `portal_acesso.id → Identity.publicId` está implementado
+  via `IdentityExternalReference` (tabela paralela a
   `organization_external_references`, migration 0016) + CLI de bootstrap
   (`bootstrap-identity-external-reference`, Fatia 3) + rota
   service-to-service (seção 12, Fatia 4). O Portal resolve
-  `portal_acesso.id` → `Identity.publicId` via `GET /api/v1/service/portal/
-  identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`
+  `PCTEC_PORTAL / portal_acesso / legacyId → Identity.publicId` via
+  `GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`
   antes de qualquer chamada à seção 11. `identityPublicId` **nunca**
   vem do browser.
+
+  **Ainda pendente para P1B:** como o Portal determina/seleciona
+  `organizationPublicId` de forma confiável, sem depender de autoridade
+  fornecida pelo browser. O mecanismo de identidade está resolvido;
+  o mecanismo de seleção de organização ainda não.
 - Valor padrão e máximo de `limit` na paginação.
 - Onde e como o `refresh_token` é efetivamente entregue ao cliente.
   **Atualizado (v0.6.0 — ADR-030):** `RefreshToken` foi avaliado e
