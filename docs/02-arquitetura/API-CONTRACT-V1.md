@@ -560,7 +560,10 @@ interno ou o `publicId` da própria `IdentityExternalReference`.
   **Ainda pendente para P1B:** como o Portal determina/seleciona
   `organizationPublicId` de forma confiável, sem depender de autoridade
   fornecida pelo browser. O mecanismo de identidade está resolvido;
-  o mecanismo de seleção de organização ainda não.
+  o mecanismo de seleção de organização agora também está resolvido via
+  seção 13 abaixo — o Portal chama a nova rota para obter a lista de
+  Organizations autorizadas, elimina a necessidade de `organizationPublicId`
+  vindo do browser.
 - Valor padrão e máximo de `limit` na paginação.
 - Onde e como o `refresh_token` é efetivamente entregue ao cliente.
   **Atualizado (v0.6.0 — ADR-030):** `RefreshToken` foi avaliado e
@@ -571,3 +574,54 @@ interno ou o `publicId` da própria `IdentityExternalReference`.
 - Necessidade de endpoint de introspecção de sessão dedicado para
   consumidores (`/api/v1/sessions/introspect` ou equivalente) — não incluído
   nesta versão conceitual por falta de decisão prévia.
+
+## 13. `/api/v1/service/portal/identities/:identityPublicId/context`
+
+**Status: implementado — P1B.1 (v0.7.x).** Fronteira **service-to-service**,
+protegida por `X-Portal-Service-Credential` — mesmo namespace e mesmo
+`requireServiceCredential` de P1A.1, P1B.0 Fatia 4. Sem duplicação de middleware.
+
+**Propósito:** dado um `identityPublicId` já resolvido server-side pelo Portal
+(via Fatia 4: `portal_acesso.id → Identity.publicId`), retornar as Organizations
+que essa Identity pode acessar no Portal. Elimina a necessidade de o frontend
+fornecer `organizationPublicId`.
+
+**Pipeline (equivalente service-to-service de `GET /api/v1/portal/context`):**
+
+```
+requireServiceCredential
+→ AuthorizeApplicationAccessService({ identityPublicId, PCTEC_PORTAL, USER })
+→ GetPortalContextService(identityPublicId)
+→ { "organizations": [...] }
+```
+
+**Por que `AuthorizeApplicationAccessService` é obrigatório:** `IdentityExternalReference`
+prova apenas o vínculo `portal_acesso.id ↔ Identity` — não prova que a Identity ainda
+tem `ApplicationAccess(PCTEC_PORTAL, USER)`. Esses eixos são independentes (ADR-031 §6).
+
+**`GET /api/v1/service/portal/identities/:identityPublicId/context`**
+
+Autenticação: `X-Portal-Service-Credential: <segredo>`.
+
+Contrato de resposta:
+```json
+{
+  "organizations": [
+    { "publicId": "...", "type": "BUSINESS_GROUP", "legalName": "AFIP", "tradeName": "AFIP" },
+    { "publicId": "...", "type": "COMPANY", "legalName": "...", "tradeName": "AFIP - BOSQUE" }
+  ]
+}
+```
+
+Nunca retorna: `identityPublicId`, `membershipPublicId`, `profile`, `scope`,
+`cliente_id`, `legacyId`, ids internos, service credential.
+
+`GetPortalContextService` já implementa Membership ACTIVE + expansão
+`ORGANIZATION_AND_DESCENDANTS` + deduplicação. O Portal **não reimplementa** nenhuma dessas regras.
+
+**Contrato de erro:**
+
+| Situação | Código | HTTP |
+|---|---|---|
+| Credencial ausente/inválida/não configurada | `SERVICE_CREDENTIAL_INVALID` | 401 |
+| Identity sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | 403 |

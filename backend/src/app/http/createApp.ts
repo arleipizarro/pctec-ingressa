@@ -41,6 +41,7 @@ import { createServicePortalOrganizationExternalReferenceRoutes } from "../../mo
 import { GetActiveIdentityExternalReferenceService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceService.js";
 import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
 import { createServicePortalIdentityExternalReferenceRoutes } from "../../modules/portal/http/servicePortalIdentityExternalReferenceRoutes.js";
+import { createServicePortalIdentityContextRoutes } from "../../modules/portal/http/servicePortalIdentityContextRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -369,7 +370,13 @@ export function createApp(options: CreateAppOptions = {}): Express {
     // já aplicado acima — nunca duplicado. Sem AuthorizeApplicationAccessService
     // nem RequireOrganizationAccessService: esta rota não tem identityPublicId
     // como entrada para verificar; está justamente RESOLVENDO qual é.
-    createServicePortalIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceService)
+    createServicePortalIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceService),
+    // GET /api/v1/service/portal/identities/:identityPublicId/context
+    // — P1B.1 (v0.7.x). Pipeline: requireServiceCredential (aplicado acima)
+    // → AuthorizeApplicationAccessService(PCTEC_PORTAL, USER)
+    // → GetPortalContextService → organizations sanitizadas.
+    // Mesmo namespace, mesmo requireServiceCredential — nunca duplicado.
+    createServicePortalIdentityContextRoutes(authorizeApplicationAccessService, getPortalContextService)
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404
