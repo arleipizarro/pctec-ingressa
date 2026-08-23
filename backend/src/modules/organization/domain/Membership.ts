@@ -4,8 +4,11 @@ import { MembershipScope } from "./value-objects/MembershipScope.js";
 import {
   type EventEnvelopeInput,
   type MembershipCreatedEvent,
-  createMembershipCreatedEvent
+  type MembershipUpdatedEvent,
+  createMembershipCreatedEvent,
+  createMembershipUpdatedEvent
 } from "./events/MembershipDomainEvents.js";
+import { MembershipAlreadyEndedError, InvalidMembershipEndReasonError } from "./errors/MembershipErrors.js";
 
 export type MembershipStatusValue = "ACTIVE" | "INACTIVE";
 
@@ -54,14 +57,13 @@ export interface MembershipPersistedState {
  * lógica condicional aqui jamais decide "o que a Identity pode fazer"
  * com base em `profile` ou `scope`.
  *
- * G2 — escopo autorizado: só `create()` + `reconstitute()`. **Nenhum
- * comando de mutação nesta fatia** (sem `revoke()`/`end()`/
- * `reactivate()`) — mesmo princípio já usado por `Organization`/
- * `OrganizationRelationship` (G1): `version` existe na migration para
- * consistência arquitetural futura, mas não é incrementada por nenhum
- * método público aqui, porque não há nenhum comando de mutação para
- * incrementá-la. `status`/`startedAt`/`endedAt` são modelados no estado
- * (schema completo, conforme o design), mas `create()` sempre produz
+ * G2 — escopo autorizado: só `create()` + `reconstitute()`. **P1D.1
+ * acrescentou `end()`** — o encerramento de vínculo que a decisão de
+ * lifecycle abaixo já havia fechado e deixado fora do escopo de G2.
+ * `version` passou a ser incrementada por ele, exatamente como a
+ * migration previa. `reactivate()` continua fora de escopo: não houve
+ * necessidade concreta, e um comando sem caso de uso real é desenho
+ * especulativo. `create()` continua sempre produzindo
  * `status=ACTIVE`/`endedAt=undefined`.
  *
  * **Decisão fechada sobre lifecycle (revisão do Product Owner, antes do
@@ -84,14 +86,17 @@ export class Membership {
   private readonly organizationPublicId: string;
   private readonly profile: MembershipProfile;
   private readonly scope: MembershipScope;
-  private readonly status: MembershipStatusValue;
+  // Mutáveis a partir de P1D.1 (comando `end()`): a transição de status
+  // acontece SEMPRE na mesma linha — nunca uma segunda linha
+  // "reencarnando" o vínculo (decisão de lifecycle, nota de classe).
+  private status: MembershipStatusValue;
   private readonly startedAt: Date;
-  private readonly endedAt: Date | undefined;
-  private readonly version: number;
+  private endedAt: Date | undefined;
+  private version: number;
   private readonly createdAt: Date;
-  private readonly updatedAt: Date;
+  private updatedAt: Date;
 
-  private readonly domainEvents: MembershipCreatedEvent[] = [];
+  private readonly domainEvents: Array<MembershipCreatedEvent | MembershipUpdatedEvent> = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -197,14 +202,90 @@ export class Membership {
   }
 
   // ---------------------------------------------------------------------
+  // Encerramento (comando EndMembership — P1D.1)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Encerra o vínculo: `ACTIVE` → `INACTIVE`, com `endedAt` preenchido.
+   *
+   * **Opera sempre sobre a MESMA linha** — nunca cria uma segunda,
+   * conforme a decisão de lifecycle já fechada (nota de classe). É o que
+   * mantém `uk_membership_unique` correta: um par
+   * (identity, organization, profile) tem exatamente um registro, e o
+   * histórico das transições vive em `audit_events`, não em linhas
+   * duplicadas.
+   *
+   * **Encerrar não apaga**: o vínculo permanece consultável por
+   * `findAllByIdentityPublicId` e continua provando que existiu. O que
+   * muda é que ele deixa de compor o `PortalContext` — que lê
+   * exclusivamente `findActiveByIdentityPublicId`.
+   *
+   * **`reason` é obrigatório e não vazio.** Uma revogação sem motivo
+   * registrado é uma revogação que ninguém consegue explicar depois; o
+   * texto vai para o payload de `membership.updated` e daí para
+   * `audit_events`.
+   *
+   * `expectedVersion` implementa o mesmo optimistic locking de
+   * `Identity`: quem chama leu uma versão, e a persistência só aceita o
+   * `UPDATE` se ela ainda for a corrente.
+   *
+   * Este comando **não** decide se a revogação é legítima — não conhece
+   * ApplicationAccess, não conhece a Organization, não sabe quem é o
+   * ator. Ele garante apenas a integridade da transição.
+   */
+  public end(props: {
+    readonly actorPublicId: string;
+    readonly reason: string;
+    readonly correlationId: string;
+    readonly causationId?: string | undefined;
+    readonly now?: Date | undefined;
+  }): void {
+    if (this.status !== "ACTIVE") {
+      throw new MembershipAlreadyEndedError();
+    }
+    const reason = props.reason.trim();
+    if (reason.length === 0) {
+      throw new InvalidMembershipEndReasonError();
+    }
+
+    const now = props.now ?? new Date();
+    const previousStatus = this.status;
+
+    this.status = "INACTIVE";
+    this.endedAt = now;
+    this.version += 1;
+    this.updatedAt = now;
+
+    const envelope: EventEnvelopeInput = {
+      aggregatePublicId: this.publicId.toString(),
+      actorPublicId: props.actorPublicId,
+      correlationId: props.correlationId,
+      ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+      occurredAt: now
+    };
+
+    this.recordEvent(
+      createMembershipUpdatedEvent(envelope, {
+        membershipPublicId: this.publicId.toString(),
+        identityPublicId: this.identityPublicId,
+        organizationPublicId: this.organizationPublicId,
+        previousStatus,
+        status: this.status,
+        endedAt: now.toISOString(),
+        reason
+      })
+    );
+  }
+
+  // ---------------------------------------------------------------------
   // Helpers internos
   // ---------------------------------------------------------------------
 
-  private recordEvent(event: MembershipCreatedEvent): void {
+  private recordEvent(event: MembershipCreatedEvent | MembershipUpdatedEvent): void {
     this.domainEvents.push(event);
   }
 
-  public pullDomainEvents(): MembershipCreatedEvent[] {
+  public pullDomainEvents(): Array<MembershipCreatedEvent | MembershipUpdatedEvent> {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;

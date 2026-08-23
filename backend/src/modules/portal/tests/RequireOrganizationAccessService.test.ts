@@ -12,6 +12,7 @@ import type { PublicId } from "../../organization/domain/value-objects/PublicId.
 import type { MembershipProfile } from "../../organization/domain/value-objects/MembershipProfile.js";
 import type { OrganizationType } from "../../organization/domain/value-objects/OrganizationType.js";
 import type { DocumentNumber } from "../../organization/domain/value-objects/DocumentNumber.js";
+import { MembershipVersionConflictError } from "../../organization/domain/errors/MembershipErrors.js";
 
 class InMemoryMembershipRepository implements MembershipRepository {
   public readonly stored: Membership[] = [];
@@ -35,6 +36,13 @@ class InMemoryMembershipRepository implements MembershipRepository {
   }
   public async findByPublicId(publicId: PublicId): Promise<Membership | undefined> {
     return this.stored.find((m) => m.getPublicId().equals(publicId));
+  }
+  public async update(membership: Membership, expectedVersion: number): Promise<void> {
+    const indice = this.stored.findIndex((m) => m.getPublicId().equals(membership.getPublicId()));
+    if (indice === -1 || this.stored[indice]!.getVersion() !== expectedVersion) {
+      throw new MembershipVersionConflictError(expectedVersion, membership.getVersion());
+    }
+    this.stored[indice] = membership;
   }
   public async insert(membership: Membership): Promise<void> {
     this.stored.push(membership);

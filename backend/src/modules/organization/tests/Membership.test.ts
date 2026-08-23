@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import { Membership } from "../domain/Membership.js";
 import { InvalidMembershipProfileError } from "../domain/value-objects/MembershipProfile.js";
 import { InvalidMembershipScopeError } from "../domain/value-objects/MembershipScope.js";
+import {
+  MembershipAlreadyEndedError,
+  InvalidMembershipEndReasonError
+} from "../domain/errors/MembershipErrors.js";
 
 const IDENTITY_PUBLIC_ID = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const ORGANIZATION_PUBLIC_ID = "0b13f6f0-8f3a-4a1e-9c2d-000000000001";
@@ -118,14 +122,27 @@ describe("Membership — 5. reconstituição", () => {
   });
 });
 
-describe("Membership — 6. sem comando de mutação nesta fatia (G2)", () => {
-  it("nenhum método revoke()/end()/update() existe no Aggregate; version permanece 1 após create()", () => {
+describe("Membership — 6. superfície de mutação (G2 + P1D.1)", () => {
+  it("create() continua produzindo version=1 e status ACTIVE — nenhuma mutação implícita", () => {
     const membership = createValidMembership();
 
     expect(membership.getVersion()).toBe(1);
+    expect(membership.getStatus()).toBe("ACTIVE");
+    expect(membership.getEndedAt()).toBeUndefined();
+  });
+
+  it("end() é o ÚNICO comando de mutação — revoke()/reactivate()/update() continuam fora de escopo", () => {
+    // G2 não tinha nenhum; P1D.1 acrescentou exatamente um, o
+    // encerramento que a decisão de lifecycle já havia fechado.
+    // `reactivate()` segue fora: não há caso de uso real, e um comando
+    // sem caso de uso é desenho especulativo.
+    const membership = createValidMembership();
+
+    expect(typeof (membership as unknown as { end?: unknown }).end).toBe("function");
     expect((membership as unknown as { revoke?: unknown }).revoke).toBeUndefined();
-    expect((membership as unknown as { end?: unknown }).end).toBeUndefined();
+    expect((membership as unknown as { reactivate?: unknown }).reactivate).toBeUndefined();
     expect((membership as unknown as { update?: unknown }).update).toBeUndefined();
+    expect((membership as unknown as { changeScope?: unknown }).changeScope).toBeUndefined();
   });
 });
 
@@ -159,5 +176,127 @@ describe("Membership — 8. não expõe internalId publicamente", () => {
     expect(membership.getInternalIdForPersistence()).toBeUndefined();
     membership.assignInternalIdFromPersistence(15);
     expect(membership.getInternalIdForPersistence()).toBe(15);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Comando end() — P1D.1
+// ---------------------------------------------------------------------------
+
+describe("Membership.end()", () => {
+  const ACTOR = "11111111-2222-4333-8444-555555555555";
+  const CORRELATION = "8f14e45f-ceea-467e-a1a3-000000000001";
+
+  function vinculoAtivo(): Membership {
+    const m = Membership.create({
+      identityPublicId: "66231e51-66fb-466d-af4f-ac7b925ca9ec",
+      organizationPublicId: "b5c4358b-c8aa-42a8-9589-7c09c015f5fb",
+      profile: "CUSTOMER",
+      scope: "ORGANIZATION_ONLY",
+      actorPublicId: ACTOR,
+      correlationId: CORRELATION
+    });
+    m.pullDomainEvents();
+    return m;
+  }
+
+  it("transiciona ACTIVE → INACTIVE, preenche endedAt e incrementa version", () => {
+    const m = vinculoAtivo();
+    const versaoAntes = m.getVersion();
+    const agora = new Date("2026-08-23T12:00:00.000Z");
+
+    m.end({ actorPublicId: ACTOR, reason: "restrição de homologação", correlationId: CORRELATION, now: agora });
+
+    expect(m.getStatus()).toBe("INACTIVE");
+    expect(m.isActive()).toBe(false);
+    expect(m.getEndedAt()).toEqual(agora);
+    expect(m.getVersion()).toBe(versaoAntes + 1);
+    expect(m.getUpdatedAt()).toEqual(agora);
+  });
+
+  it("preserva a identidade do vínculo — mesma linha, nunca uma nova", () => {
+    const m = vinculoAtivo();
+    const publicId = m.getPublicId().toString();
+    const identity = m.getIdentityPublicId();
+    const organization = m.getOrganizationPublicId();
+    const profile = m.getProfile().toString();
+    const scope = m.getScope().toString();
+    const startedAt = m.getStartedAt();
+
+    m.end({ actorPublicId: ACTOR, reason: "x", correlationId: CORRELATION });
+
+    expect(m.getPublicId().toString()).toBe(publicId);
+    expect(m.getIdentityPublicId()).toBe(identity);
+    expect(m.getOrganizationPublicId()).toBe(organization);
+    expect(m.getProfile().toString()).toBe(profile);
+    expect(m.getScope().toString()).toBe(scope);
+    expect(m.getStartedAt()).toEqual(startedAt);
+  });
+
+  it("emite membership.updated com a transição, o motivo e o ator", () => {
+    const m = vinculoAtivo();
+    m.end({ actorPublicId: ACTOR, reason: "  conta temporária  ", correlationId: CORRELATION });
+
+    const eventos = m.pullDomainEvents();
+    expect(eventos).toHaveLength(1);
+    const evento = eventos[0]!;
+    expect(evento.eventType).toBe("membership.updated");
+    expect(evento.actorPublicId).toBe(ACTOR);
+    expect(evento.correlationId).toBe(CORRELATION);
+    const payload = evento.payload as unknown as Record<string, unknown>;
+    expect(payload["previousStatus"]).toBe("ACTIVE");
+    expect(payload["status"]).toBe("INACTIVE");
+    // O motivo é normalizado (trim) antes de virar trilha de auditoria.
+    expect(payload["reason"]).toBe("conta temporária");
+    expect(typeof payload["endedAt"]).toBe("string");
+  });
+
+  it("recusa encerrar um vínculo já encerrado", () => {
+    const m = vinculoAtivo();
+    m.end({ actorPublicId: ACTOR, reason: "x", correlationId: CORRELATION });
+    m.pullDomainEvents();
+
+    expect(() => m.end({ actorPublicId: ACTOR, reason: "x", correlationId: CORRELATION })).toThrow(
+      MembershipAlreadyEndedError
+    );
+    // E nada é registrado na segunda tentativa.
+    expect(m.pullDomainEvents()).toHaveLength(0);
+  });
+
+  it("recusa motivo vazio e não muta o Aggregate", () => {
+    const m = vinculoAtivo();
+    const versaoAntes = m.getVersion();
+
+    for (const reason of ["", "   ", "\t\n"]) {
+      expect(() => m.end({ actorPublicId: ACTOR, reason, correlationId: CORRELATION })).toThrow(
+        InvalidMembershipEndReasonError
+      );
+    }
+    expect(m.getStatus()).toBe("ACTIVE");
+    expect(m.getEndedAt()).toBeUndefined();
+    expect(m.getVersion()).toBe(versaoAntes);
+    expect(m.pullDomainEvents()).toHaveLength(0);
+  });
+
+  it("um vínculo reconstituído como INACTIVE não pode ser encerrado de novo", () => {
+    const original = vinculoAtivo();
+    const inativo = Membership.reconstitute({
+      internalId: 1,
+      publicId: original.getPublicId().toString(),
+      identityPublicId: original.getIdentityPublicId(),
+      organizationPublicId: original.getOrganizationPublicId(),
+      profile: "CUSTOMER",
+      scope: "ORGANIZATION_ONLY",
+      status: "INACTIVE",
+      startedAt: new Date(),
+      endedAt: new Date(),
+      version: 2,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    expect(() => inativo.end({ actorPublicId: ACTOR, reason: "x", correlationId: CORRELATION })).toThrow(
+      MembershipAlreadyEndedError
+    );
   });
 });

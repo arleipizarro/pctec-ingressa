@@ -38,4 +38,19 @@ export interface MembershipRepository {
   findByPublicId(publicId: PublicId): Promise<Membership | undefined>;
 
   insert(membership: Membership): Promise<void>;
+
+  /**
+   * Persiste uma transição de estado de um Membership já existente —
+   * P1D.1, usado por `EndMembershipService`.
+   *
+   * `expectedVersion` é a versão que o chamador leu antes de mutar o
+   * Aggregate: o `UPDATE` é condicionado a ela e, se nenhuma linha for
+   * afetada, lança `MembershipVersionConflictError`. Mesmo mecanismo de
+   * optimistic locking já usado por `IdentityRepository.update` —
+   * sobrescrever cegamente apagaria uma alteração concorrente.
+   *
+   * **Sempre a MESMA linha** (decisão de lifecycle, ver `Membership`):
+   * nunca insere uma segunda para representar o novo estado.
+   */
+  update(membership: Membership, expectedVersion: number): Promise<void>;
 }

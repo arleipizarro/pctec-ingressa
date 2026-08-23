@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { MembershipRepository } from "../../domain/MembershipRepository.js";
 import { Membership, type MembershipPersistedState } from "../../domain/Membership.js";
+import { MembershipVersionConflictError } from "../../domain/errors/MembershipErrors.js";
 import type { PublicId } from "../../domain/value-objects/PublicId.js";
 import type { MembershipProfile } from "../../domain/value-objects/MembershipProfile.js";
 
@@ -143,5 +144,41 @@ export class MariaDbMembershipRepository implements MembershipRepository {
     );
     const insertResult = result as { insertId: number };
     membership.assignInternalIdFromPersistence(insertResult.insertId);
+  }
+
+  /**
+   * Atualiza um Membership existente com optimistic locking — P1D.1.
+   *
+   * O `UPDATE` é condicionado à `version` que o chamador leu; zero linhas
+   * afetadas significam alteração concorrente, e a operação falha em vez
+   * de sobrescrever. Mesmo mecanismo de `MariaDbIdentityRepository.update`.
+   *
+   * Só os campos que uma transição de estado pode mudar são escritos —
+   * `identity_public_id`, `organization_public_id`, `profile`, `scope`,
+   * `started_at` e `created_at` são imutáveis por design e não aparecem
+   * no SET: um `UPDATE` que os incluísse permitiria, por engano de
+   * chamada, transformar um vínculo em outro.
+   */
+  public async update(membership: Membership, expectedVersion: number): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE memberships
+          SET status = ?,
+              ended_at = ?,
+              version = ?,
+              updated_at = ?
+        WHERE public_id = ? AND version = ?`,
+      [
+        membership.getStatus(),
+        membership.getEndedAt() ?? null,
+        membership.getVersion(),
+        membership.getUpdatedAt(),
+        membership.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    const updateResult = result as { affectedRows: number };
+    if (updateResult.affectedRows === 0) {
+      throw new MembershipVersionConflictError(expectedVersion, membership.getVersion());
+    }
   }
 }

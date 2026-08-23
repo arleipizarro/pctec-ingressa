@@ -10,9 +10,10 @@ import type { DomainEvent } from "../../../../shared/types/DomainEvent.js";
  * alterada nesta entrega).
  *
  * `membership.updated` (também já catalogado, cobre alteração/
- * encerramento) não é emitido nesta fatia — G2 não implementa nenhum
- * comando de mutação sobre um Membership já existente (só
- * `CreateMembershipService`).
+ * encerramento) passou a ser emitido em P1D.1, pelo comando
+ * `Membership.end()` — o encerramento de vínculo que o design de G2 já
+ * havia decidido e deixado fora de escopo. Nenhum evento novo foi
+ * inventado: o catálogo já previa este.
  */
 export interface MembershipCreatedPayload {
   readonly membershipPublicId: string;
@@ -38,6 +39,49 @@ export function createMembershipCreatedEvent(
   const base = {
     eventId: randomUUID(),
     eventType: "membership.created" as const,
+    eventVersion: 1,
+    aggregatePublicId: envelope.aggregatePublicId,
+    actorPublicId: envelope.actorPublicId,
+    correlationId: envelope.correlationId,
+    occurredAt: envelope.occurredAt
+  };
+  return {
+    ...(envelope.causationId === undefined ? base : { ...base, causationId: envelope.causationId }),
+    payload
+  };
+}
+
+/**
+ * Payload de `membership.updated` para o encerramento de vínculo.
+ *
+ * Registra a transição de `status` de forma explícita (`ACTIVE` →
+ * `INACTIVE`) e o motivo textual informado pelo operador — é o que
+ * torna a auditoria legível meses depois, quando "por que este acesso
+ * saiu?" for a pergunta. `endedAt` fecha a janela temporal do vínculo.
+ *
+ * Nunca carrega dados da Identity (nome/e-mail/CPF) nem da Organization
+ * além do `publicId`: o evento é sobre o VÍNCULO, e o restante já é
+ * recuperável pelos aggregates referenciados.
+ */
+export interface MembershipUpdatedPayload {
+  readonly membershipPublicId: string;
+  readonly identityPublicId: string;
+  readonly organizationPublicId: string;
+  readonly previousStatus: string;
+  readonly status: string;
+  readonly endedAt: string;
+  readonly reason: string;
+}
+
+export type MembershipUpdatedEvent = DomainEvent<"membership.updated", MembershipUpdatedPayload>;
+
+export function createMembershipUpdatedEvent(
+  envelope: EventEnvelopeInput,
+  payload: MembershipUpdatedPayload
+): MembershipUpdatedEvent {
+  const base = {
+    eventId: randomUUID(),
+    eventType: "membership.updated" as const,
     eventVersion: 1,
     aggregatePublicId: envelope.aggregatePublicId,
     actorPublicId: envelope.actorPublicId,
