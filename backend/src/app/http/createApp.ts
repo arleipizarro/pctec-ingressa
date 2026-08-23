@@ -42,6 +42,8 @@ import { GetActiveIdentityExternalReferenceService } from "../../modules/identit
 import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
 import { createServicePortalIdentityExternalReferenceRoutes } from "../../modules/portal/http/servicePortalIdentityExternalReferenceRoutes.js";
 import { createServicePortalIdentityContextRoutes } from "../../modules/portal/http/servicePortalIdentityContextRoutes.js";
+import { ResolvePortalTenantScopeService } from "../../modules/portal/application/ResolvePortalTenantScopeService.js";
+import { createServicePortalTenantScopeRoutes } from "../../modules/portal/http/servicePortalTenantScopeRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -138,6 +140,12 @@ export interface CreateAppOptions {
    * `GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`.
    */
   readonly getActiveIdentityExternalReferenceService?: GetActiveIdentityExternalReferenceService;
+  /**
+   * Injetável para testes — P1D (v0.7.x). Quando omitido, `createApp()`
+   * constrói um `ResolvePortalTenantScopeService` real, usado por
+   * `GET /api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/tenant-scope`.
+   */
+  readonly resolvePortalTenantScopeService?: ResolvePortalTenantScopeService;
 }
 
 /**
@@ -216,6 +224,17 @@ function defaultGetActiveOrganizationExternalReferenceService(
   return new GetActiveOrganizationExternalReferenceService(new MariaDbOrganizationExternalReferenceRepository(pool));
 }
 
+function defaultResolvePortalTenantScopeService(
+  pool: ReturnType<typeof createPool>,
+  getActiveOrganizationExternalReferenceService: GetActiveOrganizationExternalReferenceService
+): ResolvePortalTenantScopeService {
+  return new ResolvePortalTenantScopeService(
+    new MariaDbOrganizationRepository(pool),
+    new MariaDbOrganizationRelationshipRepository(pool),
+    getActiveOrganizationExternalReferenceService
+  );
+}
+
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
  * `listen()` é `server.ts`. Separar `createApp` de `server.ts` permite
@@ -243,7 +262,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.getPortalContextService === undefined ||
     options.requireOrganizationAccessService === undefined ||
     options.getActiveOrganizationExternalReferenceService === undefined ||
-    options.getActiveIdentityExternalReferenceService === undefined;
+    options.getActiveIdentityExternalReferenceService === undefined ||
+    options.resolvePortalTenantScopeService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -265,6 +285,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const getActiveIdentityExternalReferenceService =
     options.getActiveIdentityExternalReferenceService ??
     new GetActiveIdentityExternalReferenceService(new MariaDbIdentityExternalReferenceRepository(sharedPool!));
+  const resolvePortalTenantScopeService =
+    options.resolvePortalTenantScopeService ??
+    defaultResolvePortalTenantScopeService(sharedPool!, getActiveOrganizationExternalReferenceService);
   const sessionCookieConfig: SessionCookieConfig = options.sessionCookieConfig ?? {
     secure: loadEnv().SESSION_COOKIE_SECURE
   };
@@ -376,7 +399,22 @@ export function createApp(options: CreateAppOptions = {}): Express {
     // → AuthorizeApplicationAccessService(PCTEC_PORTAL, USER)
     // → GetPortalContextService → organizations sanitizadas.
     // Mesmo namespace, mesmo requireServiceCredential — nunca duplicado.
-    createServicePortalIdentityContextRoutes(authorizeApplicationAccessService, getPortalContextService)
+    createServicePortalIdentityContextRoutes(authorizeApplicationAccessService, getPortalContextService),
+    // GET /api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/tenant-scope
+    // — P1D (v0.7.x). Escopo comercial de uma seleção do Portal: COMPANY
+    // resolve a si mesma; BUSINESS_GROUP expande nas COMPANY filhas
+    // ACTIVE pelas relações canônicas, cada uma com seu legacyId.
+    // Mesmo namespace, mesmo requireServiceCredential — nunca duplicado.
+    // Pipeline: requireServiceCredential (acima)
+    // → AuthorizeApplicationAccessService(PCTEC_PORTAL, USER)
+    // → RequireOrganizationAccessService (a seleção pertence ao
+    //   PortalContext real da Identity?) → ResolvePortalTenantScopeService.
+    // Os dois primeiros são os MESMOS services de P1A.1, sem alteração.
+    createServicePortalTenantScopeRoutes(
+      authorizeApplicationAccessService,
+      requireOrganizationAccessService,
+      resolvePortalTenantScopeService
+    )
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

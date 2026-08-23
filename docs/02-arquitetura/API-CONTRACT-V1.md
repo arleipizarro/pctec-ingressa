@@ -625,3 +625,107 @@ Nunca retorna: `identityPublicId`, `membershipPublicId`, `profile`, `scope`,
 |---|---|---|
 | Credencial ausente/inválida/não configurada | `SERVICE_CREDENTIAL_INVALID` | 401 |
 | Identity sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | 403 |
+
+## 14. `/api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/tenant-scope`
+
+**Status: implementado — P1D (v0.7.x).** Fronteira **service-to-service**,
+protegida por `X-Portal-Service-Credential` — mesmo namespace e mesmo
+`requireServiceCredential` de P1A.1, P1B.0 Fatia 4 e P1B.1. Sem
+duplicação de middleware.
+
+**Propósito:** dada uma seleção do usuário — uma `COMPANY` **ou** um
+`BUSINESS_GROUP` — devolver o conjunto completo de organizações
+comerciais que aquela seleção representa, cada uma já resolvida para o
+`clientes.id` do Portal legado. É o que permite o Portal apresentar
+"AFIP — Todas as empresas" consolidando faturamento, contratos,
+equipamentos, vencimentos e chamados de todas as empresas do grupo,
+**sem jamais reimplementar hierarquia organizacional do seu lado**.
+
+**Relação com a seção 11:** generaliza, sem substituir. Na seção 11 um
+`BUSINESS_GROUP` só poderia responder 404 — um grupo não tem referência
+`clientes` própria (nunca `clientes_grupo`: decisão fechada no piloto
+AFIP). Aqui ele é expandido nas `COMPANY` filhas. A rota da seção 11
+continua intacta, independente e sem nenhuma alteração.
+
+**Pipeline (ordem obrigatória):**
+
+```
+requireServiceCredential
+→ AuthorizeApplicationAccessService({ identityPublicId, PCTEC_PORTAL, USER })
+→ RequireOrganizationAccessService(identityPublicId, organizationPublicId)
+→ ResolvePortalTenantScopeService(organizationPublicId)
+```
+
+Os dois primeiros são EXATAMENTE os mesmos services de P1A.1, **nenhum
+alterado**: a credencial de máquina prova "quem está chamando" (o
+Portal), nunca "em nome de quem". `RequireOrganizationAccessService` é o
+que garante que um `BUSINESS_GROUP` só é expandido se ele mesmo estiver
+no `PortalContext` efetivo da Identity — nunca porque o chamador pediu.
+
+**Resolução do escopo (`ResolvePortalTenantScopeService`):**
+
+- `COMPANY` → escopo é a própria organização; resolve a referência
+  `ACTIVE` `PCTEC_PORTAL/clientes` dela.
+- `BUSINESS_GROUP` → expande nas `COMPANY` filhas pelas **relações
+  canônicas** (`organization_relationships`, mesma fonte de verdade de
+  `GetPortalContextService`), mantém só as `ACTIVE` e resolve a
+  referência `PCTEC_PORTAL/clientes` de **cada uma**.
+- Deduplicação por `Organization.publicId` — a mesma `COMPANY` nunca
+  aparece duas vezes, mesmo alcançada por mais de uma relação.
+- `COMPANY` filha `INACTIVE` é ignorada (saiu do grupo), nunca falha.
+- Grupo sem nenhuma filha `ACTIVE` → `organizations: []`, HTTP 200. É um
+  estado legítimo, não erro. O consumidor decide; o Portal trata como
+  fail-closed (nenhum `clienteId` ⇒ nenhuma query comercial).
+
+**Fail-closed deliberado:** se uma filha `ACTIVE` **não** possui
+referência comercial `ACTIVE`, a requisição INTEIRA falha com 404 —
+nunca "consolida o que der". Um total consolidado silenciosamente
+incompleto seria lido pelo usuário como verdade, sem nenhum sinal de que
+faltou uma empresa. Isto é deliberadamente diferente da defesa em
+profundidade de `GetPortalContextService` (seções 9/13), que ignora
+Memberships problemáticos: lá o resultado é "o que você enxerga"; aqui é
+"a soma que você vai ler como verdade".
+
+**`GET /api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/tenant-scope`**
+
+Autenticação: `X-Portal-Service-Credential: <segredo>`.
+
+Contrato de resposta (exemplo com `BUSINESS_GROUP`):
+```json
+{
+  "selection": {
+    "publicId": "cc9c41b2-425b-48f2-82d9-506d396c2562",
+    "type": "BUSINESS_GROUP",
+    "legalName": "ASSOCIACAO FUNDO DE INCENTIVO A PESQUISA",
+    "tradeName": "AFIP"
+  },
+  "organizations": [
+    { "publicId": "e99baabc-...", "type": "COMPANY", "legalName": "...", "tradeName": "AFIP - BELGICA",    "legacyId": 77 },
+    { "publicId": "971ec096-...", "type": "COMPANY", "legalName": "...", "tradeName": "AFIP - BOSQUE",     "legacyId": 75 },
+    { "publicId": "3abb40e7-...", "type": "COMPANY", "legalName": "...", "tradeName": "AFIP - CLEMENTINO", "legacyId": 78 },
+    { "publicId": "d86ed78a-...", "type": "COMPANY", "legalName": "...", "tradeName": "AFIP - SANTANA",    "legacyId": 76 }
+  ]
+}
+```
+
+Com `COMPANY` selecionada, `organizations` tem exatamente um elemento —
+a própria empresa. `selection` sempre descreve o que foi escolhido;
+`organizations[]` sempre descreve o escopo comercial efetivo.
+
+**`legacyId` é o único identificador legado exposto por esta rota** — e
+existe porque é exatamente o dado que o Portal precisa para escopar as
+próprias queries. A regra geral do ADR-031 ("`legacyId` nunca vira
+contrato externo") permanece para toda identificação de Organization: o
+identificador cross-system oficial continua sendo `publicId`, e é ele
+que o Portal usa em toda seleção/persistência. Nunca são retornados:
+`internalId`, `membershipPublicId`, `profile`, `scope`,
+`documentNumber`/CNPJ, `identityPublicId`, service credential.
+
+**Contrato de erro:**
+
+| Situação | Código | Classificação | HTTP |
+|---|---|---|---|
+| Credencial ausente, inválida, ou não configurada no servidor | `SERVICE_CREDENTIAL_INVALID` | `AUTHENTICATION` | 401 |
+| Identity sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| Seleção fora do `PortalContext` efetivo da Identity, inexistente ou `INACTIVE` | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| `COMPANY` selecionada — ou filha `ACTIVE` de um grupo — sem `OrganizationExternalReference` `ACTIVE` `clientes` | `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
