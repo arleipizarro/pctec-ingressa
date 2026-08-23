@@ -1,4 +1,4 @@
-import type { GetPortalContextService } from "./GetPortalContextService.js";
+import type { GetPortalContextService, PortalContextResult } from "./GetPortalContextService.js";
 import { OrganizationAccessDeniedError } from "../domain/errors/PortalErrors.js";
 
 /**
@@ -19,19 +19,34 @@ import { OrganizationAccessDeniedError } from "../domain/errors/PortalErrors.js"
  * diferenciando "não existe" de "existe mas não é sua" (task G3, seção
  * 14).
  *
- * **G3 não monta nenhuma rota comercial usando este boundary** (task,
- * seção 22: "não inventar endpoint comercial falso") — implementado e
- * testado como peça reutilizável para quando rotas comerciais reais
- * existirem (G4+), não wireado em `createApp.ts` nesta entrega.
+ * **Retorno (P1D, v0.7.x): o `PortalContextResult` que este service já
+ * calculou para decidir.** Antes retornava `void`, e quem precisasse do
+ * contexto logo depois teria de recalculá-lo — duas passagens pelo
+ * mesmo `MembershipRepository`/`OrganizationRepository`, e, pior, duas
+ * respostas potencialmente divergentes para a mesma pergunta. Devolver
+ * o contexto elimina as duas coisas: o chamador que precisa saber
+ * **quais** Organizations a Identity alcança (ex.: a rota
+ * `tenant-scope`, que só pode consolidar as filhas autorizadas) usa
+ * exatamente o mesmo resultado que autorizou a requisição.
+ *
+ * **Compatível com quem ignora o retorno**: `requireOrganizationAccess`
+ * (middleware HTTP) e a rota de P1A.1 continuam com
+ * `.then(() => ...)`, sem nenhuma alteração — um valor de retorno
+ * adicional nunca quebra um chamador que não o lê.
  */
 export class RequireOrganizationAccessService {
   public constructor(private readonly getPortalContextService: GetPortalContextService) {}
 
-  public async execute(identityPublicId: string, organizationPublicId: string): Promise<void> {
+  /**
+   * @returns O `PortalContext` efetivo da Identity — o MESMO usado para
+   * autorizar. Nunca é um contexto recalculado depois da decisão.
+   */
+  public async execute(identityPublicId: string, organizationPublicId: string): Promise<PortalContextResult> {
     const context = await this.getPortalContextService.execute(identityPublicId);
     const isAllowed = context.organizations.some((organization) => organization.publicId === organizationPublicId);
     if (!isAllowed) {
       throw new OrganizationAccessDeniedError();
     }
+    return context;
   }
 }

@@ -80,7 +80,7 @@ function buildFixture() {
     organizationRelationshipRepository
   );
   const service = new RequireOrganizationAccessService(getPortalContextService);
-  return { membershipRepository, organizationRepository, service };
+  return { membershipRepository, organizationRepository, getPortalContextService, service };
 }
 
 describe("RequireOrganizationAccessService — organization dentro do scope", () => {
@@ -104,9 +104,11 @@ describe("RequireOrganizationAccessService — organization dentro do scope", ()
       })
     );
 
-    await expect(
-      service.execute(IDENTITY_PUBLIC_ID, company.getPublicId().toString())
-    ).resolves.toBeUndefined();
+    // P1D: passou a devolver o PortalContext que usou para autorizar —
+    // é ele que a rota tenant-scope repassa como conjunto autorizado.
+    const contexto = await service.execute(IDENTITY_PUBLIC_ID, company.getPublicId().toString());
+    expect(contexto.identityPublicId).toBe(IDENTITY_PUBLIC_ID);
+    expect(contexto.organizations.map((o) => o.publicId)).toContain(company.getPublicId().toString());
   });
 });
 
@@ -181,7 +183,11 @@ describe("RequireOrganizationAccessService — descendente permitido por AND_DES
     );
     const service = new RequireOrganizationAccessService(getPortalContextService);
 
-    await expect(service.execute(IDENTITY_PUBLIC_ID, child.getPublicId().toString())).resolves.toBeUndefined();
+    const contexto = await service.execute(IDENTITY_PUBLIC_ID, child.getPublicId().toString());
+    // O contexto devolvido contém a filha alcançada por AND_DESCENDANTS —
+    // é exatamente essa informação que permite ao tenant-scope consolidar
+    // só o que a Identity alcança.
+    expect(contexto.organizations.map((o) => o.publicId)).toContain(child.getPublicId().toString());
   });
 });
 
@@ -263,5 +269,93 @@ describe("RequireOrganizationAccessService — nunca confia em organizationPubli
     await expect(
       service.execute(IDENTITY_PUBLIC_ID, "0b13f6f0-8f3a-4a1e-9c2d-000000009999")
     ).rejects.toThrow(OrganizationAccessDeniedError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// P1D — o contexto devolvido é o MESMO usado para autorizar
+// ---------------------------------------------------------------------------
+
+describe("RequireOrganizationAccessService — contexto devolvido (P1D)", () => {
+  it("devolve exatamente o PortalContext consultado, sem recalcular", async () => {
+    const { membershipRepository, organizationRepository, getPortalContextService, service } = buildFixture();
+    const company = Organization.create({
+      type: "COMPANY",
+      legalName: "Empresa Do Contexto",
+      actorPublicId: ACTOR_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+    await organizationRepository.insert(company);
+    await membershipRepository.insert(
+      Membership.create({
+        identityPublicId: IDENTITY_PUBLIC_ID,
+        organizationPublicId: company.getPublicId().toString(),
+        profile: "CUSTOMER",
+        scope: "ORGANIZATION_ONLY",
+        actorPublicId: ACTOR_PUBLIC_ID,
+        correlationId: CORRELATION_ID
+      })
+    );
+
+    const esperado = await getPortalContextService.execute(IDENTITY_PUBLIC_ID);
+    const devolvido = await service.execute(IDENTITY_PUBLIC_ID, company.getPublicId().toString());
+
+    expect(devolvido).toEqual(esperado);
+  });
+
+  it("Membership ORGANIZATION_ONLY em BUSINESS_GROUP: contexto devolvido tem o grupo e NENHUMA filha", async () => {
+    // É esta propriedade que a rota tenant-scope usa para não expandir
+    // filhas que a Identity não alcança (C-1).
+    const membershipRepository = new InMemoryMembershipRepository();
+    const organizationRepository = new InMemoryOrganizationRepository();
+    const group = Organization.create({
+      type: "BUSINESS_GROUP",
+      legalName: "Grupo Sem Descendencia",
+      actorPublicId: ACTOR_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+    const child = Organization.create({
+      type: "COMPANY",
+      legalName: "Filha Inalcancavel",
+      actorPublicId: ACTOR_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+    await organizationRepository.insert(group);
+    await organizationRepository.insert(child);
+    const relationship = OrganizationRelationship.create({
+      parentOrganizationPublicId: group.getPublicId().toString(),
+      childOrganizationPublicId: child.getPublicId().toString(),
+      actorPublicId: ACTOR_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    });
+    class RelRepo implements OrganizationRelationshipRepository {
+      public async existsByChildOrganizationPublicId(): Promise<boolean> {
+        return true;
+      }
+      public async findChildrenByParentPublicId(): Promise<OrganizationRelationship[]> {
+        return [relationship];
+      }
+      public async insert(): Promise<void> {
+        /* não usado */
+      }
+    }
+    await membershipRepository.insert(
+      Membership.create({
+        identityPublicId: IDENTITY_PUBLIC_ID,
+        organizationPublicId: group.getPublicId().toString(),
+        profile: "CUSTOMER",
+        scope: "ORGANIZATION_ONLY",
+        actorPublicId: ACTOR_PUBLIC_ID,
+        correlationId: CORRELATION_ID
+      })
+    );
+    const service = new RequireOrganizationAccessService(
+      new GetPortalContextService(membershipRepository, organizationRepository, new RelRepo())
+    );
+
+    const contexto = await service.execute(IDENTITY_PUBLIC_ID, group.getPublicId().toString());
+
+    expect(contexto.organizations.map((o) => o.publicId)).toEqual([group.getPublicId().toString()]);
+    expect(contexto.organizations.map((o) => o.publicId)).not.toContain(child.getPublicId().toString());
   });
 });

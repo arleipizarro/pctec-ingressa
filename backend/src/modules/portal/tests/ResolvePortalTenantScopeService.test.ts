@@ -1,29 +1,44 @@
 import { describe, it, expect } from "vitest";
 import { ResolvePortalTenantScopeService } from "../application/ResolvePortalTenantScopeService.js";
+import { GetPortalContextService } from "../application/GetPortalContextService.js";
+import { RequireOrganizationAccessService } from "../application/RequireOrganizationAccessService.js";
 import { GetActiveOrganizationExternalReferenceService } from "../../organization/application/GetActiveOrganizationExternalReferenceService.js";
 import { OrganizationAccessDeniedError } from "../domain/errors/PortalErrors.js";
 import { OrganizationExternalReferenceNotFoundError } from "../../organization/domain/errors/OrganizationExternalReferenceErrors.js";
 import { Organization } from "../../organization/domain/Organization.js";
+import { Membership } from "../../organization/domain/Membership.js";
 import { OrganizationRelationship } from "../../organization/domain/OrganizationRelationship.js";
 import { OrganizationExternalReference } from "../../organization/domain/OrganizationExternalReference.js";
 import type { OrganizationRepository } from "../../organization/domain/OrganizationRepository.js";
 import type { OrganizationRelationshipRepository } from "../../organization/domain/OrganizationRelationshipRepository.js";
 import type { OrganizationExternalReferenceRepository } from "../../organization/domain/OrganizationExternalReferenceRepository.js";
+import type { MembershipRepository } from "../../organization/domain/MembershipRepository.js";
 import type { PublicId } from "../../organization/domain/value-objects/PublicId.js";
 import type { SystemCode } from "../../organization/domain/value-objects/SystemCode.js";
 import type { EntityType } from "../../organization/domain/value-objects/EntityType.js";
 import type { LegacyId } from "../../organization/domain/value-objects/LegacyId.js";
 import type { OrganizationType } from "../../organization/domain/value-objects/OrganizationType.js";
 import type { DocumentNumber } from "../../organization/domain/value-objects/DocumentNumber.js";
+import type { MembershipProfile } from "../../organization/domain/value-objects/MembershipProfile.js";
 
 /**
- * Testes unitários de `ResolvePortalTenantScopeService` — P1D (v0.7.x).
+ * Testes unitários de `ResolvePortalTenantScopeService` — P1D (v0.7.x),
+ * revisados após o achado C-1.
+ *
+ * **O conjunto autorizado NÃO é montado à mão nestes testes.** Ele é
+ * derivado do `PortalContext` real, calculado por
+ * `GetPortalContextService` a partir de `Membership`s de verdade — a
+ * mesma cadeia que a rota usa em produção. Sem isso, um teste que
+ * passasse um `Set` construído manualmente provaria apenas que o filtro
+ * existe, nunca que ele reflete o `scope` do Membership — que é
+ * exatamente onde estava o defeito.
  *
  * Fakes 100% em memória: nenhum destes testes toca SQL, mysql2, rede ou
  * o ambiente DEV. Os UUIDs do piloto AFIP aparecem só como fixtures
  * legíveis — nenhuma regra do service depende deles.
  */
 
+const IDENTITY_PUBLIC_ID = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const ACTOR_PUBLIC_ID = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const CORRELATION_ID = "8f14e45f-ceea-467e-a1a3-000000000001";
 
@@ -50,6 +65,34 @@ class InMemoryOrganizationRelationshipRepository implements OrganizationRelation
   }
   public async insert(relationship: OrganizationRelationship): Promise<void> {
     this.stored.push(relationship);
+  }
+}
+
+class InMemoryMembershipRepository implements MembershipRepository {
+  public readonly stored: Membership[] = [];
+  public async existsByIdentityOrganizationAndProfile(
+    identityPublicId: string,
+    organizationPublicId: string,
+    profile: MembershipProfile
+  ): Promise<boolean> {
+    return this.stored.some(
+      (m) =>
+        m.getIdentityPublicId() === identityPublicId &&
+        m.getOrganizationPublicId() === organizationPublicId &&
+        m.getProfile().equals(profile)
+    );
+  }
+  public async findAllByIdentityPublicId(identityPublicId: string): Promise<Membership[]> {
+    return this.stored.filter((m) => m.getIdentityPublicId() === identityPublicId);
+  }
+  public async findActiveByIdentityPublicId(identityPublicId: string): Promise<Membership[]> {
+    return this.stored.filter((m) => m.getIdentityPublicId() === identityPublicId && m.isActive());
+  }
+  public async findByPublicId(publicId: PublicId): Promise<Membership | undefined> {
+    return this.stored.find((m) => m.getPublicId().equals(publicId));
+  }
+  public async insert(membership: Membership): Promise<void> {
+    this.stored.push(membership);
   }
 }
 
@@ -134,19 +177,71 @@ interface Fixture {
   readonly organizationRepository: InMemoryOrganizationRepository;
   readonly relationshipRepository: InMemoryOrganizationRelationshipRepository;
   readonly referenceRepository: InMemoryOrganizationExternalReferenceRepository;
+  readonly membershipRepository: InMemoryMembershipRepository;
   readonly service: ResolvePortalTenantScopeService;
+  readonly requireOrganizationAccessService: RequireOrganizationAccessService;
+  /**
+   * Reproduz o pipeline REAL da rota: autoriza a seleção e usa o
+   * `PortalContext` devolvido como conjunto autorizado. É por aqui que
+   * todo teste de escopo passa — nunca por um `Set` montado à mão.
+   */
+  readonly resolverComoNaRota: (organizationPublicId: string) => Promise<
+    Awaited<ReturnType<ResolvePortalTenantScopeService["execute"]>>
+  >;
 }
 
 function buildFixture(): Fixture {
   const organizationRepository = new InMemoryOrganizationRepository();
   const relationshipRepository = new InMemoryOrganizationRelationshipRepository();
   const referenceRepository = new InMemoryOrganizationExternalReferenceRepository();
+  const membershipRepository = new InMemoryMembershipRepository();
+
+  const getPortalContextService = new GetPortalContextService(
+    membershipRepository,
+    organizationRepository,
+    relationshipRepository
+  );
+  const requireOrganizationAccessService = new RequireOrganizationAccessService(getPortalContextService);
   const service = new ResolvePortalTenantScopeService(
     organizationRepository,
     relationshipRepository,
     new GetActiveOrganizationExternalReferenceService(referenceRepository)
   );
-  return { organizationRepository, relationshipRepository, referenceRepository, service };
+
+  const resolverComoNaRota = async (organizationPublicId: string) => {
+    const portalContext = await requireOrganizationAccessService.execute(IDENTITY_PUBLIC_ID, organizationPublicId);
+    return service.execute(
+      organizationPublicId,
+      new Set(portalContext.organizations.map((organization) => organization.publicId))
+    );
+  };
+
+  return {
+    organizationRepository,
+    relationshipRepository,
+    referenceRepository,
+    membershipRepository,
+    service,
+    requireOrganizationAccessService,
+    resolverComoNaRota
+  };
+}
+
+async function darMembership(
+  fixture: Fixture,
+  organizationPublicId: string,
+  scope: "ORGANIZATION_ONLY" | "ORGANIZATION_AND_DESCENDANTS"
+): Promise<void> {
+  await fixture.membershipRepository.insert(
+    Membership.create({
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      organizationPublicId,
+      profile: "CUSTOMER",
+      scope,
+      actorPublicId: ACTOR_PUBLIC_ID,
+      correlationId: CORRELATION_ID
+    })
+  );
 }
 
 /**
@@ -155,7 +250,7 @@ function buildFixture(): Fixture {
  * do DEV real (77/75/78/76) só para deixar o teste legível — nenhuma
  * regra depende dos valores.
  */
-function buildAfipGroup(fixture: Fixture) {
+async function buildAfipGroup(fixture: Fixture) {
   const group = createOrganization("BUSINESS_GROUP", "ASSOCIACAO FUNDO DE INCENTIVO A PESQUISA", {
     tradeName: "AFIP"
   });
@@ -166,13 +261,13 @@ function buildAfipGroup(fixture: Fixture) {
     { organization: createOrganization("COMPANY", "AFIP SANTANA", { tradeName: "AFIP - SANTANA" }), legacyId: 76 }
   ];
 
-  void fixture.organizationRepository.insert(group);
+  await fixture.organizationRepository.insert(group);
   for (const child of children) {
-    void fixture.organizationRepository.insert(child.organization);
-    void fixture.referenceRepository.insert(
+    await fixture.organizationRepository.insert(child.organization);
+    await fixture.referenceRepository.insert(
       createReference(child.organization.getPublicId().toString(), child.legacyId)
     );
-    void fixture.relationshipRepository.insert(
+    await fixture.relationshipRepository.insert(
       OrganizationRelationship.create({
         parentOrganizationPublicId: group.getPublicId().toString(),
         childOrganizationPublicId: child.organization.getPublicId().toString(),
@@ -186,17 +281,160 @@ function buildAfipGroup(fixture: Fixture) {
 }
 
 // ---------------------------------------------------------------------------
+// C-1 — o scope do Membership decide o alcance do grupo
+// ---------------------------------------------------------------------------
+
+describe("ResolvePortalTenantScopeService — escopo respeita o MembershipScope (C-1)", () => {
+  it("C1-a. Membership ORGANIZATION_ONLY no BUSINESS_GROUP não alcança NENHUMA filha → 403", async () => {
+    const fixture = buildFixture();
+    const { group } = await buildAfipGroup(fixture);
+    // "alcance comercial limitado à própria Organization" (MembershipScope).
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_ONLY");
+
+    // O grupo ESTÁ no PortalContext (o acesso à seleção é legítimo)...
+    const contexto = await fixture.requireOrganizationAccessService.execute(
+      IDENTITY_PUBLIC_ID,
+      group.getPublicId().toString()
+    );
+    expect(contexto.organizations.map((o) => o.publicId)).toEqual([group.getPublicId().toString()]);
+
+    // ...mas nenhuma filha é alcançável, então não há escopo comercial.
+    await expect(fixture.resolverComoNaRota(group.getPublicId().toString())).rejects.toBeInstanceOf(
+      OrganizationAccessDeniedError
+    );
+  });
+
+  it("C1-b. ORGANIZATION_ONLY: nenhuma referência comercial de filha é sequer consultada", async () => {
+    const fixture = buildFixture();
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_ONLY");
+
+    await expect(fixture.resolverComoNaRota(group.getPublicId().toString())).rejects.toBeInstanceOf(
+      OrganizationAccessDeniedError
+    );
+    // Nem o legacyId nem o nome de qualquer filha chegam a existir.
+    expect(fixture.referenceRepository.lookups).toHaveLength(0);
+  });
+
+  it("C1-c. Membership AND_DESCENDANTS alcança somente as filhas presentes no PortalContext", async () => {
+    const fixture = buildFixture();
+    const { group, children } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+
+    // Uma quinta filha canônica que o contexto NÃO alcança: INACTIVE, logo
+    // GetPortalContextService a exclui (defesa em profundidade).
+    const foraDoContexto = createOrganization("COMPANY", "AFIP DESATIVADA", { status: "INACTIVE" });
+    await fixture.organizationRepository.insert(foraDoContexto);
+    await fixture.referenceRepository.insert(createReference(foraDoContexto.getPublicId().toString(), 999));
+    await fixture.relationshipRepository.insert(
+      OrganizationRelationship.create({
+        parentOrganizationPublicId: group.getPublicId().toString(),
+        childOrganizationPublicId: foraDoContexto.getPublicId().toString(),
+        actorPublicId: ACTOR_PUBLIC_ID,
+        correlationId: CORRELATION_ID
+      })
+    );
+
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
+
+    expect(scope.organizations).toHaveLength(4);
+    expect(scope.organizations.map((o) => o.publicId).sort()).toEqual(
+      children.map((c) => c.organization.getPublicId().toString()).sort()
+    );
+    expect(scope.organizations.some((o) => o.publicId === foraDoContexto.getPublicId().toString())).toBe(false);
+  });
+
+  it("C1-d. filha canônica fora do PortalContext nunca tem a referência consultada", async () => {
+    const fixture = buildFixture();
+    const { group, children } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+
+    const foraDoContexto = createOrganization("COMPANY", "AFIP DESATIVADA", { status: "INACTIVE" });
+    await fixture.organizationRepository.insert(foraDoContexto);
+    await fixture.referenceRepository.insert(createReference(foraDoContexto.getPublicId().toString(), 999));
+    await fixture.relationshipRepository.insert(
+      OrganizationRelationship.create({
+        parentOrganizationPublicId: group.getPublicId().toString(),
+        childOrganizationPublicId: foraDoContexto.getPublicId().toString(),
+        actorPublicId: ACTOR_PUBLIC_ID,
+        correlationId: CORRELATION_ID
+      })
+    );
+
+    await fixture.resolverComoNaRota(group.getPublicId().toString());
+
+    const consultadas = fixture.referenceRepository.lookups.map((l) => l.organizationPublicId);
+    expect(consultadas).not.toContain(foraDoContexto.getPublicId().toString());
+    expect(consultadas.sort()).toEqual(children.map((c) => c.organization.getPublicId().toString()).sort());
+  });
+
+  it("C1-e. piloto AFIP com AND_DESCENDANTS continua devolvendo as QUATRO empresas", async () => {
+    const fixture = buildFixture();
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
+
+    expect(scope.selection.type).toBe("BUSINESS_GROUP");
+    expect(scope.selection.tradeName).toBe("AFIP");
+    expect(scope.organizations).toHaveLength(4);
+    expect(scope.organizations.map((o) => o.legacyId).sort((a, b) => a - b)).toEqual([75, 76, 77, 78]);
+  });
+
+  it("C1-f. consolidação sem nenhuma filha autorizada falha fechada — nunca escopo vazio", async () => {
+    const fixture = buildFixture();
+    // Grupo autorizado, porém sem nenhuma relação canônica.
+    const group = createOrganization("BUSINESS_GROUP", "GRUPO RECEM CADASTRADO", { tradeName: "NOVO" });
+    await fixture.organizationRepository.insert(group);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+
+    await expect(fixture.resolverComoNaRota(group.getPublicId().toString())).rejects.toBeInstanceOf(
+      OrganizationAccessDeniedError
+    );
+  });
+
+  it("C1-g. o conjunto autorizado é obrigatório: sem ele o service não expande nada", async () => {
+    const fixture = buildFixture();
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+
+    // Chamada direta com conjunto vazio — simula um chamador futuro que
+    // esquecesse de propagar o contexto. Falha fechada, nunca "expande
+    // tudo por padrão".
+    await expect(fixture.service.execute(group.getPublicId().toString(), new Set())).rejects.toBeInstanceOf(
+      OrganizationAccessDeniedError
+    );
+    expect(fixture.referenceRepository.lookups).toHaveLength(0);
+  });
+
+  it("C1-h. conjunto ausente/inválido (chamador JS puro) → 403, nunca TypeError nem expansão", async () => {
+    const fixture = buildFixture();
+    const { group } = await buildAfipGroup(fixture);
+
+    // O TypeScript exige o parâmetro; esta é a defesa em profundidade
+    // para um chamador que o omitisse em tempo de execução.
+    for (const invalido of [undefined, null, [], "tudo"]) {
+      await expect(
+        fixture.service.execute(group.getPublicId().toString(), invalido as unknown as ReadonlySet<string>)
+      ).rejects.toBeInstanceOf(OrganizationAccessDeniedError);
+    }
+    expect(fixture.referenceRepository.lookups).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // COMPANY — comportamento individual (compatibilidade com P1A.1)
 // ---------------------------------------------------------------------------
 
 describe("ResolvePortalTenantScopeService — seleção COMPANY", () => {
-  it("A. COMPANY resolve exatamente uma organização, com o próprio legacyId", async () => {
+  it("A. COMPANY autorizada resolve exatamente uma organização, com o próprio legacyId", async () => {
     const fixture = buildFixture();
     const company = createOrganization("COMPANY", "AFIP BOSQUE", { tradeName: "AFIP - BOSQUE" });
     await fixture.organizationRepository.insert(company);
     await fixture.referenceRepository.insert(createReference(company.getPublicId().toString(), 75));
+    await darMembership(fixture, company.getPublicId().toString(), "ORGANIZATION_ONLY");
 
-    const scope = await fixture.service.execute(company.getPublicId().toString());
+    const scope = await fixture.resolverComoNaRota(company.getPublicId().toString());
 
     expect(scope.selection.type).toBe("COMPANY");
     expect(scope.selection.publicId).toBe(company.getPublicId().toString());
@@ -205,12 +443,26 @@ describe("ResolvePortalTenantScopeService — seleção COMPANY", () => {
     expect(scope.organizations[0]?.publicId).toBe(company.getPublicId().toString());
   });
 
-  it("B. COMPANY sem referência comercial ACTIVE → falha fechada (404 de domínio)", async () => {
+  it("A-b. COMPANY filha continua selecionável individualmente sob AND_DESCENDANTS", async () => {
+    const fixture = buildFixture();
+    const { group, children } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
+    const bosque = children[1]!.organization;
+
+    const scope = await fixture.resolverComoNaRota(bosque.getPublicId().toString());
+
+    expect(scope.selection.type).toBe("COMPANY");
+    expect(scope.organizations).toHaveLength(1);
+    expect(scope.organizations[0]?.legacyId).toBe(75);
+  });
+
+  it("B. COMPANY autorizada sem referência comercial ACTIVE → falha fechada (404 de domínio)", async () => {
     const fixture = buildFixture();
     const company = createOrganization("COMPANY", "PCTEC");
     await fixture.organizationRepository.insert(company);
+    await darMembership(fixture, company.getPublicId().toString(), "ORGANIZATION_ONLY");
 
-    await expect(fixture.service.execute(company.getPublicId().toString())).rejects.toBeInstanceOf(
+    await expect(fixture.resolverComoNaRota(company.getPublicId().toString())).rejects.toBeInstanceOf(
       OrganizationExternalReferenceNotFoundError
     );
   });
@@ -220,12 +472,26 @@ describe("ResolvePortalTenantScopeService — seleção COMPANY", () => {
     const company = createOrganization("COMPANY", "AFIP BOSQUE");
     await fixture.organizationRepository.insert(company);
     await fixture.referenceRepository.insert(createReference(company.getPublicId().toString(), 75));
+    await darMembership(fixture, company.getPublicId().toString(), "ORGANIZATION_ONLY");
 
-    await fixture.service.execute(company.getPublicId().toString());
+    await fixture.resolverComoNaRota(company.getPublicId().toString());
 
     // Uma única resolução de referência — a da própria COMPANY.
     expect(fixture.referenceRepository.lookups).toHaveLength(1);
     expect(fixture.referenceRepository.lookups[0]?.organizationPublicId).toBe(company.getPublicId().toString());
+  });
+
+  it("C-b. COMPANY fora do conjunto autorizado → 403, referência nunca consultada", async () => {
+    const fixture = buildFixture();
+    const company = createOrganization("COMPANY", "EMPRESA DE OUTRA IDENTITY");
+    await fixture.organizationRepository.insert(company);
+    await fixture.referenceRepository.insert(createReference(company.getPublicId().toString(), 999));
+    // Nenhum Membership para esta Identity.
+
+    await expect(fixture.resolverComoNaRota(company.getPublicId().toString())).rejects.toBeInstanceOf(
+      OrganizationAccessDeniedError
+    );
+    expect(fixture.referenceRepository.lookups).toHaveLength(0);
   });
 });
 
@@ -234,24 +500,12 @@ describe("ResolvePortalTenantScopeService — seleção COMPANY", () => {
 // ---------------------------------------------------------------------------
 
 describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
-  it("D. BUSINESS_GROUP expande em todas as COMPANY filhas ACTIVE", async () => {
-    const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
-
-    const scope = await fixture.service.execute(group.getPublicId().toString());
-
-    expect(scope.selection.type).toBe("BUSINESS_GROUP");
-    expect(scope.selection.tradeName).toBe("AFIP");
-    expect(scope.organizations).toHaveLength(4);
-    expect(scope.organizations.map((o) => o.legacyId).sort((a, b) => a - b)).toEqual([75, 76, 77, 78]);
-    expect(scope.organizations.every((o) => o.type === "COMPANY")).toBe(true);
-  });
-
   it("E. o próprio BUSINESS_GROUP nunca aparece em organizations[] nem tem legacyId resolvido", async () => {
     const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
 
-    const scope = await fixture.service.execute(group.getPublicId().toString());
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
 
     expect(scope.organizations.some((o) => o.publicId === group.getPublicId().toString())).toBe(false);
     expect(fixture.referenceRepository.lookups.map((l) => l.organizationPublicId)).not.toContain(
@@ -261,7 +515,8 @@ describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
 
   it("F. COMPANY filha INACTIVE é ignorada — nunca falha a consolidação", async () => {
     const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
 
     const inativa = createOrganization("COMPANY", "AFIP ENCERRADA", { status: "INACTIVE" });
     await fixture.organizationRepository.insert(inativa);
@@ -274,19 +529,19 @@ describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
       })
     );
 
-    const scope = await fixture.service.execute(group.getPublicId().toString());
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
 
     expect(scope.organizations).toHaveLength(4);
-    // Nem sequer tenta resolver referência de uma filha INACTIVE.
     expect(fixture.referenceRepository.lookups.map((l) => l.organizationPublicId)).not.toContain(
       inativa.getPublicId().toString()
     );
   });
 
-  it("G. FAIL-CLOSED: filha ACTIVE sem referência comercial derruba a consolidação inteira", async () => {
+  it("G. FAIL-CLOSED: filha autorizada e ACTIVE sem referência derruba a consolidação inteira", async () => {
     const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
+    const { group } = await buildAfipGroup(fixture);
 
+    // Filha ACTIVE e alcançável pelo contexto, porém sem referência.
     const semReferencia = createOrganization("COMPANY", "AFIP NOVA");
     await fixture.organizationRepository.insert(semReferencia);
     await fixture.relationshipRepository.insert(
@@ -297,17 +552,19 @@ describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
         correlationId: CORRELATION_ID
       })
     );
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
 
     // Nunca "consolida o que der": um total silenciosamente incompleto
     // seria lido como verdade pelo usuário.
-    await expect(fixture.service.execute(group.getPublicId().toString())).rejects.toBeInstanceOf(
+    await expect(fixture.resolverComoNaRota(group.getPublicId().toString())).rejects.toBeInstanceOf(
       OrganizationExternalReferenceNotFoundError
     );
   });
 
   it("H. filha alcançada por relações duplicadas aparece uma única vez", async () => {
     const fixture = buildFixture();
-    const { group, children } = buildAfipGroup(fixture);
+    const { group, children } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
     const repetida = children[0]!.organization;
 
     await fixture.relationshipRepository.insert(
@@ -319,7 +576,7 @@ describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
       })
     );
 
-    const scope = await fixture.service.execute(group.getPublicId().toString());
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
 
     expect(scope.organizations).toHaveLength(4);
     const publicIds = scope.organizations.map((o) => o.publicId);
@@ -331,22 +588,12 @@ describe("ResolvePortalTenantScopeService — seleção BUSINESS_GROUP", () => {
     ).toHaveLength(1);
   });
 
-  it("I. BUSINESS_GROUP sem nenhuma filha ACTIVE → organizations vazio, sem erro", async () => {
-    const fixture = buildFixture();
-    const group = createOrganization("BUSINESS_GROUP", "GRUPO RECEM CADASTRADO", { tradeName: "NOVO" });
-    await fixture.organizationRepository.insert(group);
-
-    const scope = await fixture.service.execute(group.getPublicId().toString());
-
-    expect(scope.selection.type).toBe("BUSINESS_GROUP");
-    expect(scope.organizations).toEqual([]);
-  });
-
   it("J. sempre resolve PCTEC_PORTAL/clientes — nunca clientes_grupo", async () => {
     const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
 
-    await fixture.service.execute(group.getPublicId().toString());
+    await fixture.resolverComoNaRota(group.getPublicId().toString());
 
     expect(fixture.referenceRepository.lookups).toHaveLength(4);
     for (const lookup of fixture.referenceRepository.lookups) {
@@ -365,9 +612,12 @@ describe("ResolvePortalTenantScopeService — defesa em profundidade", () => {
     const fixture = buildFixture();
     const inexistente = createOrganization("COMPANY", "NAO PERSISTIDA");
 
-    await expect(fixture.service.execute(inexistente.getPublicId().toString())).rejects.toBeInstanceOf(
-      OrganizationAccessDeniedError
-    );
+    await expect(
+      fixture.service.execute(
+        inexistente.getPublicId().toString(),
+        new Set([inexistente.getPublicId().toString()])
+      )
+    ).rejects.toBeInstanceOf(OrganizationAccessDeniedError);
   });
 
   it("L. Organization INACTIVE selecionada → ORGANIZATION_ACCESS_DENIED, nunca resolve referência", async () => {
@@ -376,17 +626,20 @@ describe("ResolvePortalTenantScopeService — defesa em profundidade", () => {
     await fixture.organizationRepository.insert(inativa);
     await fixture.referenceRepository.insert(createReference(inativa.getPublicId().toString(), 99));
 
-    await expect(fixture.service.execute(inativa.getPublicId().toString())).rejects.toBeInstanceOf(
-      OrganizationAccessDeniedError
-    );
+    // Mesmo que um chamador insistisse em declará-la autorizada, o
+    // status INACTIVE barra antes de qualquer resolução.
+    await expect(
+      fixture.service.execute(inativa.getPublicId().toString(), new Set([inativa.getPublicId().toString()]))
+    ).rejects.toBeInstanceOf(OrganizationAccessDeniedError);
     expect(fixture.referenceRepository.lookups).toHaveLength(0);
   });
 
   it("M. resultado nunca carrega internalId nem qualquer campo além do contrato", async () => {
     const fixture = buildFixture();
-    const { group } = buildAfipGroup(fixture);
+    const { group } = await buildAfipGroup(fixture);
+    await darMembership(fixture, group.getPublicId().toString(), "ORGANIZATION_AND_DESCENDANTS");
 
-    const scope = await fixture.service.execute(group.getPublicId().toString());
+    const scope = await fixture.resolverComoNaRota(group.getPublicId().toString());
 
     expect(Object.keys(scope).sort()).toEqual(["organizations", "selection"]);
     expect(Object.keys(scope.selection).sort()).toEqual(["legalName", "publicId", "tradeName", "type"]);
@@ -399,9 +652,16 @@ describe("ResolvePortalTenantScopeService — defesa em profundidade", () => {
     expect(raw).not.toContain("identityPublicId");
   });
 
-  it("N. este service nunca recebe identityPublicId — autorização é do boundary anterior", () => {
-    // Prova estrutural do boundary: a assinatura pública tem exatamente
-    // um parâmetro, o organizationPublicId já autorizado.
-    expect(ResolvePortalTenantScopeService.prototype.execute.length).toBe(1);
+  it("N. o service exige o conjunto autorizado na assinatura — nunca decide sozinho o alcance", () => {
+    // Substitui a guarda anterior, que afirmava `execute.length === 1`
+    // como se "não receber contexto" fosse virtude de boundary. Era
+    // justamente a assinatura que impedia respeitar o MembershipScope
+    // (achado C-1). O boundary correto continua: o service não CALCULA
+    // autorização (não recebe identityPublicId, não consulta Membership),
+    // mas é OBRIGADO a receber e respeitar o que já foi autorizado.
+    expect(ResolvePortalTenantScopeService.prototype.execute.length).toBe(2);
+    const construtor = ResolvePortalTenantScopeService.prototype.constructor.toString();
+    expect(construtor).not.toContain("MembershipRepository");
+    expect(construtor).not.toContain("identityPublicId");
   });
 });

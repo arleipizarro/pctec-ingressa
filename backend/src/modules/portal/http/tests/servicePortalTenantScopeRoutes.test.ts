@@ -15,6 +15,7 @@ import type {
   PortalTenantScopeResult,
   ResolvePortalTenantScopeService
 } from "../../application/ResolvePortalTenantScopeService.js";
+import type { PortalContextResult } from "../../application/GetPortalContextService.js";
 import { ApplicationAccessDeniedError } from "../../../authorization/domain/errors/AuthorizationErrors.js";
 import { OrganizationAccessDeniedError } from "../../domain/errors/PortalErrors.js";
 import { OrganizationExternalReferenceNotFoundError } from "../../../organization/domain/errors/OrganizationExternalReferenceErrors.js";
@@ -110,22 +111,42 @@ class FakeAuthorizeApplicationAccessService {
 class FakeRequireOrganizationAccessService {
   public calls: Array<{ identityPublicId: string; organizationPublicId: string }> = [];
   public shouldAllow = true;
+  /**
+   * Contexto devolvido após autorizar — é o que a rota repassa como
+   * conjunto autorizado ao tenant-scope (C-1). Por padrão, o grupo
+   * AFIP com as duas filhas alcançáveis.
+   */
+  public context: PortalContextResult = {
+    identityPublicId: VALID_IDENTITY_PUBLIC_ID,
+    organizations: [
+      { publicId: AFIP_GROUP_PUBLIC_ID, type: "BUSINESS_GROUP", legalName: "AFIP", tradeName: "AFIP" },
+      { publicId: BELGICA_PUBLIC_ID, type: "COMPANY", legalName: "AFIP BELGICA", tradeName: "AFIP - BELGICA" },
+      { publicId: BOSQUE_PUBLIC_ID, type: "COMPANY", legalName: "AFIP BOSQUE", tradeName: "AFIP - BOSQUE" }
+    ]
+  };
 
-  public async execute(identityPublicId: string, organizationPublicId: string): Promise<void> {
+  public async execute(identityPublicId: string, organizationPublicId: string): Promise<PortalContextResult> {
     this.calls.push({ identityPublicId, organizationPublicId });
     if (!this.shouldAllow) {
       throw new OrganizationAccessDeniedError();
     }
+    return this.context;
   }
 }
 
 class FakeResolvePortalTenantScopeService {
   public calls: string[] = [];
+  /** Conjuntos autorizados recebidos, na ordem — prova de propagação (C-1). */
+  public authorizedSets: Array<readonly string[]> = [];
   public result: PortalTenantScopeResult = GROUP_SCOPE;
   public failure: Error | undefined;
 
-  public async execute(organizationPublicId: string): Promise<PortalTenantScopeResult> {
+  public async execute(
+    organizationPublicId: string,
+    authorizedOrganizationPublicIds: ReadonlySet<string>
+  ): Promise<PortalTenantScopeResult> {
     this.calls.push(organizationPublicId);
+    this.authorizedSets.push([...authorizedOrganizationPublicIds]);
     if (this.failure !== undefined) {
       throw this.failure;
     }
@@ -339,15 +360,45 @@ describe("GET /api/v1/service/portal/identities/:id/organizations/:org/tenant-sc
     expect(extractError(body).code).toBe("ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND");
   });
 
-  // K. grupo sem filhas ativas → 200 com lista vazia (estado legítimo)
-  it("K. grupo sem filhas ACTIVE → 200 com organizations vazio", async () => {
-    tenantScopeService.result = { selection: GROUP_SCOPE.selection, organizations: [] };
+  // K. nenhuma filha autorizada → 403, nunca 200 com lista vazia (C-1)
+  it("K. grupo sem nenhuma filha autorizada → 403 ORGANIZATION_ACCESS_DENIED, nunca escopo vazio", async () => {
+    tenantScopeService.failure = new OrganizationAccessDeniedError();
     const res = await fetch(tenantScopeUrl(baseUrl, VALID_IDENTITY_PUBLIC_ID, AFIP_GROUP_PUBLIC_ID), {
       headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: REAL_SERVICE_CREDENTIAL }
     });
     const body = (await res.json()) as Record<string, unknown>;
+    expect(res.status).toBe(403);
+    expect(extractError(body).code).toBe("ORGANIZATION_ACCESS_DENIED");
+    // Nenhuma referência comercial é revelada junto com a negativa.
+    expect(body).not.toHaveProperty("organizations");
+    expect(body).not.toHaveProperty("selection");
+  });
+
+  // K-b. o PortalContext autorizado atravessa o pipeline (C-1)
+  it("K-b. a rota repassa ao tenant-scope exatamente os publicId do PortalContext que autorizou", async () => {
+    const res = await fetch(tenantScopeUrl(baseUrl, VALID_IDENTITY_PUBLIC_ID, AFIP_GROUP_PUBLIC_ID), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: REAL_SERVICE_CREDENTIAL }
+    });
     expect(res.status).toBe(200);
-    expect(body["organizations"]).toEqual([]);
+    expect(tenantScopeService.authorizedSets).toHaveLength(1);
+    expect([...tenantScopeService.authorizedSets[0]!].sort()).toEqual(
+      organizationAccessService.context.organizations.map((o) => o.publicId).sort()
+    );
+  });
+
+  // K-c. contexto restrito (ORGANIZATION_ONLY) chega restrito ao service
+  it("K-c. PortalContext só com o grupo (ORGANIZATION_ONLY) é propagado sem filhas", async () => {
+    organizationAccessService.context = {
+      identityPublicId: VALID_IDENTITY_PUBLIC_ID,
+      organizations: [
+        { publicId: AFIP_GROUP_PUBLIC_ID, type: "BUSINESS_GROUP", legalName: "AFIP", tradeName: "AFIP" }
+      ]
+    };
+    await fetch(tenantScopeUrl(baseUrl, VALID_IDENTITY_PUBLIC_ID, AFIP_GROUP_PUBLIC_ID), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: REAL_SERVICE_CREDENTIAL }
+    });
+    // A rota nunca "completa" o contexto com as filhas canônicas.
+    expect(tenantScopeService.authorizedSets[0]).toEqual([AFIP_GROUP_PUBLIC_ID]);
   });
 
   // L. a rota não reimplementa hierarquia
@@ -364,6 +415,9 @@ describe("GET /api/v1/service/portal/identities/:id/organizations/:org/tenant-sc
     expect(source).not.toContain("isBusinessGroup");
     expect(source).not.toContain("OrganizationRepository");
     expect(source).not.toContain("clientes");
+    // E não recalcula o contexto: usa o que o boundary devolveu.
+    expect(source).not.toContain("getPortalContextService");
+    expect(source).toContain("portalContext.organizations");
   });
 
   // M. rotas anteriores do namespace continuam intactas

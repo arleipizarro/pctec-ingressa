@@ -51,29 +51,54 @@ export interface PortalTenantScopeResult {
  * P1D (v0.7.x), primeira peça a suportar seleção consolidada por
  * `BUSINESS_GROUP`.
  *
- * **Boundary estrito, mesmo princípio de `GetPortalContextService` e
- * `GetActiveOrganizationExternalReferenceService`: este service NÃO faz
- * autorização.** Quando ele executa, o chamador já provou (a) que a
- * Identity tem `ApplicationAccess(PCTEC_PORTAL, USER)`
- * (`AuthorizeApplicationAccessService`) e (b) que
- * `organizationPublicId` pertence ao `PortalContext` efetivo dela
- * (`RequireOrganizationAccessService`). Ele nunca recebe nem consulta
- * `identityPublicId` — não tem como, e não deveria.
+ * **Este service não CALCULA autorização — mas é obrigado a RESPEITÁ-LA.**
+ * Ele recebe, como segundo parâmetro, o conjunto de
+ * `Organization.publicId` que a Identity chamadora efetivamente alcança
+ * (o `PortalContext` já calculado por `RequireOrganizationAccessService`,
+ * que devolve exatamente esse contexto depois de autorizar). O service
+ * nunca recomputa esse conjunto, nunca consulta `Membership`, nunca
+ * recebe `identityPublicId` — e nunca vai além dele.
+ *
+ * **Por que o conjunto autorizado é obrigatório aqui (correção de
+ * revisão, C-1):** provar que o `BUSINESS_GROUP` selecionado está no
+ * `PortalContext` NÃO prova nada sobre as filhas dele.
+ * `GetPortalContextService` só inclui as `COMPANY` descendentes quando
+ * o `Membership` tem `scope = ORGANIZATION_AND_DESCENDANTS`; um
+ * `Membership(BUSINESS_GROUP, ORGANIZATION_ONLY)` coloca o grupo no
+ * contexto e nenhuma filha. Expandir as filhas canônicas sem cruzar com
+ * o contexto transformaria esse Membership — cuja semântica é
+ * "alcance limitado à própria Organization" (`MembershipScope`) — em
+ * acesso comercial a todas as descendentes. Escalada de privilégio.
+ * A relação canônica responde "quem são as filhas"; o `PortalContext`
+ * responde "quais delas são suas". O escopo é a **interseção**.
  *
  * Fluxo:
- * 1. Carrega a `Organization` selecionada. Se não existir ou não estiver
- *    `ACTIVE`, falha com `OrganizationAccessDeniedError` (403) — nunca
- *    404, nunca uma mensagem diferenciada (defesa em profundidade: o
- *    boundary anterior já deveria ter barrado, e a resposta externa é a
- *    mesma nos dois casos).
+ * 1. Carrega a `Organization` selecionada. Se não existir, não estiver
+ *    `ACTIVE`, ou não estiver no conjunto autorizado, falha com
+ *    `OrganizationAccessDeniedError` (403) — nunca 404, nunca uma
+ *    mensagem diferenciada (a resposta externa é a mesma nos três
+ *    casos).
  * 2. `COMPANY` → o escopo é a própria Organization; resolve a referência
  *    `PCTEC_PORTAL/clientes` dela.
- * 3. `BUSINESS_GROUP` → expande nas `COMPANY` filhas pelas relações
- *    canônicas (`OrganizationRelationship`, mesma fonte de verdade já
- *    usada por `GetPortalContextService`), mantém só as `ACTIVE` e
- *    resolve a referência `PCTEC_PORTAL/clientes` de CADA uma.
+ * 3. `BUSINESS_GROUP` → percorre as filhas pelas relações canônicas
+ *    (`OrganizationRelationship`, mesma fonte de verdade já usada por
+ *    `GetPortalContextService`), mantém só as que são `ACTIVE` **e**
+ *    estão no conjunto autorizado, e resolve a referência
+ *    `PCTEC_PORTAL/clientes` de CADA uma.
  *
- * **Fail-closed absoluto (decisão desta entrega): se uma filha `ACTIVE`
+ * **Filha fora do conjunto autorizado é ignorada ANTES de qualquer
+ * resolução** — a referência dela nunca é consultada, e nem o seu
+ * `legacyId` nem o seu nome chegam a existir no resultado. Uma filha
+ * `INACTIVE` é ignorada pelo mesmo caminho (saiu do grupo).
+ *
+ * **Nenhuma filha autorizada restante ⇒ 403, nunca escopo vazio**
+ * (correção de revisão): devolver `organizations: []` faria o chamador
+ * distinguir "grupo existe, mas você não alcança nenhuma empresa" de
+ * "grupo não é seu" — informação que ele não deve ter. E um escopo
+ * vazio nunca é um estado comercial útil: não há o que consolidar.
+ * Mesmo erro, mesmo status, mesma mensagem dos demais casos negados.
+ *
+ * **Fail-closed absoluto (mantido): se uma filha AUTORIZADA e `ACTIVE`
  * não possui referência comercial `ACTIVE`, a requisição INTEIRA falha**
  * com `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` (404), propagada por
  * `GetActiveOrganizationExternalReferenceService`. Nunca "consolida o
@@ -84,18 +109,9 @@ export interface PortalTenantScopeResult {
  * (que ignora Memberships problemáticos): lá o resultado é "o que você
  * enxerga"; aqui é "a soma que você vai ler como verdade".
  *
- * **Organization `INACTIVE` nunca entra no escopo** — nem a selecionada
- * (passo 1), nem uma filha (passo 3, que a ignora silenciosamente: uma
- * empresa desativada saiu do grupo, não é uma referência faltando).
- *
  * **Deduplicação por `publicId`** — um `Map` garante que a mesma
  * `COMPANY` nunca aparece duas vezes, mesmo que as relações canônicas
  * a alcancem mais de uma vez.
- *
- * **Grupo sem nenhuma filha `ACTIVE` retorna `organizations: []`** — é
- * um estado legítimo (grupo cadastrado antes das empresas), não um
- * erro. Quem consome decide o que fazer; o Portal trata como
- * fail-closed (nenhum `clienteId` ⇒ nenhuma query comercial).
  */
 export class ResolvePortalTenantScopeService {
   public constructor(
@@ -104,10 +120,28 @@ export class ResolvePortalTenantScopeService {
     private readonly getActiveOrganizationExternalReferenceService: GetActiveOrganizationExternalReferenceService
   ) {}
 
-  public async execute(rawOrganizationPublicId: string): Promise<PortalTenantScopeResult> {
+  /**
+   * @param rawOrganizationPublicId A seleção do usuário.
+   * @param authorizedOrganizationPublicIds `Organization.publicId` que a
+   * Identity chamadora efetivamente alcança — o `PortalContext` já
+   * calculado por `RequireOrganizationAccessService`. **Nunca** uma
+   * lista fornecida pelo browser, nunca recomputada aqui.
+   */
+  public async execute(
+    rawOrganizationPublicId: string,
+    authorizedOrganizationPublicIds: ReadonlySet<string>
+  ): Promise<PortalTenantScopeResult> {
+    // Defesa em profundidade: o TypeScript já exige o conjunto, mas um
+    // chamador em JS puro (ou um wiring futuro incompleto) que o
+    // omitisse produziria um TypeError opaco em vez de uma negativa
+    // clara. Mesmo princípio dos handlers de rota, que checam
+    // parâmetros que o Express já deveria garantir.
+    const autorizados =
+      authorizedOrganizationPublicIds instanceof Set ? authorizedOrganizationPublicIds : new Set<string>();
+
     const selectedPublicId = OrganizationPublicId.fromString(rawOrganizationPublicId);
     const selected = await this.organizationRepository.findByPublicId(selectedPublicId);
-    if (selected === undefined || !selected.isActive()) {
+    if (selected === undefined || !selected.isActive() || !autorizados.has(selected.getPublicId().toString())) {
       throw new OrganizationAccessDeniedError();
     }
 
@@ -127,25 +161,38 @@ export class ResolvePortalTenantScopeService {
       };
     }
 
-    // BUSINESS_GROUP — consolida as COMPANY filhas ACTIVE.
+    // BUSINESS_GROUP — consolida a INTERSEÇÃO entre as filhas canônicas
+    // ACTIVE e o PortalContext efetivo da Identity.
     const organizationsByPublicId = new Map<string, PortalTenantScopeOrganization>();
     const childRelationships =
       await this.organizationRelationshipRepository.findChildrenByParentPublicId(selectedPublicId);
 
     for (const relationship of childRelationships) {
+      const childPublicId = relationship.getChildOrganizationPublicId().toString();
+      if (!autorizados.has(childPublicId)) {
+        // Filha canônica fora do PortalContext (ex.: Membership no grupo
+        // com scope ORGANIZATION_ONLY). Nunca resolvida, nunca contada,
+        // nunca mencionada no resultado.
+        continue;
+      }
+      if (organizationsByPublicId.has(childPublicId)) {
+        continue;
+      }
       const child = await this.organizationRepository.findByPublicId(relationship.getChildOrganizationPublicId());
       if (child === undefined || !child.isActive()) {
         // Empresa removida/desativada — saiu do grupo. Nunca é
         // "referência faltando"; nunca falha a consolidação.
         continue;
       }
-      const childPublicId = child.getPublicId().toString();
-      if (organizationsByPublicId.has(childPublicId)) {
-        continue;
-      }
-      // Fail-closed: uma filha ACTIVE sem referência comercial ACTIVE
-      // interrompe a consolidação inteira (ver nota de classe).
+      // Fail-closed: uma filha autorizada e ACTIVE sem referência
+      // comercial ACTIVE interrompe a consolidação inteira (nota de classe).
       organizationsByPublicId.set(childPublicId, await this.resolveOrganization(child));
+    }
+
+    if (organizationsByPublicId.size === 0) {
+      // Nenhuma empresa autorizada no grupo — mesmo erro externo de
+      // "esta seleção não é sua". Nunca escopo vazio (nota de classe).
+      throw new OrganizationAccessDeniedError();
     }
 
     return { selection, organizations: [...organizationsByPublicId.values()] };
@@ -153,7 +200,7 @@ export class ResolvePortalTenantScopeService {
 
   /**
    * Resolve a referência `PCTEC_PORTAL/clientes` `ACTIVE` de uma
-   * Organization já confirmada `ACTIVE`. Reaproveita
+   * Organization já confirmada `ACTIVE` e autorizada. Reaproveita
    * `GetActiveOrganizationExternalReferenceService` sem alteração — a
    * mesma peça já usada pela rota P1A.1, com o mesmo erro 404.
    */

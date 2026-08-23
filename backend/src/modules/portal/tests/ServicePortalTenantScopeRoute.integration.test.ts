@@ -63,6 +63,11 @@ describe.skipIf(!shouldRun)("ServicePortalTenantScope route (integração - requ
 
   let identityPublicId: string | undefined;
   let applicationAccessPublicId: string | undefined;
+  // Segunda Identity, com Membership ORGANIZATION_ONLY no MESMO grupo —
+  // prova real do achado C-1 contra MariaDB.
+  let restritaIdentityPublicId: string | undefined;
+  let restritaApplicationAccessPublicId: string | undefined;
+  let restritaMembershipPublicId: string | undefined;
   let groupPublicId: string | undefined;
   let companyAPublicId: string | undefined;
   let companyBPublicId: string | undefined;
@@ -228,6 +233,43 @@ describe.skipIf(!shouldRun)("ServicePortalTenantScope route (integração - requ
       })
     ).publicId;
 
+    // Identity RESTRITA: mesmo grupo, scope ORGANIZATION_ONLY. Pelo
+    // design de MembershipScope, ela alcança o grupo e NENHUMA filha.
+    const restrita = Identity.create({
+      type: "HUMAN",
+      fullName: "Fixture de Integracao - Tenant Scope Restrita v0.7.x",
+      email: `tenant-scope-restrita-${Date.now()}@example.invalid`,
+      actor: FIXTURE_SYSTEM_ACTOR,
+      correlationId: "00000000-0000-0000-0000-000000000000"
+    });
+    await identityRepository.insert(restrita);
+    restrita.activate({
+      actor: FIXTURE_SYSTEM_ACTOR,
+      expectedVersion: restrita.getVersion(),
+      correlationId: "00000000-0000-0000-0000-000000000000"
+    });
+    await identityRepository.update(restrita, 1);
+    restritaIdentityPublicId = restrita.getPublicId().toString();
+
+    restritaApplicationAccessPublicId = (
+      await grantApplicationAccessService.execute({
+        identityPublicId: restritaIdentityPublicId,
+        applicationCode: PCTEC_PORTAL_APPLICATION_CODE,
+        accessProfile: "USER",
+        grantedByIdentityPublicId: restritaIdentityPublicId
+      })
+    ).applicationAccessPublicId;
+
+    restritaMembershipPublicId = (
+      await createMembershipService.execute({
+        identityPublicId: restritaIdentityPublicId,
+        organizationPublicId: groupPublicId,
+        profile: "CUSTOMER",
+        scope: "ORGANIZATION_ONLY",
+        actorPublicId: restritaIdentityPublicId
+      })
+    ).publicId;
+
     const authorizeApplicationAccessService = new AuthorizeApplicationAccessService(
       new MariaDbApplicationRepository(pool),
       new MariaDbApplicationAccessRepository(pool)
@@ -271,9 +313,10 @@ describe.skipIf(!shouldRun)("ServicePortalTenantScope route (integração - requ
       await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
       await pool.execute(`DELETE FROM organization_external_references WHERE public_id = ?`, [publicId]);
     }
-    if (membershipPublicId !== undefined) {
-      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [membershipPublicId]);
-      await pool.execute(`DELETE FROM memberships WHERE public_id = ?`, [membershipPublicId]);
+    for (const publicId of [restritaMembershipPublicId, membershipPublicId]) {
+      if (publicId === undefined) continue;
+      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
+      await pool.execute(`DELETE FROM memberships WHERE public_id = ?`, [publicId]);
     }
     for (const publicId of relationshipPublicIds) {
       await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
@@ -284,19 +327,21 @@ describe.skipIf(!shouldRun)("ServicePortalTenantScope route (integração - requ
       await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
       await pool.execute(`DELETE FROM organizations WHERE public_id = ?`, [publicId]);
     }
-    if (applicationAccessPublicId !== undefined) {
-      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [applicationAccessPublicId]);
-      await pool.execute(`DELETE FROM application_accesses WHERE public_id = ?`, [applicationAccessPublicId]);
+    for (const publicId of [restritaApplicationAccessPublicId, applicationAccessPublicId]) {
+      if (publicId === undefined) continue;
+      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
+      await pool.execute(`DELETE FROM application_accesses WHERE public_id = ?`, [publicId]);
     }
-    if (identityPublicId !== undefined) {
-      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [identityPublicId]);
-      await pool.execute(`DELETE FROM identities WHERE public_id = ?`, [identityPublicId]);
+    for (const publicId of [restritaIdentityPublicId, identityPublicId]) {
+      if (publicId === undefined) continue;
+      await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [publicId]);
+      await pool.execute(`DELETE FROM identities WHERE public_id = ?`, [publicId]);
     }
     await pool.end();
   });
 
-  function url(organizationPublicId: string | undefined): string {
-    return `${baseUrl}/api/v1/service/portal/identities/${identityPublicId}/organizations/${organizationPublicId}/tenant-scope`;
+  function url(organizationPublicId: string | undefined, asIdentity: string | undefined = identityPublicId): string {
+    return `${baseUrl}/api/v1/service/portal/identities/${asIdentity}/organizations/${organizationPublicId}/tenant-scope`;
   }
 
   interface ScopeBody {
@@ -361,6 +406,46 @@ describe.skipIf(!shouldRun)("ServicePortalTenantScope route (integração - requ
 
   it("Organization real fora do PortalContext -> 403 ORGANIZATION_ACCESS_DENIED", async () => {
     const res = await fetch(url(outsiderCompanyPublicId), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: realServiceCredential }
+    });
+    const body = (await res.json()) as { error: { code: string } };
+
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe("ORGANIZATION_ACCESS_DENIED");
+  });
+
+  it("C-1: Membership ORGANIZATION_ONLY no grupo -> 403, nenhuma filha consolidada", async () => {
+    const res = await fetch(url(groupPublicId, restritaIdentityPublicId), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: realServiceCredential }
+    });
+    const raw = await res.text();
+
+    expect(res.status).toBe(403);
+    expect((JSON.parse(raw) as { error: { code: string } }).error.code).toBe("ORGANIZATION_ACCESS_DENIED");
+    // Nenhuma empresa do grupo é revelada junto com a negativa —
+    // nem publicId, nem legacyId, nem nome.
+    for (const vazamento of [companyAPublicId, companyBPublicId, String(LEGACY_ID_A), String(LEGACY_ID_B)]) {
+      expect(raw).not.toContain(vazamento as string);
+    }
+    expect(raw).not.toContain("organizations");
+  });
+
+  it("C-1: a MESMA seleção com AND_DESCENDANTS continua consolidando — o scope é o que muda", async () => {
+    const restrita = await fetch(url(groupPublicId, restritaIdentityPublicId), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: realServiceCredential }
+    });
+    const ampla = await fetch(url(groupPublicId), {
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: realServiceCredential }
+    });
+
+    expect(restrita.status).toBe(403);
+    expect(ampla.status).toBe(200);
+    expect(((await ampla.json()) as ScopeBody).organizations).toHaveLength(2);
+  });
+
+  it("C-1: COMPANY filha selecionada por Identity ORGANIZATION_ONLY no grupo -> 403", async () => {
+    // A filha não está no PortalContext dela — nem como seleção direta.
+    const res = await fetch(url(companyAPublicId, restritaIdentityPublicId), {
       headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: realServiceCredential }
     });
     const body = (await res.json()) as { error: { code: string } };

@@ -32,17 +32,27 @@ import { PCTEC_PORTAL_APPLICATION_CODE } from "../../application/domain/value-ob
  * requireServiceCredential                       (namespace, não duplicado)
  * → AuthorizeApplicationAccessService(identityPublicId, PCTEC_PORTAL, USER)
  * → RequireOrganizationAccessService(identityPublicId, organizationPublicId)
- * → ResolvePortalTenantScopeService(organizationPublicId)
+ *      ↳ devolve o PortalContext que usou para autorizar
+ * → ResolvePortalTenantScopeService(organizationPublicId, <ids autorizados>)
  * ```
  *
  * Os dois primeiros são EXATAMENTE os mesmos services já usados por
- * P1A.1, **nenhum alterado**: a credencial de máquina prova "quem está
- * chamando" (o Portal), nunca "em nome de quem" — por isso o Ingressa
- * recomputa `ApplicationAccess` e `OrganizationAccess` a partir do
- * `identityPublicId` recebido. `RequireOrganizationAccessService` é o
- * que garante que um `BUSINESS_GROUP` só é expandido se ele mesmo
- * estiver no `PortalContext` efetivo da Identity — nunca porque o
- * chamador pediu.
+ * P1A.1: a credencial de máquina prova "quem está chamando" (o Portal),
+ * nunca "em nome de quem" — por isso o Ingressa recomputa
+ * `ApplicationAccess` e `OrganizationAccess` a partir do
+ * `identityPublicId` recebido.
+ *
+ * **O `PortalContext` é calculado UMA vez e atravessa o pipeline
+ * (correção de revisão, C-1).** `RequireOrganizationAccessService`
+ * devolve o contexto que já usou para autorizar, e esta rota o repassa
+ * como conjunto de `publicId` autorizados. Isso resolve duas coisas de
+ * uma vez: (a) nenhuma segunda passagem pelo `MembershipRepository`;
+ * (b) — o ponto que importa — o escopo consolidado é a **interseção**
+ * entre as filhas canônicas do grupo e o que a Identity realmente
+ * alcança. Autorizar o grupo NÃO autoriza as filhas: um
+ * `Membership(BUSINESS_GROUP, ORGANIZATION_ONLY)` põe o grupo no
+ * contexto e nenhuma filha, e expandir mesmo assim seria escalada de
+ * privilégio.
  *
  * **Payload:** `selection` (o que foi escolhido) + `organizations[]` (o
  * escopo comercial efetivo, com `legacyId`). `legacyId` é o único
@@ -84,7 +94,14 @@ export function createServicePortalTenantScopeRoutes(
           requiredProfile: "USER"
         })
         .then(() => requireOrganizationAccessService.execute(identityPublicId, organizationPublicId))
-        .then(() => resolvePortalTenantScopeService.execute(organizationPublicId))
+        // O contexto devolvido é o MESMO que autorizou a requisição —
+        // nunca um recalculado depois da decisão.
+        .then((portalContext) =>
+          resolvePortalTenantScopeService.execute(
+            organizationPublicId,
+            new Set(portalContext.organizations.map((organization) => organization.publicId))
+          )
+        )
         .then((scope) => {
           res.status(200).json({
             selection: {

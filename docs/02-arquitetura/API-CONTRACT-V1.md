@@ -653,29 +653,54 @@ continua intacta, independente e sem nenhuma alteração.
 requireServiceCredential
 → AuthorizeApplicationAccessService({ identityPublicId, PCTEC_PORTAL, USER })
 → RequireOrganizationAccessService(identityPublicId, organizationPublicId)
-→ ResolvePortalTenantScopeService(organizationPublicId)
+     ↳ devolve o PortalContext que usou para autorizar
+→ ResolvePortalTenantScopeService(organizationPublicId, <publicIds autorizados>)
 ```
 
-Os dois primeiros são EXATAMENTE os mesmos services de P1A.1, **nenhum
-alterado**: a credencial de máquina prova "quem está chamando" (o
-Portal), nunca "em nome de quem". `RequireOrganizationAccessService` é o
-que garante que um `BUSINESS_GROUP` só é expandido se ele mesmo estiver
-no `PortalContext` efetivo da Identity — nunca porque o chamador pediu.
+Os dois primeiros são EXATAMENTE os mesmos services de P1A.1: a
+credencial de máquina prova "quem está chamando" (o Portal), nunca "em
+nome de quem".
+
+**O `PortalContext` é calculado uma única vez e atravessa o pipeline.**
+`RequireOrganizationAccessService` passou a devolver o contexto que já
+usou para autorizar (antes retornava `void`), e a rota o repassa como
+conjunto de `publicId` autorizados. Isso evita uma segunda passagem pelo
+`MembershipRepository` e — o ponto que importa — dá ao resolvedor de
+escopo a informação sem a qual ele não pode respeitar o
+`MembershipScope`.
+
+**Autorizar o grupo NÃO autoriza as filhas.** `GetPortalContextService`
+só inclui as `COMPANY` descendentes quando o `Membership` tem
+`scope = ORGANIZATION_AND_DESCENDANTS`; um
+`Membership(BUSINESS_GROUP, ORGANIZATION_ONLY)` coloca o grupo no
+contexto e nenhuma filha — e a semântica desse scope é, por definição,
+"alcance limitado à própria Organization". Expandir as filhas canônicas
+sem cruzar com o contexto converteria esse Membership em acesso
+comercial a todas as descendentes: escalada de privilégio. A relação
+canônica responde "quem são as filhas"; o `PortalContext` responde
+"quais delas são suas". **O escopo é a interseção.**
 
 **Resolução do escopo (`ResolvePortalTenantScopeService`):**
 
-- `COMPANY` → escopo é a própria organização; resolve a referência
-  `ACTIVE` `PCTEC_PORTAL/clientes` dela.
-- `BUSINESS_GROUP` → expande nas `COMPANY` filhas pelas **relações
-  canônicas** (`organization_relationships`, mesma fonte de verdade de
-  `GetPortalContextService`), mantém só as `ACTIVE` e resolve a
-  referência `PCTEC_PORTAL/clientes` de **cada uma**.
+- `COMPANY` → escopo é a própria organização, desde que ela esteja no
+  conjunto autorizado; resolve a referência `ACTIVE`
+  `PCTEC_PORTAL/clientes` dela.
+- `BUSINESS_GROUP` → percorre as filhas pelas **relações canônicas**
+  (`organization_relationships`, mesma fonte de verdade de
+  `GetPortalContextService`), mantém só as que são `ACTIVE` **e** estão
+  no conjunto autorizado, e resolve a referência `PCTEC_PORTAL/clientes`
+  de **cada uma**.
+- Filha canônica fora do conjunto autorizado é ignorada **antes** de
+  qualquer resolução: a referência dela nunca é consultada, e nem o
+  `legacyId` nem o nome chegam a existir no resultado.
 - Deduplicação por `Organization.publicId` — a mesma `COMPANY` nunca
   aparece duas vezes, mesmo alcançada por mais de uma relação.
 - `COMPANY` filha `INACTIVE` é ignorada (saiu do grupo), nunca falha.
-- Grupo sem nenhuma filha `ACTIVE` → `organizations: []`, HTTP 200. É um
-  estado legítimo, não erro. O consumidor decide; o Portal trata como
-  fail-closed (nenhum `clienteId` ⇒ nenhuma query comercial).
+- **Nenhuma filha autorizada restante → 403, nunca `organizations: []`.**
+  Devolver escopo vazio deixaria o chamador distinguir "o grupo existe,
+  mas você não alcança nenhuma empresa" de "este grupo não é seu" —
+  informação que ele não deve ter. E um escopo vazio nunca é um estado
+  comercial útil: não há o que consolidar.
 
 **Fail-closed deliberado:** se uma filha `ACTIVE` **não** possui
 referência comercial `ACTIVE`, a requisição INTEIRA falha com 404 —
@@ -728,4 +753,5 @@ que o Portal usa em toda seleção/persistência. Nunca são retornados:
 | Credencial ausente, inválida, ou não configurada no servidor | `SERVICE_CREDENTIAL_INVALID` | `AUTHENTICATION` | 401 |
 | Identity sem `ApplicationAccess(PCTEC_PORTAL, USER)` | `APPLICATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
 | Seleção fora do `PortalContext` efetivo da Identity, inexistente ou `INACTIVE` | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
+| `BUSINESS_GROUP` autorizado, porém sem nenhuma `COMPANY` filha autorizada (ex.: `Membership` com `ORGANIZATION_ONLY`) | `ORGANIZATION_ACCESS_DENIED` | `AUTHORIZATION` | 403 |
 | `COMPANY` selecionada — ou filha `ACTIVE` de um grupo — sem `OrganizationExternalReference` `ACTIVE` `clientes` | `ORGANIZATION_EXTERNAL_REFERENCE_NOT_FOUND` | `VALIDATION` (override HTTP 404) | 404 |
