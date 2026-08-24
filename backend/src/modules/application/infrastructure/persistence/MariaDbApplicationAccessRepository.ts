@@ -1,6 +1,31 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { ApplicationAccessRepository } from "../../domain/ApplicationAccessRepository.js";
 import { ApplicationAccess, type ApplicationAccessPersistedState } from "../../domain/ApplicationAccess.js";
+import { ApplicationAccessActiveGrantConflictError } from "../../domain/errors/ApplicationErrors.js";
+
+/**
+ * Nome do índice único criado pela migration 0017 sobre a coluna gerada
+ * `active_grant_key`. Só a violação DESTE índice vira erro de domínio —
+ * duplicidade em `uk_application_accesses_public_id`, por exemplo,
+ * indicaria bug de geração de UUID e deve continuar subindo crua.
+ */
+const ACTIVE_GRANT_UNIQUE_KEY = "uk_app_access_active_grant";
+
+/**
+ * Detecta especificamente ER_DUP_ENTRY (errno 1062) sobre a UNIQUE KEY
+ * nomeada. Mesmo padrão já usado em
+ * MariaDbIdentityExternalReferenceRepository e
+ * MariaDbOrganizationExternalReferenceRepository.
+ */
+function isDuplicateEntryFor(error: unknown, keyName: string): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  const candidate = error as { code?: unknown; errno?: unknown; message?: unknown };
+  const isDuplicateEntry = candidate.code === "ER_DUP_ENTRY" || candidate.errno === 1062;
+  const mentionsKey = typeof candidate.message === "string" && candidate.message.includes(keyName);
+  return isDuplicateEntry && mentionsKey;
+}
 
 type ApplicationAccessRow = Record<string, unknown>;
 
@@ -111,7 +136,44 @@ export class MariaDbApplicationAccessRepository implements ApplicationAccessRepo
     return (rows as unknown[]).length > 0;
   }
 
+  public async existsGrantedByIdentityAndApplication(
+    identityPublicId: string,
+    applicationPublicId: string
+  ): Promise<boolean> {
+    const [rows] = await this.connection.execute(
+      `SELECT 1
+         FROM application_accesses
+        WHERE identity_public_id = ?
+          AND application_public_id = ?
+          AND status = 'GRANTED'
+        LIMIT 1`,
+      [identityPublicId, applicationPublicId]
+    );
+    return (rows as unknown[]).length > 0;
+  }
+
+  /**
+   * Insere a concessão.
+   *
+   * A autoridade sobre "um acesso ativo por identidade por aplicação" é
+   * o índice `uk_app_access_active_grant` (migration 0017), NÃO a
+   * checagem que o service faz antes. A checagem existe para produzir
+   * uma mensagem melhor no caminho comum; este catch existe porque ela
+   * tem janela de corrida (TOCTOU) e um importador em lote é
+   * exatamente o cenário que a abre.
+   */
   public async insert(applicationAccess: ApplicationAccess): Promise<void> {
+    try {
+      await this.insertRow(applicationAccess);
+    } catch (error: unknown) {
+      if (isDuplicateEntryFor(error, ACTIVE_GRANT_UNIQUE_KEY)) {
+        throw new ApplicationAccessActiveGrantConflictError();
+      }
+      throw error;
+    }
+  }
+
+  private async insertRow(applicationAccess: ApplicationAccess): Promise<void> {
     const [result] = await this.connection.execute(
       `INSERT INTO application_accesses
          (public_id, identity_public_id, application_public_id, access_profile,

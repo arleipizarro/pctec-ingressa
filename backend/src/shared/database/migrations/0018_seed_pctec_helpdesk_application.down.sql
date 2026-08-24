@@ -1,0 +1,21 @@
+-- Migration: 0018_seed_pctec_helpdesk_application
+-- Direção: DOWN
+--
+-- REMOÇÃO SEGURA POR CONSTRUÇÃO
+--
+-- `application_accesses.application_public_id` referencia
+-- `applications.public_id` com ON DELETE RESTRICT (ver 0006,
+-- fk_app_access_application). Se existir QUALQUER ApplicationAccess
+-- apontando para esta Application — GRANTED ou REVOKED —, este DELETE
+-- falha com erro de integridade referencial e a migration não é marcada
+-- como revertida.
+--
+-- Essa é a garantia desejada, e ela é do banco: não há checagem em
+-- aplicação que possa ser esquecida, e o down NUNCA remove
+-- silenciosamente uma Application que ainda tem histórico de acesso.
+-- Para reverter de fato, revogue e remova os acessos primeiro, de forma
+-- deliberada.
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
+
+DELETE FROM applications WHERE public_id = '5c7a2b91-1e6d-4f38-b7a4-000000000001';

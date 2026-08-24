@@ -13,7 +13,7 @@ import { AccessProfile } from "../domain/value-objects/AccessProfile.js";
 import {
   ApplicationNotFoundError,
   IdentityNotFoundForAccessError,
-  ApplicationAccessAlreadyGrantedError
+  ApplicationAccessActiveGrantConflictError
 } from "../domain/errors/ApplicationErrors.js";
 
 export interface GrantApplicationAccessRequest {
@@ -44,6 +44,22 @@ export interface GrantApplicationAccessResult {
  *
  * Resolve `Application` por CÓDIGO (nunca UUID hardcoded), mesmo
  * princípio de `AuthorizeApplicationAccessService`.
+ *
+ * **Idempotência e concorrência (v0.8.x).** Conceder duas vezes o mesmo
+ * acesso é sempre uma recusa explícita — `ApplicationAccessActiveGrantConflictError`
+ * —, nunca uma segunda linha GRANTED. A recusa pode vir da checagem
+ * prévia (caminho comum) ou da UNIQUE KEY do banco (corrida), e nos dois
+ * casos o chamador recebe o mesmo erro de domínio. Um importador que
+ * reprocessa um lote trata esse erro como SKIP, não como falha.
+ *
+ * **Troca de perfil (fatia futura).** Com um acesso ativo por identidade
+ * por aplicação, mudar de USER para ADMIN deixa de ser "conceder de
+ * novo": passa a ser revogar o acesso atual e conceder o novo DENTRO DA
+ * MESMA transação. Este service já roda inteiro em
+ * `unitOfWork.runInTransaction`, então a operação composta cabe aqui sem
+ * mudança estrutural — falta apenas `ApplicationAccess.revoke()`, que
+ * segue fora de escopo nesta fatia. Enquanto isso, a tentativa de trocar
+ * de perfil falha de forma explícita em vez de duplicar o acesso.
  */
 export class GrantApplicationAccessService {
   public constructor(
@@ -81,13 +97,24 @@ export class GrantApplicationAccessService {
 
       const applicationPublicId = application.getPublicId().toString();
 
-      const alreadyGranted = await applicationAccessRepository.existsGrantedByIdentityApplicationAndProfile(
+      // Guard por (identidade, aplicação) — SEM o perfil. A regra é um
+      // acesso ativo por identidade por aplicação; incluir o perfil aqui
+      // era o furo que deixava USER e ADMIN coexistirem GRANTED.
+      //
+      // Esta checagem NÃO é a autoridade: ela existe para devolver um
+      // erro legível no caminho comum. A autoridade é a UNIQUE KEY
+      // `uk_app_access_active_grant` (migration 0017), porque
+      // exists()+insert() tem janela de corrida (TOCTOU) — e o
+      // importador em lote é exatamente o cenário que a abre. O
+      // repositório traduz a violação do índice para o MESMO erro de
+      // domínio, de modo que o chamador vê a mesma coisa venha a
+      // recusa de onde vier.
+      const alreadyGranted = await applicationAccessRepository.existsGrantedByIdentityAndApplication(
         identityPublicId.toString(),
-        applicationPublicId,
-        accessProfile.toString()
+        applicationPublicId
       );
       if (alreadyGranted) {
-        throw new ApplicationAccessAlreadyGrantedError();
+        throw new ApplicationAccessActiveGrantConflictError();
       }
 
       const applicationAccess = ApplicationAccess.grant({

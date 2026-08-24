@@ -17,7 +17,7 @@ import type { PublicId as IdentityPublicId } from "../../identity/domain/value-o
 import {
   ApplicationNotFoundError,
   IdentityNotFoundForAccessError,
-  ApplicationAccessAlreadyGrantedError
+  ApplicationAccessActiveGrantConflictError
 } from "../domain/errors/ApplicationErrors.js";
 
 class InMemoryApplicationRepository implements ApplicationRepository {
@@ -62,6 +62,18 @@ class InMemoryApplicationAccessRepository implements ApplicationAccessRepository
       (a) => a.getApplicationPublicId() === applicationPublicId && a.getAccessProfile().toString() === accessProfile && a.isGranted()
     );
   }
+  public async existsGrantedByIdentityAndApplication(
+    identityPublicId: string,
+    applicationPublicId: string
+  ): Promise<boolean> {
+    return this.stored.some(
+      (a) =>
+        a.getIdentityPublicId() === identityPublicId &&
+        a.getApplicationPublicId() === applicationPublicId &&
+        a.isGranted()
+    );
+  }
+
   public async existsGrantedByIdentityApplicationAndProfile(
     identityPublicId: string,
     applicationPublicId: string,
@@ -195,7 +207,7 @@ describe("GrantApplicationAccessService — 3. Identity inexistente", () => {
 });
 
 describe("GrantApplicationAccessService — 4. duplicidade bloqueada", () => {
-  it("rejeita conceder a MESMA combinação identity+application+profile duas vezes", async () => {
+  it("rejeita conceder a MESMA combinação identity+application duas vezes", async () => {
     const { service, identity, applicationAccessRepository } = await buildFixture();
 
     await service.execute({
@@ -212,7 +224,31 @@ describe("GrantApplicationAccessService — 4. duplicidade bloqueada", () => {
         accessProfile: "USER",
         grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID
       })
-    ).rejects.toThrow(ApplicationAccessAlreadyGrantedError);
+    ).rejects.toThrow(ApplicationAccessActiveGrantConflictError);
+
+    expect(applicationAccessRepository.stored).toHaveLength(1);
+  });
+
+  it("rejeita um SEGUNDO perfil para a mesma identity+application — o perfil não está na chave", async () => {
+    // Era o furo real: USER e depois ADMIN passavam pelas duas checagens
+    // por profile e produziam dois acessos GRANTED simultâneos.
+    const { service, identity, applicationAccessRepository } = await buildFixture();
+
+    await service.execute({
+      identityPublicId: identity.getPublicId().toString(),
+      applicationCode: "PCTEC_PORTAL",
+      accessProfile: "USER",
+      grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID
+    });
+
+    await expect(
+      service.execute({
+        identityPublicId: identity.getPublicId().toString(),
+        applicationCode: "PCTEC_PORTAL",
+        accessProfile: "ADMIN",
+        grantedByIdentityPublicId: GRANTED_BY_PUBLIC_ID
+      })
+    ).rejects.toThrow(ApplicationAccessActiveGrantConflictError);
 
     expect(applicationAccessRepository.stored).toHaveLength(1);
   });

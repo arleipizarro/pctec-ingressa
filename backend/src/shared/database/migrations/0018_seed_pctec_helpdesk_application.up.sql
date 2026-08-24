@@ -1,0 +1,40 @@
+-- Migration: 0018_seed_pctec_helpdesk_application
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Referência: fundação do importador Helpdesk -> Ingressa (v0.8.x),
+-- item 2 da task. Mesmo padrão de 0007 (PCTEC_INGRESSA) e 0014
+-- (PCTEC_PORTAL).
+--
+-- `PCTEC_HELPDESK` como Application própria do catálogo, conforme
+-- ADR-031 §1 ("cada produto consumidor possuir Application própria") —
+-- nunca reaproveita `PCTEC_PORTAL` nem `PCTEC_INGRESSA`. Um usuário do
+-- Helpdesk que não tenha ApplicationAccess(PCTEC_HELPDESK) não passa a
+-- ter acesso ao Portal por tabela nenhuma, e vice-versa.
+--
+-- public_id determinístico pelo mesmo raciocínio de 0007/0014: é
+-- metadado técnico estável da plataforma (não dado pessoal), precisa
+-- ser o MESMO valor entre dev/test/produção para que CLI e testes de
+-- integração o referenciem sem consultar o banco antes, e evita que
+-- dois ambientes gerem public_ids diferentes para a mesma aplicação
+-- conceitual. UUID v4 gerado uma única vez, não derivado de dado.
+--
+-- NATUREZA: CONFIGURAÇÃO DE PLATAFORMA, NÃO DADO DE LOTE
+--
+-- Esta linha NÃO pertence a nenhum `import_batch` e NÃO é removida pelo
+-- rollback de lote nenhum. O rollback de dados de importação compensa
+-- Identities, Memberships, ExternalReferences e ApplicationAccesses —
+-- nunca o catálogo de aplicações. Ver
+-- docs/import/ROLLBACK-COMPENSACOES.md.
+--
+-- Idempotência: `INSERT IGNORE` faz o re-apply desta migration ser um
+-- no-op em vez de erro de chave duplicada. `applications` tem UNIQUE em
+-- `public_id` e em `code`, então uma segunda execução não pode criar
+-- linha duplicada por nenhum dos dois caminhos.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
+
+INSERT IGNORE INTO applications (public_id, code, name, status, version, created_at, updated_at)
+VALUES ('5c7a2b91-1e6d-4f38-b7a4-000000000001', 'PCTEC_HELPDESK', 'PCTEC Helpdesk', 'ACTIVE', 1, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3));

@@ -30,6 +30,23 @@ export interface ApplicationAccessRepository {
   ): Promise<boolean>;
 
   /**
+   * Verifica se já existe uma `ApplicationAccess` GRANTED para a DUPLA
+   * (identidade, aplicação), **sem considerar o perfil** — v0.8.x.
+   *
+   * É o guard correto para a regra "um acesso ativo por identidade por
+   * aplicação". O método irmão
+   * `existsGrantedByIdentityApplicationAndProfile` inclui o perfil na
+   * chave e, por isso, deixa passar USER + ADMIN simultâneos para a
+   * mesma Identity na mesma Application — furo real fechado pela
+   * migration 0017 e por este método.
+   *
+   * Continua sendo apenas uma checagem de conveniência: a autoridade é
+   * o índice `uk_app_access_active_grant`, porque `exists()+insert()`
+   * tem janela de corrida.
+   */
+  existsGrantedByIdentityAndApplication(identityPublicId: string, applicationPublicId: string): Promise<boolean>;
+
+  /**
    * Insere uma ApplicationAccess nova. Após a inserção, DEVE chamar
    * `applicationAccess.assignInternalIdFromPersistence(...)` com o `id`
    * gerado pelo banco.
