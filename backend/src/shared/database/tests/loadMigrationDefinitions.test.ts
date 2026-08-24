@@ -449,25 +449,51 @@ describe("loadMigrationDefinitions", () => {
     expect(downUuidMatch?.[1]).toBe(upUuidMatch?.[1]);
   });
 
-  it("0007 (seed): 1-4. NÃO usa INSERT IGNORE, REPLACE INTO ou ON DUPLICATE KEY UPDATE — usa INSERT normal", () => {
+  // Lista EXATA das migrations de seed do catálogo de applications. Toda
+  // seed nova entra aqui — o teste falha por ausência se alguém
+  // acrescentar uma quarta e esquecer, porque a contagem é conferida
+  // contra as migrations realmente carregadas logo abaixo.
+  const SEEDS_DE_APPLICATION = [
+    "0007_seed_pctec_ingressa_application",
+    "0014_seed_pctec_portal_application",
+    "0018_seed_pctec_helpdesk_application"
+  ] as const;
+
+  it("a lista de seeds de application acima é exata — nenhuma seed fora dela", () => {
     const migrations = loadMigrationDefinitions();
-    const seedMigration = migrations.find((m) => m.id === "0007_seed_pctec_ingressa_application");
-    const upUpper = seedMigration?.up.toUpperCase() ?? "";
-
-    // 1, 2, 3: nenhum mecanismo que mascare divergência de estado.
-    expect(upUpper).not.toContain("INSERT IGNORE");
-    expect(upUpper).not.toContain("REPLACE INTO");
-    expect(upUpper).not.toContain("ON DUPLICATE KEY UPDATE");
-
-    // 4: INSERT normal presente — qualquer conflito com UNIQUE KEY
-    // (uk_applications_code / uk_applications_public_id) deve FALHAR
-    // explicitamente, não ser ignorado. Idempotência é responsabilidade
-    // do MigrationRunner/schema_migrations (uma migration já registrada
-    // nunca é reexecutada — ver MigrationRunner.applyPending), não deste
-    // SQL.
-    expect(upUpper).toContain("INSERT INTO APPLICATIONS");
-    expect(/INSERT\s+INTO\s+applications/i.test(seedMigration?.up ?? "")).toBe(true);
+    const seedsReais = migrations
+      .filter((m) => /INSERT\s+(IGNORE\s+)?INTO\s+applications/i.test(m.up))
+      .map((m) => m.id)
+      .sort();
+    expect(seedsReais).toEqual([...SEEDS_DE_APPLICATION].sort());
   });
+
+  it.each(SEEDS_DE_APPLICATION)(
+    "%s (seed): 1-4. NÃO usa INSERT IGNORE, REPLACE INTO ou ON DUPLICATE KEY UPDATE — usa INSERT normal",
+    (seedId) => {
+      const migrations = loadMigrationDefinitions();
+      const seedMigration = migrations.find((m) => m.id === seedId);
+      expect(seedMigration).toBeDefined();
+
+      // 1, 2, 3: nenhum mecanismo que mascare divergência de estado.
+      // A checagem é sobre o SQL executável, não sobre a prosa: o
+      // docblock de 0018 cita "INSERT IGNORE" justamente para explicar
+      // por que NÃO o usa.
+      const upExecutavel = (seedMigration?.up ?? "").replace(/--[^\n]*/g, "").toUpperCase();
+      expect(upExecutavel).not.toContain("INSERT IGNORE");
+      expect(upExecutavel).not.toContain("REPLACE INTO");
+      expect(upExecutavel).not.toContain("ON DUPLICATE KEY UPDATE");
+
+      // 4: INSERT normal presente — qualquer conflito com UNIQUE KEY
+      // (uk_applications_code / uk_applications_public_id) deve FALHAR
+      // explicitamente, não ser ignorado. Idempotência é responsabilidade
+      // do MigrationRunner/schema_migrations (uma migration já registrada
+      // nunca é reexecutada — ver MigrationRunner.applyPending), não deste
+      // SQL.
+      expect(upExecutavel).toContain("INSERT INTO APPLICATIONS");
+      expect(/INSERT\s+INTO\s+applications/i.test(seedMigration?.up ?? "")).toBe(true);
+    }
+  );
 
   it("0007 (seed): 5-6. code = PCTEC_INGRESSA e publicId determinístico esperado", () => {
     const migrations = loadMigrationDefinitions();

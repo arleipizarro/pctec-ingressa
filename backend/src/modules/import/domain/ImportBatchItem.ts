@@ -98,8 +98,12 @@ export class ImportBatchItem {
       String(state.sourceLegacyId),
       ImportAction.create(state.action),
       state.targetPublicId,
-      state.beforeSnapshot === null ? null : ImportItemSnapshot.fromWhitelist(Object.keys(state.beforeSnapshot), state.beforeSnapshot),
-      state.afterSnapshot === null ? null : ImportItemSnapshot.fromWhitelist(Object.keys(state.afterSnapshot), state.afterSnapshot),
+      // `fromPersistedRecord`, NÃO `fromWhitelist`: reconstituição
+      // interpreta um registro que já foi aceito na escrita, e não pode
+      // depender do estado corrente da denylist. Ver o docblock de
+      // `ImportItemSnapshot.fromPersistedRecord` para o porquê.
+      state.beforeSnapshot === null ? null : ImportItemSnapshot.fromPersistedRecord(state.beforeSnapshot),
+      state.afterSnapshot === null ? null : ImportItemSnapshot.fromPersistedRecord(state.afterSnapshot),
       state.reasonCode,
       state.errorMessage,
       state.createdAt

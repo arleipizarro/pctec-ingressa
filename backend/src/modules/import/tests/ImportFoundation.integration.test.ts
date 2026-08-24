@@ -18,6 +18,7 @@ import { ImportBatch } from "../domain/ImportBatch.js";
 import { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { ImportItemSnapshot } from "../domain/ImportItemSnapshot.js";
 import { Fingerprint } from "../domain/value-objects/Fingerprint.js";
+import { ImportBatchNotRunningError } from "../domain/errors/ImportErrors.js";
 
 const DB_CONFIG = {
   host: process.env["DB_HOST"] ?? "127.0.0.1",
@@ -107,7 +108,11 @@ describe.skipIf(!shouldRun)("fundação do importador — integração MariaDB",
       updatedAt: new Date()
     });
     concorrente.fail("tentativa concorrente");
-    await repository.updateOutcome(concorrente);
+
+    // O perdedor da corrida agora SABE que perdeu: zero linhas afetadas
+    // vira ImportBatchNotRunningError, em vez de no-op silencioso que
+    // faria o service reportar uma transição que não aconteceu.
+    await expect(repository.updateOutcome(concorrente)).rejects.toBeInstanceOf(ImportBatchNotRunningError);
 
     const final = await repository.findByPublicId(batch.getPublicId());
     expect(final?.getStatus().toString()).toBe("COMPLETED");

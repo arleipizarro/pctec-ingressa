@@ -32,16 +32,53 @@ export interface FingerprintInput {
 }
 
 /**
- * Serializa de forma DETERMINÍSTICA: registros ordenados por
- * `entityType` e depois por `legacyId` (como string, para não depender
- * de coerção numérica), e as chaves de cada registro ordenadas
- * alfabeticamente. Duas execuções sobre o mesmo material produzem
- * exatamente a mesma string, independentemente da ordem em que o
- * conector leu as linhas ou de como o driver montou os objetos.
+ * Identificador do formato do material canônico. Entra no próprio
+ * material: se a serialização mudar, os fingerprints mudam junto e um
+ * dry-run aprovado sob o formato antigo não autoriza um apply calculado
+ * sob o novo — o gate falha fechado, em vez de comparar maçã com
+ * laranja.
+ */
+const CANONICAL_FORMAT = "pctec-ingressa/import-fingerprint/v1";
+
+/**
+ * Serializa de forma DETERMINÍSTICA e SEM AMBIGUIDADE.
+ *
+ * Determinismo: registros ordenados por `entityType` e depois por
+ * `legacyId` (como string, para não depender de coerção numérica), e as
+ * chaves de cada registro ordenadas alfabeticamente. Duas execuções
+ * sobre o mesmo material produzem exatamente a mesma string,
+ * independentemente da ordem em que o conector leu as linhas ou de como
+ * o driver montou os objetos.
+ *
+ * Sem ambiguidade: a serialização é JSON, não concatenação com
+ * delimitadores. A versão anterior montava `chave=valor` unido por `|`,
+ * o que colapsava casos distintos no MESMO material — e este material é
+ * o que autoriza o apply (ver `ImportBatch.startApply` /
+ * `SourceChangedSinceDryRunError`). Dois exemplos reais que colidiam:
+ *
+ *   - `{campo: null}` e `{campo: ""}` viravam ambos `campo=`, porque
+ *     `String(x ?? "")` apaga a diferença entre ausência e vazio. Um
+ *     campo cadastral alternando NULL <-> "" entre o dry-run e o apply
+ *     passava como "escopo inalterado".
+ *   - `{a: "b|c=d"}` e `{a: "b", c: "d"}` produziam a mesma string,
+ *     porque `|` e `=` são dados válidos dentro de um valor e não eram
+ *     escapados.
+ *
+ * O JSON resolve os dois: `null` e `""` têm representações distintas, os
+ * tipos (string, número, booleano) são preservados em vez de virarem
+ * texto, e aspas/barras dentro de valores são escapadas pelo próprio
+ * serializador. Os campos viram uma LISTA DE PARES já ordenada, não um
+ * objeto — assim a ordem não depende da ordem de inserção de chaves do
+ * runtime.
  *
  * `mappingRulesVersion` entra no material hashado de propósito: a mesma
  * origem, lida sob regras diferentes, é um lote diferente. Aprovar um
  * dry-run de `helpdesk-v1` não pode autorizar um apply de `helpdesk-v2`.
+ *
+ * O material cobre EXCLUSIVAMENTE os registros recebidos em
+ * `input.records`. Quem escolhe o que entra é o chamador: o
+ * `scopeFingerprint` recebe só o escopo do lote, e por isso cadastro
+ * novo fora do escopo não derruba a aprovação.
  */
 function canonicalize(input: FingerprintInput): string {
   const registros = [...input.records]
@@ -53,12 +90,18 @@ function canonicalize(input: FingerprintInput): string {
       return String(a.legacyId).localeCompare(String(b.legacyId), "en");
     })
     .map((record) => {
-      const chaves = Object.keys(record.fields).sort((a, b) => a.localeCompare(b, "en"));
-      const campos = chaves.map((chave) => `${chave}=${String(record.fields[chave] ?? "")}`).join("|");
-      return `${record.entityType}#${String(record.legacyId)}{${campos}}`;
+      const pares = Object.keys(record.fields)
+        .sort((a, b) => a.localeCompare(b, "en"))
+        .map((chave) => {
+          const valor = record.fields[chave];
+          // `undefined` (chave presente sem valor) vira null; `null`
+          // permanece null e continua distinto de "".
+          return [chave, valor === undefined ? null : valor] as const;
+        });
+      return [record.entityType, String(record.legacyId), pares] as const;
     });
 
-  return `rules=${input.mappingRulesVersion}\n${registros.join("\n")}`;
+  return JSON.stringify([CANONICAL_FORMAT, input.mappingRulesVersion, registros]);
 }
 
 /**

@@ -89,8 +89,16 @@ describe("0018 — seed da Application PCTEC_HELPDESK", () => {
     expect(m?.up).toContain("5c7a2b91-1e6d-4f38-b7a4-000000000001");
   });
 
-  it("é idempotente — reaplicar não quebra", () => {
-    expect(m?.up).toContain("INSERT IGNORE");
+  // A idempotência é do MigrationRunner (uma migration registrada em
+  // `schema_migrations` nunca é reexecutada), NUNCA do SQL. 0007 e 0014
+  // documentam essa doutrina e 0018 segue as duas: divergência
+  // pré-existente precisa falhar com ER_DUP_ENTRY, não virar no-op.
+  it("é fail-closed — nenhuma cláusula que mascare divergência de estado", () => {
+    const upExecutavel = (m?.up ?? "").replace(/--[^\n]*/g, "").toUpperCase();
+    expect(upExecutavel).not.toContain("INSERT IGNORE");
+    expect(upExecutavel).not.toContain("REPLACE INTO");
+    expect(upExecutavel).not.toContain("ON DUPLICATE KEY UPDATE");
+    expect(upExecutavel).toContain("INSERT INTO APPLICATIONS");
   });
 
   it("o down remove só esta linha, pelo publicId", () => {
