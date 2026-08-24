@@ -66,13 +66,21 @@ function readCounts(row: Row, column: string): ImportCounts | null {
 export class MariaDbImportBatchRepository implements ImportBatchRepository {
   public constructor(private readonly connection: Queryable) {}
 
+  /**
+   * `counts_before` é coluna JSON e recebe a string JSON crua como
+   * parâmetro — sem `CAST(? AS JSON)`. No MariaDB, `JSON` é apelido de
+   * `LONGTEXT` com um CHECK `json_valid(...)`, e `CAST(... AS JSON)` não
+   * existe na gramática (é sintaxe do MySQL 8): tentá-lo derruba o
+   * INSERT inteiro com erro de sintaxe. A validação do conteúdo continua
+   * existindo — quem a faz é o CHECK da própria coluna, no banco.
+   */
   public async insert(batch: ImportBatch): Promise<void> {
     const [result] = await this.connection.execute(
       `INSERT INTO import_batches
          (public_id, source_system, mapping_rules_version, snapshot_fingerprint, scope_fingerprint,
           mode, status, dry_run_batch_public_id, approved_by_identity_public_id, approved_at,
           counts_before, counts_after, failure_reason, started_at, finished_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), NULL, NULL, ?, NULL, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?, ?)`,
       [
         batch.getPublicId(),
         batch.getSourceSystem(),
@@ -105,7 +113,7 @@ export class MariaDbImportBatchRepository implements ImportBatchRepository {
     await this.connection.execute(
       `UPDATE import_batches
           SET status = ?,
-              counts_after = CASE WHEN ? IS NULL THEN NULL ELSE CAST(? AS JSON) END,
+              counts_after = ?,
               failure_reason = ?,
               finished_at = ?,
               updated_at = ?
@@ -113,7 +121,6 @@ export class MariaDbImportBatchRepository implements ImportBatchRepository {
           AND status = 'RUNNING'`,
       [
         batch.getStatus().toString(),
-        countsAfter === null ? null : JSON.stringify(countsAfter),
         countsAfter === null ? null : JSON.stringify(countsAfter),
         batch.getFailureReason(),
         batch.getFinishedAt(),

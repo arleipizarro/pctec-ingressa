@@ -22,7 +22,7 @@ deixando o lote parcialmente revertido, que é o pior dos estados.
 
 | entidade | compensação | resultado |
 |---|---|---|
-| `ApplicationAccess` | **REVOKE** — `status = REVOKED`, `revoked_at`, `revoked_by` | acesso cessa; `active_grant_key` vira NULL e libera nova concessão futura |
+| `ApplicationAccess` | **REVOKE** — `status = REVOKED`, `revoked_at`, `revoked_by` | acesso cessa; `active_grant_flag` vira NULL e libera nova concessão futura |
 | `Membership` | **END** — `status = INACTIVE`, `ended_at` | contexto some do `tenant-scope`; histórico permanece |
 | `IdentityExternalReference` | **END** — `status = SUPERSEDED` | `active_match_key` vira NULL; o vínculo legado deixa de resolver |
 | `OrganizationExternalReference` | **END** — `status = SUPERSEDED` | idem |

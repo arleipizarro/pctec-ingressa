@@ -2,7 +2,7 @@
 -- Direção: DOWN
 --
 -- Remove o índice único e a coluna gerada, nesta ordem, numa única
--- instrução ALTER. Operação segura e sem perda: `active_grant_key` é
+-- instrução ALTER. Operação segura e sem perda: `active_grant_flag` é
 -- derivada — nenhum dado próprio é armazenado nela, e nenhuma linha de
 -- `application_accesses` é tocada.
 --
@@ -13,4 +13,4 @@
 
 ALTER TABLE application_accesses
     DROP INDEX uk_app_access_active_grant,
-    DROP COLUMN active_grant_key;
+    DROP COLUMN active_grant_flag;
