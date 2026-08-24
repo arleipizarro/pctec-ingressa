@@ -42,11 +42,38 @@
 -- operação futura sobre a Identity do aprovador. Mesma decisão já
 -- tomada nas colunas de ator de `audit_events`.
 --
+-- FAIL-CLOSED: SEM `IF NOT EXISTS`
+--
+-- O `CREATE TABLE` abaixo e deliberadamente NU — nunca
+-- `CREATE TABLE IF NOT EXISTS`. Mesma doutrina ja registrada em 0007,
+-- 0014 e 0018, e pela mesma razao: a idempotencia operacional e
+-- responsabilidade do MigrationRunner (que so executa o que ainda nao
+-- esta em `schema_migrations`), NUNCA do SQL.
+--
+-- Com `IF NOT EXISTS`, uma tabela homonima pre-existente — deixada por
+-- um experimento manual, por um rollback incompleto ou por uma versao
+-- anterior desta propria migration — faria o `CREATE` virar NO-OP
+-- silencioso. O runner registraria 0020 como aplicada e o schema real
+-- ficaria DIVERGENTE do que esta migration descreve, sem nenhum sinal.
+-- Todo o resto passaria a apostar num contrato que nao existe: 0021
+-- criaria sua FK contra uma `import_batches` de forma desconhecida, e o
+-- importador escreveria em colunas que podem nao estar la.
+--
+-- Sem a clausula, o mesmo cenario aborta com ER_TABLE_EXISTS_ERROR
+-- (errno 1050), 0020 NAO e registrada como aplicada, e o operador e
+-- obrigado a olhar e decidir. Divergencia de estado precisa falhar
+-- explicitamente — nunca ser mascarada.
+--
+-- O `down` mantem `DROP TABLE IF EXISTS`, e a assimetria e deliberada:
+-- o `down` precisa ser tolerante porque e justamente a ferramenta de
+-- saida de um estado parcial; o `up` precisa ser intolerante para nao
+-- criar esse estado parcial em primeiro lugar.
+--
 -- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
 --
 -- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
 
-CREATE TABLE IF NOT EXISTS import_batches (
+CREATE TABLE import_batches (
     id                             BIGINT UNSIGNED AUTO_INCREMENT
         COMMENT 'Chave interna. NUNCA exposta em API, evento ou log de consumidor (ADR-021).',
     public_id                      CHAR(36)     NOT NULL

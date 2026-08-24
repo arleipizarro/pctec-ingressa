@@ -42,11 +42,34 @@
 -- UNIQUE KEYs das tabelas de destino (active_match_key, uk_membership_unique,
 -- uk_app_access_active_grant), não desta trilha.
 --
+-- FAIL-CLOSED: SEM `IF NOT EXISTS`
+--
+-- O `CREATE TABLE` abaixo e deliberadamente NU — nunca
+-- `CREATE TABLE IF NOT EXISTS`. Mesma doutrina de 0018 e 0020: a
+-- idempotencia operacional e do MigrationRunner (que so executa o que
+-- ainda nao esta em `schema_migrations`), NUNCA do SQL.
+--
+-- O risco aqui e ainda mais concreto que em 0020, porque esta tabela
+-- carrega a trilha de auditoria do importador. Com `IF NOT EXISTS`, uma
+-- `import_batch_items` homonima pre-existente faria o `CREATE` virar
+-- NO-OP silencioso, 0021 seria registrada como aplicada, e a tabela
+-- poderia ficar SEM `fk_ibi_batch`, sem `uk_import_batch_items_public_id`
+-- ou com uma whitelist de colunas diferente da declarada aqui. A
+-- consequencia nao e um erro visivel: e uma trilha de auditoria que
+-- parece intacta e nao e.
+--
+-- Sem a clausula, o mesmo cenario aborta com ER_TABLE_EXISTS_ERROR
+-- (errno 1050), 0021 NAO e registrada como aplicada, e o operador e
+-- obrigado a olhar e decidir.
+--
+-- O `down` mantem `DROP TABLE IF EXISTS` — assimetria deliberada, pela
+-- mesma razao explicada em 0020.
+--
 -- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
 --
 -- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
 
-CREATE TABLE IF NOT EXISTS import_batch_items (
+CREATE TABLE import_batch_items (
     id                 BIGINT UNSIGNED AUTO_INCREMENT
         COMMENT 'Chave interna. NUNCA exposta em API ou log de consumidor (ADR-021).',
     public_id          CHAR(36)     NOT NULL
