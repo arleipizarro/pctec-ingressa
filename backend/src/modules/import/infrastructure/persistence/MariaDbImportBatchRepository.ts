@@ -153,10 +153,28 @@ export class MariaDbImportBatchRepository implements ImportBatchRepository {
    * conflito. `DESCONHECIDO` quando a linha sumiu entre o UPDATE e esta
    * leitura — caso remoto, mas nunca deve virar exceção nova por cima da
    * que estamos prestes a lançar.
+   *
+   * `FOR UPDATE` não é adorno — é o que faz esta leitura cumprir o que
+   * promete. Sob REPEATABLE READ (padrão do InnoDB; ver `Pool.ts`), um
+   * SELECT simples é servido pelo SNAPSHOT da transação, e esse snapshot
+   * foi aberto lá atrás, pelo `findByPublicId` que
+   * `FinishImportBatchService.transition` faz ANTES de transicionar. O
+   * commit concorrente que acabou de fazer o UPDATE afetar zero linhas é,
+   * por definição, invisível para aquele snapshot: a leitura simples
+   * devolveria o `RUNNING` obsoleto e a mensagem se contradiria — "o lote
+   * está em RUNNING; só um lote RUNNING aceita mudança de estado". Uma
+   * leitura TRAVADA é sempre current read: enxerga o estado real e a
+   * mensagem passa a nomear o estado em que o lote de fato está.
+   *
+   * Não introduz espera nova. Para o fluxo chegar aqui, o UPDATE — que já
+   * é leitura travada sobre a mesma linha — precisou ter executado: se a
+   * transação concorrente ainda estivesse aberta, o bloqueio teria
+   * acontecido ali, antes. Quando chegamos com zero linhas afetadas, a
+   * concorrente já commitou (ou a linha não existe) e o lock está livre.
    */
   private async lerStatusAtual(publicId: string): Promise<string> {
     const [rows] = await this.connection.execute(
-      `SELECT status FROM import_batches WHERE public_id = ? LIMIT 1`,
+      `SELECT status FROM import_batches WHERE public_id = ? LIMIT 1 FOR UPDATE`,
       [publicId]
     );
     const lista = rows as Array<{ status?: string }>;

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { DomainError } from "../../../../shared/errors/DomainError.js";
+import { MappingRulesVersion } from "./MappingRulesVersion.js";
 
 const HEX_64 = /^[0-9a-f]{64}$/;
 
@@ -27,7 +28,27 @@ export interface FingerprintRecord {
 }
 
 export interface FingerprintInput {
-  readonly mappingRulesVersion: string;
+  /**
+   * Value Object, não string crua — e a diferença é o que impede um erro
+   * de diagnóstico caro.
+   *
+   * `MappingRulesVersion.create` normaliza a entrada (`trim` +
+   * `toLowerCase`), e é esse valor JÁ NORMALIZADO que o domínio compara
+   * em `ImportBatch.startApply`. Enquanto este campo foi `string`, o
+   * material canônico era montado com o texto CRU: um dry-run pedido com
+   * `helpdesk-v1` e um apply pedido com `HELPDESK-V1` passavam na
+   * comparação de versão (as duas viram o mesmo VO) e falhavam na
+   * comparação de fingerprint (dois materiais distintos). O operador
+   * recebia `SourceChangedSinceDryRunError` — "a origem mudou dentro do
+   * escopo" — e ia procurar mudança em dado que não mudou, quando a única
+   * diferença estava na caixa do parâmetro. Como o dry-run é o passo
+   * caro, o retrabalho não era barato.
+   *
+   * Com o VO no tipo, a invariante deixa de depender da disciplina do
+   * chamador: não existe como alimentar o hash com um valor que o domínio
+   * não normalizou.
+   */
+  readonly mappingRulesVersion: MappingRulesVersion;
   readonly records: readonly FingerprintRecord[];
 }
 
@@ -74,6 +95,11 @@ const CANONICAL_FORMAT = "pctec-ingressa/import-fingerprint/v1";
  * `mappingRulesVersion` entra no material hashado de propósito: a mesma
  * origem, lida sob regras diferentes, é um lote diferente. Aprovar um
  * dry-run de `helpdesk-v1` não pode autorizar um apply de `helpdesk-v2`.
+ * O que entra é o VALOR CANÔNICO do Value Object (`toString()`), o mesmo
+ * que `ImportBatch` compara — e não o texto cru recebido do chamador.
+ * Versão semanticamente igual escrita de outro jeito (` HELPDESK-V1 `)
+ * precisa produzir o MESMO material; versão de fato diferente
+ * (`helpdesk-v2`) precisa produzir outro. Ver `FingerprintInput`.
  *
  * O material cobre EXCLUSIVAMENTE os registros recebidos em
  * `input.records`. Quem escolhe o que entra é o chamador: o
@@ -101,7 +127,7 @@ function canonicalize(input: FingerprintInput): string {
       return [record.entityType, String(record.legacyId), pares] as const;
     });
 
-  return JSON.stringify([CANONICAL_FORMAT, input.mappingRulesVersion, registros]);
+  return JSON.stringify([CANONICAL_FORMAT, input.mappingRulesVersion.toString(), registros]);
 }
 
 /**

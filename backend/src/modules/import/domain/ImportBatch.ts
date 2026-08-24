@@ -266,7 +266,8 @@ export class ImportBatch {
     this.internalId = internalId;
   }
 
-  public getInternalId(): number | undefined {
+  /** Uso exclusivo da camada de infraestrutura — nunca exposto por getter público comum. */
+  public getInternalIdForPersistence(): number | undefined {
     return this.internalId;
   }
 

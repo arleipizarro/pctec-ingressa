@@ -4,13 +4,14 @@ import { ImportBatch } from "../domain/ImportBatch.js";
 import { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { REDACTED_MARKER } from "../domain/ImportItemSnapshot.js";
 import { Fingerprint } from "../domain/value-objects/Fingerprint.js";
+import { MappingRulesVersion } from "../domain/value-objects/MappingRulesVersion.js";
 import type { ImportBatchRepository } from "../domain/ImportBatchRepository.js";
 import type { ImportBatchItemPage, ImportBatchItemRepository } from "../domain/ImportBatchItemRepository.js";
 import type { Queryable } from "../../../shared/database/Queryable.js";
 
 const REGRAS = "helpdesk-v1";
 const FP = Fingerprint.compute({
-  mappingRulesVersion: REGRAS,
+  mappingRulesVersion: MappingRulesVersion.create(REGRAS),
   records: [{ entityType: "users", legacyId: 35, fields: { active: 1 } }]
 }).toString();
 const LOTE = "0f4d1c22-1111-4a2b-9c3d-000000000001";

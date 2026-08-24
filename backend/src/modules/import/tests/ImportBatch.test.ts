@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ImportBatch } from "../domain/ImportBatch.js";
 import { Fingerprint } from "../domain/value-objects/Fingerprint.js";
+import { MappingRulesVersion } from "../domain/value-objects/MappingRulesVersion.js";
 import { InvalidImportBatchTransitionError } from "../domain/value-objects/ImportBatchStatus.js";
 import {
   ApplyWithoutDryRunError,
@@ -16,12 +17,13 @@ const REGRAS = "helpdesk-v1";
 const APROVADOR = "11111111-2222-3333-4444-555555555555";
 
 const escopo = (records: Parameters<typeof Fingerprint.compute>[0]["records"]): string =>
-  Fingerprint.compute({ mappingRulesVersion: REGRAS, records }).toString();
+  Fingerprint.compute({ mappingRulesVersion: MappingRulesVersion.create(REGRAS), records }).toString();
 
-const ESCOPO_AFIP = escopo([
+const REGISTROS_AFIP: Parameters<typeof Fingerprint.compute>[0]["records"] = [
   { entityType: "users", legacyId: 35, fields: { active: 1, client_id: 75, role: "cliente" } },
   { entityType: "users", legacyId: 44, fields: { active: 1, client_id: 75, role: "cliente" } }
-]);
+];
+const ESCOPO_AFIP = escopo(REGISTROS_AFIP);
 const SNAPSHOT = escopo([{ entityType: "users", legacyId: 999, fields: { total: 170 } }]);
 
 function novoDryRunConcluido(scopeFingerprint = ESCOPO_AFIP): ImportBatch {
@@ -161,6 +163,82 @@ describe("ImportBatch — apply é recusado sem as garantias", () => {
         approvedByIdentityPublicId: APROVADOR
       })
     ).toThrow(MappingRulesVersionMismatchError);
+  });
+
+  it("versão escrita de outro jeito, mesma versão canônica: apply é aceito", () => {
+    // Dry-run e apply são invocações separadas — potencialmente scripts
+    // diferentes, em dias diferentes. O segundo recalcula o fingerprint
+    // do MESMO escopo, mas recebeu a versão com outra caixa e espaços.
+    const dryRun = novoDryRunConcluido();
+    const escopoRecalculado = Fingerprint.compute({
+      mappingRulesVersion: MappingRulesVersion.create(" HELPDESK-V1 "),
+      records: REGISTROS_AFIP
+    }).toString();
+
+    // O coração do achado: mesma origem + mesma versão canônica precisa
+    // dar o MESMO material. Quando o hash usava o texto cru, não dava.
+    expect(escopoRecalculado).toBe(ESCOPO_AFIP);
+
+    const apply = ImportBatch.startApply({
+      sourceSystem: "PCTEC_HELPDESK",
+      mappingRulesVersion: " HELPDESK-V1 ",
+      snapshotFingerprint: SNAPSHOT,
+      scopeFingerprint: escopoRecalculado,
+      countsBefore: {},
+      dryRunBatch: dryRun,
+      approvedByIdentityPublicId: APROVADOR
+    });
+
+    expect(apply.getMode().toString()).toBe("APPLY");
+    expect(apply.getMappingRulesVersion().toString()).toBe(REGRAS);
+  });
+
+  it("versão de fato diferente, ainda que em outra caixa, continua recusada", () => {
+    // Contraprova da normalização: ela não pode encobrir troca real de
+    // regras. O escopo é recalculado sob v2 — como o conector faria.
+    const dryRun = novoDryRunConcluido();
+    const escopoSobV2 = Fingerprint.compute({
+      mappingRulesVersion: MappingRulesVersion.create("HELPDESK-V2"),
+      records: REGISTROS_AFIP
+    }).toString();
+    expect(escopoSobV2).not.toBe(ESCOPO_AFIP);
+
+    expect(() =>
+      ImportBatch.startApply({
+        sourceSystem: "PCTEC_HELPDESK",
+        mappingRulesVersion: "HELPDESK-V2",
+        snapshotFingerprint: SNAPSHOT,
+        scopeFingerprint: escopoSobV2,
+        countsBefore: {},
+        dryRunBatch: dryRun,
+        approvedByIdentityPublicId: APROVADOR
+      })
+    ).toThrow(MappingRulesVersionMismatchError);
+  });
+
+  it("mudança real dentro do escopo continua recusada, mesmo com a versão em outra caixa", () => {
+    // A normalização da versão não pode afrouxar o gate do escopo: aqui
+    // o client_id de um usuário DO LOTE mudou.
+    const dryRun = novoDryRunConcluido();
+    const escopoAlterado = Fingerprint.compute({
+      mappingRulesVersion: MappingRulesVersion.create("HELPDESK-V1"),
+      records: [
+        { entityType: "users", legacyId: 35, fields: { active: 1, client_id: 78, role: "cliente" } },
+        { entityType: "users", legacyId: 44, fields: { active: 1, client_id: 75, role: "cliente" } }
+      ]
+    }).toString();
+
+    expect(() =>
+      ImportBatch.startApply({
+        sourceSystem: "PCTEC_HELPDESK",
+        mappingRulesVersion: "HELPDESK-V1",
+        snapshotFingerprint: SNAPSHOT,
+        scopeFingerprint: escopoAlterado,
+        countsBefore: {},
+        dryRunBatch: dryRun,
+        approvedByIdentityPublicId: APROVADOR
+      })
+    ).toThrow(SourceChangedSinceDryRunError);
   });
 
   it("sistema de origem diferente", () => {

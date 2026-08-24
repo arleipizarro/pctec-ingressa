@@ -18,6 +18,7 @@ import { ImportBatch } from "../domain/ImportBatch.js";
 import { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { ImportItemSnapshot } from "../domain/ImportItemSnapshot.js";
 import { Fingerprint } from "../domain/value-objects/Fingerprint.js";
+import { MappingRulesVersion } from "../domain/value-objects/MappingRulesVersion.js";
 import { ImportBatchNotRunningError } from "../domain/errors/ImportErrors.js";
 
 const DB_CONFIG = {
@@ -31,7 +32,7 @@ const DB_CONFIG = {
 const REGRAS = "helpdesk-test";
 const SYNTHETIC_LEGACY_ID = 999997;
 const FP = Fingerprint.compute({
-  mappingRulesVersion: REGRAS,
+  mappingRulesVersion: MappingRulesVersion.create(REGRAS),
   records: [{ entityType: "users", legacyId: SYNTHETIC_LEGACY_ID, fields: { active: 1 } }]
 }).toString();
 
@@ -120,6 +121,99 @@ describe.skipIf(!shouldRun)("fundação do importador — integração MariaDB",
 
     await pool.end();
   });
+
+  /**
+   * A corrida do teste acima roda o UPDATE perdedor direto no pool, sem
+   * transação em volta — então não existe snapshot anterior e o
+   * diagnóstico lê dado atual por acidente. A produção NÃO é assim:
+   * `FinishImportBatchService.transition` abre transação e faz
+   * `findByPublicId` ANTES de transicionar, o que fixa o snapshot da
+   * transação com o lote ainda RUNNING. Este teste reproduz esse
+   * desenho com duas conexões reais e prova que o diagnóstico nomeia o
+   * estado ATUAL — o que só vale por causa do `FOR UPDATE`.
+   *
+   * Timeout explícito no `it` e `innodb_lock_wait_timeout` curto nas
+   * duas sessões: se algum lock travar, o teste falha em segundos com
+   * erro do banco, em vez de pendurar a suíte.
+   */
+  it(
+    "corrida entre duas transações: o perdedor recebe o estado ATUAL, não o RUNNING do seu snapshot",
+    async () => {
+      const batch = ImportBatch.startDryRun({
+        sourceSystem: "PCTEC_HELPDESK",
+        mappingRulesVersion: REGRAS,
+        snapshotFingerprint: FP,
+        scopeFingerprint: FP,
+        countsBefore: {}
+      });
+      await new MariaDbImportBatchRepository(pool).insert(batch);
+
+      const perdedor = await pool.getConnection();
+      const vencedor = await pool.getConnection();
+      try {
+        await perdedor.query("SET SESSION innodb_lock_wait_timeout = 5");
+        await vencedor.query("SET SESSION innodb_lock_wait_timeout = 5");
+        // REPEATABLE READ já é o padrão do InnoDB; fixar aqui torna o
+        // teste independente da configuração do servidor de quem roda.
+        await perdedor.query("SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+
+        // Perdedor abre a transação e lê o lote — é este SELECT que fixa
+        // o snapshot, exatamente como o service faz antes de transicionar.
+        await perdedor.beginTransaction();
+        const repoPerdedor = new MariaDbImportBatchRepository(perdedor);
+        const loteDoPerdedor = await repoPerdedor.findByPublicId(batch.getPublicId());
+        expect(loteDoPerdedor?.getStatus().toString()).toBe("RUNNING");
+
+        // Vencedor: transação separada, encerra o lote e commita.
+        await vencedor.beginTransaction();
+        const repoVencedor = new MariaDbImportBatchRepository(vencedor);
+        const loteDoVencedor = await repoVencedor.findByPublicId(batch.getPublicId());
+        expect(loteDoVencedor).toBeDefined();
+        (loteDoVencedor as ImportBatch).fail("vencedor da corrida");
+        await repoVencedor.updateOutcome(loteDoVencedor as ImportBatch);
+        await vencedor.commit();
+
+        // Prova de que o snapshot do perdedor ficou para trás: leitura
+        // SIMPLES, na transação ainda aberta, continua devolvendo RUNNING.
+        // É este valor que o diagnóstico reportava antes do FOR UPDATE.
+        const [linhasDoSnapshot] = await perdedor.execute(
+          `SELECT status FROM import_batches WHERE public_id = ? LIMIT 1`,
+          [batch.getPublicId()]
+        );
+        expect((linhasDoSnapshot as Array<{ status: string }>)[0]?.status).toBe("RUNNING");
+
+        // O perdedor tenta concluir. O UPDATE condicionado não encontra
+        // linha RUNNING e o diagnóstico — leitura travada — informa FAILED.
+        (loteDoPerdedor as ImportBatch).complete({ identities: 1 });
+        const erro = await repoPerdedor
+          .updateOutcome(loteDoPerdedor as ImportBatch)
+          .then(() => null, (e: unknown) => e as Error);
+
+        expect(erro).toBeInstanceOf(ImportBatchNotRunningError);
+        expect(erro?.message).toContain("O lote está em FAILED");
+        expect(erro?.message).not.toContain("O lote está em RUNNING");
+      } finally {
+        // Rollback no finally, não no fim do try: uma asserção que falha
+        // devolveria a conexão ao pool com transação aberta e locks
+        // presos, derrubando os testes seguintes por contaminação em vez
+        // de por defeito próprio.
+        await perdedor.rollback().catch(() => undefined);
+        await vencedor.rollback().catch(() => undefined);
+        perdedor.release();
+        vencedor.release();
+      }
+
+      // O lote não foi corrompido: manteve o desfecho do vencedor, sem
+      // countsAfter do perdedor por cima.
+      const final = await new MariaDbImportBatchRepository(pool).findByPublicId(batch.getPublicId());
+      expect(final?.getStatus().toString()).toBe("FAILED");
+      expect(final?.getFailureReason()).toBe("vencedor da corrida");
+      expect(final?.getCountsAfter()).toBeNull();
+
+      await pool.end();
+    },
+    20_000
+  );
 
   it("grava itens em lote e devolve relatório paginado com contagem por ação", async () => {
     const batchRepository = new MariaDbImportBatchRepository(pool);
