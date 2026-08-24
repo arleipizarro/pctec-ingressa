@@ -211,3 +211,65 @@ describe("compatibilidade histórica — política endurecida depois da escrita"
     expect(saida.fields["email"]).toBe("fulano@afip.com.br");
   });
 });
+
+/**
+ * Estrutura aninhada é REJEITADA por colapso: `coerce` reduz objeto,
+ * array e função a `null`, na escrita E na reconstituição. Não existe
+ * redação recursiva porque não existe aninhamento sobrevivente — o valor
+ * é destruído, não mascarado.
+ *
+ * Isso importa porque a denylist só olha NOMES DE CAMPO DE PRIMEIRO
+ * NÍVEL. Se um objeto aninhado sobrevivesse, `{perfil: {password: ...}}`
+ * passaria pela checagem (o nome `perfil` é inocente) e levaria o segredo
+ * junto. O colapso é o que torna a checagem de primeiro nível suficiente.
+ *
+ * Valores sintéticos — nenhum dado real de origem é lido.
+ */
+describe("snapshots aninhados — rejeitados por colapso, nas duas rotas", () => {
+  const SEGREDO = "SEGREDO-SINTETICO-QUE-NAO-PODE-VAZAR";
+  const LINHA_ANINHADA = {
+    id: 1,
+    name: "Fulano Sintético",
+    perfil: { password: SEGREDO, nome: "x" },
+    tags: ["publico", SEGREDO],
+    calculado: () => SEGREDO
+  };
+
+  it("escrita: objeto, array e função viram null — o segredo aninhado não entra", () => {
+    const snapshot = ImportItemSnapshot.fromWhitelist(
+      ["id", "name", "perfil", "tags", "calculado"],
+      LINHA_ANINHADA
+    );
+    const json = snapshot.toJSON();
+
+    expect(json["perfil"]).toBeNull();
+    expect(json["tags"]).toBeNull();
+    expect(json["calculado"]).toBeNull();
+    expect(JSON.stringify(json)).not.toContain(SEGREDO);
+  });
+
+  it("reconstituição: linha histórica com aninhado também colapsa — sem exceção e sem vazamento", () => {
+    const snapshot = ImportItemSnapshot.fromPersistedRecord(LINHA_ANINHADA);
+    const json = snapshot.toJSON();
+
+    expect(json["perfil"]).toBeNull();
+    expect(json["tags"]).toBeNull();
+    expect(JSON.stringify(json)).not.toContain(SEGREDO);
+  });
+
+  it("saída: nenhuma chave aninhada escapa da checagem de primeiro nível", () => {
+    const saida = ImportItemSnapshot.fromPersistedRecord(LINHA_ANINHADA).toRedactedJSON();
+
+    expect(JSON.stringify(saida)).not.toContain(SEGREDO);
+    // `perfil` colapsou antes de chegar aqui, então não há o que redigir:
+    // o valor foi destruído, não mascarado.
+    expect(saida.fields["perfil"]).toBeNull();
+    expect(saida.redactedFields).toEqual([]);
+  });
+
+  it("campos escalares da MESMA linha sobrevivem ao colapso dos aninhados", () => {
+    const json = ImportItemSnapshot.fromPersistedRecord(LINHA_ANINHADA).toJSON();
+    expect(json["id"]).toBe(1);
+    expect(json["name"]).toBe("Fulano Sintético");
+  });
+});
