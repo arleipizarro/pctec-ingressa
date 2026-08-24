@@ -135,6 +135,18 @@ describe.skipIf(!shouldRun)("fundação do importador — integração MariaDB",
    * Timeout explícito no `it` e `innodb_lock_wait_timeout` curto nas
    * duas sessões: se algum lock travar, o teste falha em segundos com
    * erro do banco, em vez de pendurar a suíte.
+   *
+   * O interleaving é DETERMINÍSTICO e não usa `sleep` nenhum: cada passo
+   * é uma promise aguardada, e o `await` é a barreira — a transação
+   * seguinte só começa depois que a anterior terminou. As duas
+   * transações nunca correm ao mesmo tempo; elas são INTERCALADAS numa
+   * ordem fixa, que é o que reproduz a corrida sem flakiness. Os dois
+   * limites que importam não são só ordenados, são AFIRMADOS: o snapshot
+   * do perdedor abriu antes do commit do vencedor (provado pela leitura
+   * simples que ainda devolve RUNNING) e o commit do vencedor aconteceu
+   * antes do UPDATE do perdedor (provado pelas zero linhas afetadas). Se
+   * alguém trocar essa disciplina por espera cronometrada, as duas
+   * asserções caem junto.
    */
   it(
     "corrida entre duas transações: o perdedor recebe o estado ATUAL, não o RUNNING do seu snapshot",
@@ -148,9 +160,17 @@ describe.skipIf(!shouldRun)("fundação do importador — integração MariaDB",
       });
       await new MariaDbImportBatchRepository(pool).insert(batch);
 
+      // Duas conexões físicas distintas do pool — não dois handles do
+      // mesmo socket. Sem isso não há duas transações: `beginTransaction`
+      // é estado de SESSÃO, e a segunda apenas sobrescreveria a primeira.
+      // O `threadId` é o id da sessão no servidor; afirmá-lo diferente
+      // torna a premissa verificável em vez de suposta.
       const perdedor = await pool.getConnection();
       const vencedor = await pool.getConnection();
       try {
+        expect(perdedor.threadId).toEqual(expect.any(Number));
+        expect(perdedor.threadId).not.toBe(vencedor.threadId);
+
         await perdedor.query("SET SESSION innodb_lock_wait_timeout = 5");
         await vencedor.query("SET SESSION innodb_lock_wait_timeout = 5");
         // REPEATABLE READ já é o padrão do InnoDB; fixar aqui torna o
