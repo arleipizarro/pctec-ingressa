@@ -9,13 +9,14 @@ import type {
 } from "../domain/ImportBatchItemRepository.js";
 import type { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { Fingerprint } from "../domain/value-objects/Fingerprint.js";
+import { MappingRulesVersion } from "../domain/value-objects/MappingRulesVersion.js";
 import { DryRunCannotWriteError, ImportBatchNotFoundError } from "../domain/errors/ImportErrors.js";
 import type { UnitOfWork } from "../../../shared/database/UnitOfWork.js";
 import type { Queryable } from "../../../shared/database/Queryable.js";
 
 const REGRAS = "helpdesk-v1";
 const FP = Fingerprint.compute({
-  mappingRulesVersion: REGRAS,
+  mappingRulesVersion: MappingRulesVersion.create(REGRAS),
   records: [{ entityType: "users", legacyId: 35, fields: { active: 1 } }]
 }).toString();
 

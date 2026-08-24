@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Fingerprint, InvalidFingerprintError, type FingerprintRecord } from "../domain/value-objects/Fingerprint.js";
+import { MappingRulesVersion } from "../domain/value-objects/MappingRulesVersion.js";
 
 const REGRAS = "helpdesk-v1";
 
@@ -11,7 +12,7 @@ const ESCOPO: readonly FingerprintRecord[] = [
 ];
 
 const fp = (records: readonly FingerprintRecord[], rules = REGRAS): string =>
-  Fingerprint.compute({ mappingRulesVersion: rules, records }).toString();
+  Fingerprint.compute({ mappingRulesVersion: MappingRulesVersion.create(rules), records }).toString();
 
 describe("Fingerprint — determinismo", () => {
   it("mesma entrada produz o mesmo hash", () => {
@@ -175,16 +176,52 @@ describe("Fingerprint — formato", () => {
   });
 
   it("material canônico inclui a versão das regras e o identificador de formato", () => {
-    const material = Fingerprint.canonicalMaterial({ mappingRulesVersion: REGRAS, records: ESCOPO });
+    const material = Fingerprint.canonicalMaterial({ mappingRulesVersion: MappingRulesVersion.create(REGRAS), records: ESCOPO });
     expect(material).toContain(REGRAS);
     expect(material).toContain("pctec-ingressa/import-fingerprint/v1");
   });
 
   it("material canônico é JSON válido — serialização inequívoca, não concatenação", () => {
-    const material = Fingerprint.canonicalMaterial({ mappingRulesVersion: REGRAS, records: ESCOPO });
+    const material = Fingerprint.canonicalMaterial({ mappingRulesVersion: MappingRulesVersion.create(REGRAS), records: ESCOPO });
     expect(() => JSON.parse(material)).not.toThrow();
     const [formato, regras] = JSON.parse(material) as [string, string, unknown];
     expect(formato).toBe("pctec-ingressa/import-fingerprint/v1");
     expect(regras).toBe(REGRAS);
+  });
+});
+
+/**
+ * O material canônico e a comparação de versão feita por
+ * `ImportBatch.startApply` precisam enxergar EXATAMENTE o mesmo valor.
+ * Enquanto o campo era `string` crua, não enxergavam: o VO normalizava
+ * (`trim` + `toLowerCase`), o hash não. Dry-run com `helpdesk-v1` e apply
+ * com `HELPDESK-V1` passavam na checagem de versão e falhavam na de
+ * fingerprint, e o operador recebia "a origem mudou" para dado que não
+ * mudou.
+ */
+describe("Fingerprint — versão das regras entra normalizada", () => {
+  it("caixa diferente, mesma versão canônica: mesmo fingerprint", () => {
+    expect(fp(ESCOPO, "HELPDESK-V1")).toBe(fp(ESCOPO, "helpdesk-v1"));
+  });
+
+  it("espaços em volta não alteram o fingerprint", () => {
+    expect(fp(ESCOPO, "  helpdesk-v1  ")).toBe(fp(ESCOPO, "helpdesk-v1"));
+    expect(fp(ESCOPO, " HELPDESK-V1 ")).toBe(fp(ESCOPO, "helpdesk-v1"));
+  });
+
+  it("versão semanticamente diferente continua produzindo fingerprint diferente", () => {
+    // Contraprova: a normalização não pode colapsar versões distintas —
+    // é justamente por isso que a versão entra no material.
+    expect(fp(ESCOPO, "helpdesk-v2")).not.toBe(fp(ESCOPO, "helpdesk-v1"));
+    expect(fp(ESCOPO, "HELPDESK-V2")).not.toBe(fp(ESCOPO, "helpdesk-v1"));
+  });
+
+  it("o material canônico carrega o valor normalizado, nunca o texto cru", () => {
+    const material = Fingerprint.canonicalMaterial({
+      mappingRulesVersion: MappingRulesVersion.create(" HELPDESK-V1 "),
+      records: ESCOPO
+    });
+    const [, regras] = JSON.parse(material) as [string, string, unknown];
+    expect(regras).toBe("helpdesk-v1");
   });
 });
