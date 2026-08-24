@@ -33,15 +33,6 @@ export class IdentityNotFoundForAccessError extends DomainError {
   }
 }
 
-export class ApplicationAccessAlreadyGrantedError extends DomainError {
-  public readonly code = "APPLICATION_ACCESS_ALREADY_GRANTED";
-  public readonly classification = "CONFLICT" as const;
-
-  constructor() {
-    super("Já existe um ApplicationAccess ativo (GRANTED) para esta combinação de identidade/aplicação/perfil.");
-  }
-}
-
 export class ApplicationAccessActiveGrantConflictError extends DomainError {
   public readonly code = "APPLICATION_ACCESS_ACTIVE_GRANT_CONFLICT";
   public readonly classification = "CONFLICT" as const;

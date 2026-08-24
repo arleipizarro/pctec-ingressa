@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MariaDbApplicationAccessRepository } from "../infrastructure/persistence/MariaDbApplicationAccessRepository.js";
 import { ApplicationAccess } from "../domain/ApplicationAccess.js";
+import { readFileSync } from "node:fs";
 import { ApplicationAccessActiveGrantConflictError } from "../domain/errors/ApplicationErrors.js";
 import {
   PCTEC_HELPDESK_APPLICATION_CODE,
@@ -121,5 +122,33 @@ describe("constantes da Application PCTEC_HELPDESK", () => {
       PCTEC_INGRESSA_APPLICATION_PUBLIC_ID
     ]);
     expect(todos.size).toBe(3);
+  });
+});
+
+/**
+ * Auditoria estrutural (sem banco): a condição "já existe acesso ativo"
+ * tem UM código de erro só.
+ *
+ * `ApplicationAccessAlreadyGrantedError` / `APPLICATION_ACCESS_ALREADY_GRANTED`
+ * era o guard antigo, que checava incluindo o perfil — a semântica que
+ * esta entrega corrigiu. Ficou sem chamadores e foi removida. O nome era
+ * próximo demais do guard novo: mantê-la exportada convidava alguém a
+ * reusá-la por autocomplete, e a mesma recusa passaria a sair com dois
+ * códigos diferentes para consumidores externos.
+ */
+describe("um único código de erro para concessão ativa duplicada", () => {
+  const fonteErros = readFileSync(
+    new URL("../domain/errors/ApplicationErrors.ts", import.meta.url),
+    "utf-8"
+  );
+
+  it("o código do guard antigo não existe mais no módulo de erros", () => {
+    expect(fonteErros).not.toContain("APPLICATION_ACCESS_ALREADY_GRANTED");
+    expect(fonteErros).not.toContain("ApplicationAccessAlreadyGrantedError");
+  });
+
+  it("o código do guard atual continua declarado", () => {
+    expect(fonteErros).toContain("APPLICATION_ACCESS_ACTIVE_GRANT_CONFLICT");
+    expect(new ApplicationAccessActiveGrantConflictError().code).toBe("APPLICATION_ACCESS_ACTIVE_GRANT_CONFLICT");
   });
 });

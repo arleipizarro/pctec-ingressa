@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { ImportBatchRepository } from "../../domain/ImportBatchRepository.js";
 import { ImportBatch, type ImportCounts } from "../../domain/ImportBatch.js";
+import { ImportBatchNotRunningError } from "../../domain/errors/ImportErrors.js";
 
 type Row = Record<string, unknown>;
 
@@ -107,10 +108,22 @@ export class MariaDbImportBatchRepository implements ImportBatchRepository {
    * `AND status = 'RUNNING'` fecha a corrida entre dois processos que
    * tentem encerrar o mesmo lote: o segundo não encontra linha para
    * atualizar e não sobrescreve o desfecho do primeiro.
+   *
+   * Não basta preservar a linha — o perdedor da corrida precisa SABER
+   * que perdeu. Sem checar `affectedRows`, o UPDATE vira um no-op
+   * silencioso e `FinishImportBatchService.transition` devolve o status
+   * do objeto EM MEMÓRIA, informando ao chamador uma transição que nunca
+   * aconteceu no banco. Zero linhas afetadas vira
+   * `ImportBatchNotRunningError`, com o status real relido do banco para
+   * a mensagem dizer em que estado o lote de fato está.
+   *
+   * Mesmo padrão de `MariaDbSessionRepository` e
+   * `MariaDbMembershipRepository`, que já traduzem "0 linhas afetadas"
+   * em erro de conflito de domínio.
    */
   public async updateOutcome(batch: ImportBatch): Promise<void> {
     const countsAfter = batch.getCountsAfter();
-    await this.connection.execute(
+    const [resultado] = await this.connection.execute(
       `UPDATE import_batches
           SET status = ?,
               counts_after = ?,
@@ -128,6 +141,26 @@ export class MariaDbImportBatchRepository implements ImportBatchRepository {
         batch.getPublicId()
       ]
     );
+
+    const { affectedRows } = resultado as { affectedRows: number };
+    if (affectedRows === 0) {
+      throw new ImportBatchNotRunningError(await this.lerStatusAtual(batch.getPublicId()));
+    }
+  }
+
+  /**
+   * Status corrente do lote, só para compor a mensagem do erro de
+   * conflito. `DESCONHECIDO` quando a linha sumiu entre o UPDATE e esta
+   * leitura — caso remoto, mas nunca deve virar exceção nova por cima da
+   * que estamos prestes a lançar.
+   */
+  private async lerStatusAtual(publicId: string): Promise<string> {
+    const [rows] = await this.connection.execute(
+      `SELECT status FROM import_batches WHERE public_id = ? LIMIT 1`,
+      [publicId]
+    );
+    const lista = rows as Array<{ status?: string }>;
+    return lista[0]?.status ?? "DESCONHECIDO";
   }
 
   public async findByPublicId(publicId: string): Promise<ImportBatch | undefined> {

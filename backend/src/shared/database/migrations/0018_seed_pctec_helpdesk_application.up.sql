@@ -27,14 +27,24 @@
 -- nunca o catálogo de aplicações. Ver
 -- docs/import/ROLLBACK-COMPENSACOES.md.
 --
--- Idempotência: `INSERT IGNORE` faz o re-apply desta migration ser um
--- no-op em vez de erro de chave duplicada. `applications` tem UNIQUE em
--- `public_id` e em `code`, então uma segunda execução não pode criar
--- linha duplicada por nenhum dos dois caminhos.
+-- Idempotência: NÃO é responsabilidade deste SQL (mesmo princípio já
+-- documentado em 0007 e reafirmado em 0014) — a idempotência operacional
+-- é fornecida pelo MigrationRunner, que só executa o que ainda não está
+-- em `schema_migrations`. Nenhuma cláusula de "ignorar duplicidade"
+-- aqui; um estado divergente pré-existente deve FALHAR explicitamente
+-- (violação de UNIQUE KEY), nunca ser mascarado.
+--
+-- O que isso protege, concretamente: se alguém já tiver inserido à mão
+-- uma linha com este `public_id` mas com `code`/`name`/`status`
+-- diferentes, o INSERT normal aborta com ER_DUP_ENTRY e o runner nem
+-- chega a marcar 0018 como aplicada — o operador é obrigado a olhar. Com
+-- `INSERT IGNORE`, a divergência viraria no-op silencioso, a migration
+-- seria registrada como aplicada, e a Application ficaria com o code ou
+-- o status errado até alguém tropeçar nisso muito mais tarde.
 --
 -- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
 --
 -- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
 
-INSERT IGNORE INTO applications (public_id, code, name, status, version, created_at, updated_at)
+INSERT INTO applications (public_id, code, name, status, version, created_at, updated_at)
 VALUES ('5c7a2b91-1e6d-4f38-b7a4-000000000001', 'PCTEC_HELPDESK', 'PCTEC Helpdesk', 'ACTIVE', 1, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3));

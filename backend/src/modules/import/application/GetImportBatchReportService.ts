@@ -26,6 +26,13 @@ export interface ImportBatchReportItem {
   readonly errorMessage: string | null;
   readonly before: Record<string, unknown> | null;
   readonly after: Record<string, unknown> | null;
+  /**
+   * Nomes — SÓ os nomes — dos campos cujo valor foi redigido por serem
+   * sensíveis pela política ATUAL. Vazio no caso normal. Nunca carrega
+   * valor: é o registro seguro de que aquela linha foi escrita sob uma
+   * política mais frouxa do que a de hoje.
+   */
+  readonly redactedFields: readonly string[];
 }
 
 export interface ImportBatchReport {
@@ -103,12 +110,39 @@ export class GetImportBatchReportService {
         targetPublicId: item.getTargetPublicId(),
         reasonCode: item.getReasonCode(),
         errorMessage: item.getErrorMessage(),
-        before: item.getBeforeSnapshot()?.toJSON() ?? null,
-        after: item.getAfterSnapshot()?.toJSON() ?? null
+        ...GetImportBatchReportService.redigirSnapshots(item)
       })),
       total: page.total,
       limit: page.limit,
       offset: page.offset
+    };
+  }
+
+  /**
+   * Aplica a política ATUAL na SAÍDA, nunca na leitura.
+   *
+   * Um snapshot histórico pode conter um campo que passou a ser proibido
+   * depois de gravado. A reconstituição aceita a linha (ver
+   * `ImportItemSnapshot.fromPersistedRecord`); é aqui que o valor é
+   * substituído pelo marcador e o nome do campo vai para
+   * `redactedFields`. A página inteira continua servível — uma linha
+   * antiga não derruba o relatório — e nenhum valor sensível aparece.
+   */
+  private static redigirSnapshots(item: {
+    getBeforeSnapshot(): { toRedactedJSON(): { fields: Readonly<Record<string, unknown>>; redactedFields: readonly string[] } } | null;
+    getAfterSnapshot(): { toRedactedJSON(): { fields: Readonly<Record<string, unknown>>; redactedFields: readonly string[] } } | null;
+  }): Pick<ImportBatchReportItem, "before" | "after" | "redactedFields"> {
+    const antes = item.getBeforeSnapshot()?.toRedactedJSON() ?? null;
+    const depois = item.getAfterSnapshot()?.toRedactedJSON() ?? null;
+
+    const redigidos = [...new Set([...(antes?.redactedFields ?? []), ...(depois?.redactedFields ?? [])])].sort((a, b) =>
+      a.localeCompare(b, "en")
+    );
+
+    return {
+      before: antes === null ? null : { ...antes.fields },
+      after: depois === null ? null : { ...depois.fields },
+      redactedFields: redigidos
     };
   }
 }
