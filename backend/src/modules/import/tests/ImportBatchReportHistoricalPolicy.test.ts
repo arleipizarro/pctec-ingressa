@@ -98,6 +98,56 @@ function servicoCom(items: readonly ImportBatchItem[]): GetImportBatchReportServ
   return new GetImportBatchReportService({} as Queryable, () => batchRepository, () => itemRepository);
 }
 
+/**
+ * Linha histórica com ESTRUTURA ANINHADA carregando um segredo numa
+ * chave interna. A denylist só olha nomes de primeiro nível — `perfil` é
+ * inocente —, então a proteção aqui é o colapso de `coerce`. Este teste
+ * fecha o ciclo pelo relatório: nem a reconstituição estoura, nem o
+ * segredo chega à resposta.
+ */
+const SEGREDO_ANINHADO = "SEGREDO-ANINHADO-SINTETICO";
+
+function itemComAninhado(indice: number): ImportBatchItem {
+  return ImportBatchItem.reconstitute({
+    internalId: indice,
+    publicId: `cccccccc-0000-4000-8000-00000000000${indice}`,
+    batchPublicId: LOTE,
+    entityKind: "IDENTITY",
+    sourceEntityType: "users",
+    sourceLegacyId: 700 + indice,
+    action: "CREATE",
+    targetPublicId: null,
+    beforeSnapshot: null,
+    afterSnapshot: {
+      id: 700 + indice,
+      name: "Sicrano Sintético",
+      perfil: { password: SEGREDO_ANINHADO },
+      tags: [SEGREDO_ANINHADO]
+    },
+    reasonCode: null,
+    errorMessage: null,
+    createdAt: new Date("2026-08-01T00:00:50.000Z")
+  });
+}
+
+describe("relatório — snapshot histórico com estrutura aninhada", () => {
+  it("a página não cai e o segredo aninhado não aparece na resposta", async () => {
+    const relatorio = await servicoCom([itemNormal(1), itemComAninhado(2)]).execute({ batchPublicId: LOTE });
+
+    expect(relatorio.items).toHaveLength(2);
+    expect(JSON.stringify(relatorio)).not.toContain(SEGREDO_ANINHADO);
+  });
+
+  it("o campo aninhado chega como null — valor destruído, não mascarado", async () => {
+    const relatorio = await servicoCom([itemComAninhado(2)]).execute({ batchPublicId: LOTE });
+    const item = relatorio.items[0];
+
+    expect(item?.after?.["perfil"]).toBeNull();
+    expect(item?.after?.["tags"]).toBeNull();
+    expect(item?.after?.["name"]).toBe("Sicrano Sintético");
+  });
+});
+
 describe("relatório — snapshot histórico com campo que passou a ser proibido", () => {
   it("a página inteira NÃO cai por causa de uma linha antiga", async () => {
     const relatorio = await servicoCom([itemNormal(1), itemHistorico(2), itemNormal(3)]).execute({
