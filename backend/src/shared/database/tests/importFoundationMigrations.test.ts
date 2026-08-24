@@ -176,3 +176,75 @@ describe("0020/0021 — lotes", () => {
     expect(items?.up).toContain("ON DELETE RESTRICT");
   });
 });
+
+/**
+ * Guarda da correção fail-closed das migrations de importação.
+ *
+ * A lista é EXATA e literal (0020 e 0021), nunca derivada por prefixo,
+ * `filter` ou regex sobre o conjunto de migrations. Um teste genérico do
+ * tipo "nenhuma migration usa IF NOT EXISTS" seria falso — 0001-0016 já
+ * estão aplicadas em DEV com a cláusula e seus checksums são imutáveis —
+ * e um teste "as migrations de importação" derivado de nome de arquivo
+ * silenciaria sozinho se alguém renomeasse o arquivo. Enumerar os dois
+ * ids é o que garante que remover a guarda exija apagar uma linha
+ * visível no diff.
+ *
+ * Origem: preflight de ativação do importador em DEV (v0.8.x). O
+ * `CREATE TABLE IF NOT EXISTS` original transformava uma tabela homônima
+ * pré-existente em NO-OP silencioso, com a migration ainda assim
+ * registrada em `schema_migrations` — schema divergente sem sinal algum.
+ * Sem a cláusula, o mesmo cenário aborta com ER_TABLE_EXISTS_ERROR
+ * (errno 1050) e nada é registrado.
+ */
+describe("0020/0021 — CREATE TABLE fail-closed (sem IF NOT EXISTS)", () => {
+  const UPS_DE_IMPORTACAO: ReadonlyArray<readonly [id: string, tabela: string]> = [
+    ["0020_create_import_batches", "import_batches"],
+    ["0021_create_import_batch_items", "import_batch_items"]
+  ];
+
+  // Comentários `--` são removidos antes de qualquer asserção: o
+  // cabeçalho destas duas migrations CITA a cláusula proibida para
+  // explicar por que ela não está lá. A guarda vale sobre o SQL
+  // executável, nunca sobre a prosa que o documenta.
+  function sqlExecutavel(sql: string): string {
+    return sql.replace(/--[^\n]*/g, "");
+  }
+
+  it.each(UPS_DE_IMPORTACAO)("%s não usa CREATE TABLE IF NOT EXISTS", (id) => {
+    const definicao = porId.get(id);
+    expect(definicao, `migration ${id} não encontrada`).toBeDefined();
+    const executavel = sqlExecutavel(definicao?.up ?? "").toUpperCase();
+    expect(executavel).not.toContain("IF NOT EXISTS");
+  });
+
+  it.each(UPS_DE_IMPORTACAO)("%s cria a tabela de forma nua, abortando se ela já existir", (id, tabela) => {
+    const definicao = porId.get(id);
+    expect(definicao, `migration ${id} não encontrada`).toBeDefined();
+    const executavel = sqlExecutavel(definicao?.up ?? "");
+    expect(executavel).toMatch(new RegExp(`CREATE\\s+TABLE\\s+${tabela}\\s*\\(`));
+  });
+
+  it.each(UPS_DE_IMPORTACAO)("%s não mascara divergência por nenhuma outra cláusula", (id) => {
+    const definicao = porId.get(id);
+    const executavel = sqlExecutavel(definicao?.up ?? "").toUpperCase();
+    expect(executavel).not.toContain("OR REPLACE");
+    expect(executavel).not.toContain("DROP TABLE");
+    expect(executavel).not.toContain("CREATE OR REPLACE");
+  });
+
+  // Assimetria deliberada: o `down` PRECISA ser tolerante — é a
+  // ferramenta de saída de um estado parcial. Fixada aqui para que
+  // ninguém "uniformize" os dois lados por simetria estética.
+  it.each(UPS_DE_IMPORTACAO)("%s mantém o down tolerante (DROP TABLE IF EXISTS)", (id, tabela) => {
+    const definicao = porId.get(id);
+    const executavel = sqlExecutavel(definicao?.down ?? "");
+    expect(executavel).toMatch(new RegExp(`DROP\\s+TABLE\\s+IF\\s+EXISTS\\s+${tabela}`));
+  });
+
+  it("a guarda cobre exatamente as duas migrations de importação — nem mais, nem menos", () => {
+    expect(UPS_DE_IMPORTACAO.map(([id]) => id)).toEqual([
+      "0020_create_import_batches",
+      "0021_create_import_batch_items"
+    ]);
+  });
+});
