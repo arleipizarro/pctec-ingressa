@@ -1,0 +1,114 @@
+import type { Queryable } from "../../../shared/database/Queryable.js";
+import type { ImportBatchRepository } from "../domain/ImportBatchRepository.js";
+import type { ImportBatchItemRepository } from "../domain/ImportBatchItemRepository.js";
+import type { ImportCounts } from "../domain/ImportBatch.js";
+import { ImportBatchNotFoundError } from "../domain/errors/ImportErrors.js";
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 500;
+
+export interface GetImportBatchReportRequest {
+  readonly batchPublicId: string;
+  readonly action?: string | undefined;
+  readonly entityKind?: string | undefined;
+  readonly limit?: number | undefined;
+  readonly offset?: number | undefined;
+}
+
+export interface ImportBatchReportItem {
+  readonly publicId: string;
+  readonly entityKind: string;
+  readonly sourceEntityType: string;
+  readonly sourceLegacyId: string;
+  readonly action: string;
+  readonly targetPublicId: string | null;
+  readonly reasonCode: string | null;
+  readonly errorMessage: string | null;
+  readonly before: Record<string, unknown> | null;
+  readonly after: Record<string, unknown> | null;
+}
+
+export interface ImportBatchReport {
+  readonly batchPublicId: string;
+  readonly sourceSystem: string;
+  readonly mode: string;
+  readonly status: string;
+  readonly mappingRulesVersion: string;
+  readonly scopeFingerprint: string;
+  readonly countsBefore: ImportCounts;
+  readonly countsAfter: ImportCounts | null;
+  readonly countsByAction: Readonly<Record<string, number>>;
+  readonly items: readonly ImportBatchReportItem[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/**
+ * Relatório antes/depois de um lote, paginado.
+ *
+ * `countsByAction` vem de uma agregação no banco, não da página: o
+ * resumo ("3 CREATE, 1 QUARANTINE") precisa ser do lote inteiro mesmo
+ * quando a página mostra 50 linhas.
+ *
+ * Somente leitura — sem `UnitOfWork`, mesma decisão dos demais services
+ * de consulta do projeto.
+ */
+export class GetImportBatchReportService {
+  public constructor(
+    private readonly connection: Queryable,
+    private readonly importBatchRepositoryFactory: (connection: Queryable) => ImportBatchRepository,
+    private readonly importBatchItemRepositoryFactory: (connection: Queryable) => ImportBatchItemRepository
+  ) {}
+
+  public async execute(request: GetImportBatchReportRequest): Promise<ImportBatchReport> {
+    const batchRepository = this.importBatchRepositoryFactory(this.connection);
+    const itemRepository = this.importBatchItemRepositoryFactory(this.connection);
+
+    const batch = await batchRepository.findByPublicId(request.batchPublicId);
+    if (batch === undefined) {
+      throw new ImportBatchNotFoundError(request.batchPublicId);
+    }
+
+    const limit = Math.min(Math.max(request.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const offset = Math.max(request.offset ?? 0, 0);
+
+    const [page, countsByAction] = await Promise.all([
+      itemRepository.list({
+        batchPublicId: request.batchPublicId,
+        action: request.action,
+        entityKind: request.entityKind,
+        limit,
+        offset
+      }),
+      itemRepository.countByAction(request.batchPublicId)
+    ]);
+
+    return {
+      batchPublicId: batch.getPublicId(),
+      sourceSystem: batch.getSourceSystem(),
+      mode: batch.getMode().toString(),
+      status: batch.getStatus().toString(),
+      mappingRulesVersion: batch.getMappingRulesVersion().toString(),
+      scopeFingerprint: batch.getScopeFingerprint().toString(),
+      countsBefore: batch.getCountsBefore(),
+      countsAfter: batch.getCountsAfter(),
+      countsByAction,
+      items: page.items.map((item) => ({
+        publicId: item.getPublicId(),
+        entityKind: item.getEntityKind().toString(),
+        sourceEntityType: item.getSourceEntityType(),
+        sourceLegacyId: item.getSourceLegacyId(),
+        action: item.getAction().toString(),
+        targetPublicId: item.getTargetPublicId(),
+        reasonCode: item.getReasonCode(),
+        errorMessage: item.getErrorMessage(),
+        before: item.getBeforeSnapshot()?.toJSON() ?? null,
+        after: item.getAfterSnapshot()?.toJSON() ?? null
+      })),
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset
+    };
+  }
+}

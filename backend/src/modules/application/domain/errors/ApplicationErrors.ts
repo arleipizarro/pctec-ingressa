@@ -42,6 +42,20 @@ export class ApplicationAccessAlreadyGrantedError extends DomainError {
   }
 }
 
+export class ApplicationAccessActiveGrantConflictError extends DomainError {
+  public readonly code = "APPLICATION_ACCESS_ACTIVE_GRANT_CONFLICT";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor() {
+    super(
+      "Já existe um ApplicationAccess GRANTED para esta identidade nesta aplicação. " +
+        "A regra é um acesso ativo por identidade por aplicação — o perfil é atributo do acesso, " +
+        "não parte da identidade dele. Para trocar de perfil, revogue o acesso atual e conceda o novo " +
+        "na mesma transação."
+    );
+  }
+}
+
 export class ApplicationAccessVersionConflictError extends DomainError {
   public readonly code = "APPLICATION_ACCESS_VERSION_CONFLICT";
   public readonly classification = "CONFLICT" as const;

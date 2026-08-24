@@ -71,7 +71,7 @@ describe("build", () => {
     expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_CREDENTIAL_JS)).toBe(true);
   });
 
-  it("gera dist/shared/database/migrations/ com exatamente as 32 migrations atuais (0001-0016, up/down)", () => {
+  it("gera dist/shared/database/migrations/ com exatamente as 42 migrations atuais (0001-0021, up/down)", () => {
     expect(existsSync(DIST_MIGRATIONS_DIR)).toBe(true);
     const distFiles = readdirSync(DIST_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     expect(distFiles).toEqual([
@@ -106,13 +106,23 @@ describe("build", () => {
       "0015_add_user_access_profile.down.sql",
       "0015_add_user_access_profile.up.sql",
       "0016_create_identity_external_references.down.sql",
-      "0016_create_identity_external_references.up.sql"
+      "0016_create_identity_external_references.up.sql",
+      "0017_add_application_access_active_grant_unique.down.sql",
+      "0017_add_application_access_active_grant_unique.up.sql",
+      "0018_seed_pctec_helpdesk_application.down.sql",
+      "0018_seed_pctec_helpdesk_application.up.sql",
+      "0019_add_match_method_created_from_source.down.sql",
+      "0019_add_match_method_created_from_source.up.sql",
+      "0020_create_import_batches.down.sql",
+      "0020_create_import_batches.up.sql",
+      "0021_create_import_batch_items.down.sql",
+      "0021_create_import_batch_items.up.sql"
     ]);
   });
 
   it("cada arquivo copiado para dist/ tem SHA-256 idêntico ao arquivo fonte em src/ (cópia byte-a-byte)", () => {
     const srcFiles = readdirSync(SRC_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql"));
-    expect(srcFiles.length).toBe(32);
+    expect(srcFiles.length).toBe(42);
     for (const name of srcFiles) {
       const srcHash = sha256(path.join(SRC_MIGRATIONS_DIR, name));
       const distHash = sha256(path.join(DIST_MIGRATIONS_DIR, name));
@@ -120,7 +130,7 @@ describe("build", () => {
     }
   });
 
-  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 16 migrations (0001-0016) sem depender de src/ nem de banco", async () => {
+  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 21 migrations (0001-0021) sem depender de src/ nem de banco", async () => {
     const compiledModuleUrl = pathToFileURL(path.join(DIST_DIR, "shared", "database", "loadMigrationDefinitions.js")).href;
     const { loadMigrationDefinitions } = (await import(compiledModuleUrl)) as {
       loadMigrationDefinitions: () => Array<{ id: string; up: string; down: string }>;
@@ -144,7 +154,12 @@ describe("build", () => {
       "0013_create_organization_external_references",
       "0014_seed_pctec_portal_application",
       "0015_add_user_access_profile",
-      "0016_create_identity_external_references"
+      "0016_create_identity_external_references",
+      "0017_add_application_access_active_grant_unique",
+      "0018_seed_pctec_helpdesk_application",
+      "0019_add_match_method_created_from_source",
+      "0020_create_import_batches",
+      "0021_create_import_batch_items"
     ]);
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);

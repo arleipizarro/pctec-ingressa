@@ -49,3 +49,21 @@ export const PCTEC_PORTAL_APPLICATION_NAME = "PCTEC Portal" as const;
  * diferente desse valor.
  */
 export const PCTEC_PORTAL_APPLICATION_PUBLIC_ID = "3f9c1a2e-7d4b-4e5a-9c3f-000000000001" as const;
+
+/**
+ * `PCTEC_HELPDESK` — v0.8.x: Application própria do Helpdesk, pelo mesmo
+ * princípio de ADR-031 §1 já aplicado ao Portal ("cada produto consumidor
+ * possuir Application própria"). Nunca reaproveita `PCTEC_PORTAL`: um
+ * usuário do Helpdesk não passa a ter acesso ao Portal por tabela
+ * nenhuma, nem o contrário.
+ *
+ * `public_id` determinístico pelo mesmo raciocínio dos dois acima —
+ * metadado técnico estável, igual entre ambientes, fixado por migration
+ * (`0018_seed_pctec_helpdesk_application.up.sql`). Valor deliberadamente
+ * diferente dos outros dois.
+ */
+export const PCTEC_HELPDESK_APPLICATION_CODE = "PCTEC_HELPDESK" as const;
+
+export const PCTEC_HELPDESK_APPLICATION_NAME = "PCTEC Helpdesk" as const;
+
+export const PCTEC_HELPDESK_APPLICATION_PUBLIC_ID = "5c7a2b91-1e6d-4f38-b7a4-000000000001" as const;

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 16 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 21 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -21,7 +21,12 @@ describe("loadMigrationDefinitions", () => {
       "0013_create_organization_external_references",
       "0014_seed_pctec_portal_application",
       "0015_add_user_access_profile",
-      "0016_create_identity_external_references"
+      "0016_create_identity_external_references",
+      "0017_add_application_access_active_grant_unique",
+      "0018_seed_pctec_helpdesk_application",
+      "0019_add_match_method_created_from_source",
+      "0020_create_import_batches",
+      "0021_create_import_batch_items"
     ]);
 
     for (const migration of migrations) {
@@ -30,13 +35,16 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015 são ALTER TABLE, 0007/0014 são seed INSERT/DELETE, 0016 cria tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019 são ALTER TABLE, 0007/0014/0018 são seed INSERT/DELETE, 0016/0020/0021 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
       "0007_seed_pctec_ingressa_application",
       "0014_seed_pctec_portal_application",
-      "0015_add_user_access_profile"
+      "0015_add_user_access_profile",
+      "0017_add_application_access_active_grant_unique",
+      "0018_seed_pctec_helpdesk_application",
+      "0019_add_match_method_created_from_source"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -384,7 +392,15 @@ describe("loadMigrationDefinitions", () => {
 
   it("nenhuma migration contém DELETE físico operacional sobre identities (dado pessoal) — exceção documentada: reversão dos seeds técnicos de applications", () => {
     const migrations = loadMigrationDefinitions();
-    const seedMigrationIds = new Set(["0007_seed_pctec_ingressa_application", "0014_seed_pctec_portal_application"]);
+    const seedMigrationIds = new Set([
+      "0007_seed_pctec_ingressa_application",
+      "0014_seed_pctec_portal_application",
+      // 0018 segue exatamente o mesmo padrão dos dois acima: seed de uma
+      // Application técnica do catálogo, cujo down remove só aquela
+      // linha, pelo public_id determinístico. A FK ON DELETE RESTRICT de
+      // `application_accesses` impede a remoção se houver histórico.
+      "0018_seed_pctec_helpdesk_application"
+    ]);
 
     for (const migration of migrations) {
       // DELETE FROM nunca é aceitável sobre `identities` (dado pessoal —

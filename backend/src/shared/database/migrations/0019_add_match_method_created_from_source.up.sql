@@ -1,0 +1,46 @@
+-- Migration: 0019_add_match_method_created_from_source
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Referência: fundação do importador Helpdesk -> Ingressa (v0.8.x),
+-- item 3 da task.
+--
+-- PROBLEMA
+--
+-- O ENUM de `match_method` (0016) tem 2 valores, e ambos afirmam que
+-- houve uma Identity PREEXISTENTE reconhecida:
+--
+--   MATCHED_BY_EMAIL          -> casou por e-mail com Identity existente
+--   MATCHED_MANUAL_CONFIRMED  -> humano confirmou o vínculo
+--
+-- Um importador que CRIA a Identity a partir do registro de origem não
+-- tem nenhum dos dois: não houve match, houve criação. Usar
+-- MATCHED_BY_EMAIL nesse caso seria registrar uma afirmação falsa na
+-- trilha de auditoria — o campo passaria a dizer "encontrei alguém com
+-- este e-mail" quando não havia ninguém.
+--
+-- SOLUÇÃO
+--
+--   CREATED_FROM_SOURCE -> a Identity foi criada a partir do registro
+--   de origem, no mesmo lote que gravou esta referência. Não houve
+--   Identity anterior; não houve, portanto, correspondência.
+--
+-- Regra de decisão completa do importador (v0.8.x):
+--
+--   referência já existe                  -> idempotência (SKIP/UPDATE)
+--   e-mail casa com Identity existente    -> QUARENTENA (nunca automático)
+--   sem Identity para aquele e-mail       -> cria + CREATED_FROM_SOURCE
+--   humano confirmou associação           -> MATCHED_MANUAL_CONFIRMED
+--   nome igual                            -> NUNCA. Não é critério.
+--
+-- Compatibilidade: ADD de valor ao final do ENUM. Nenhuma linha
+-- existente muda; nenhum valor antigo é removido ou reordenado. As duas
+-- linhas ACTIVE hoje em DEV continuam válidas.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+--
+-- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
+
+ALTER TABLE identity_external_references
+    MODIFY COLUMN match_method ENUM('MATCHED_BY_EMAIL','MATCHED_MANUAL_CONFIRMED','CREATED_FROM_SOURCE') NOT NULL
+        COMMENT 'Como o vinculo Identity <-> registro legado foi estabelecido. MATCHED_* afirmam que havia Identity preexistente; CREATED_FROM_SOURCE afirma que a Identity nasceu deste registro de origem. Nunca inferido pelo service: quem decide e sempre o chamador (CLI/importador).';

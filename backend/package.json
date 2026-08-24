@@ -20,6 +20,7 @@
     "migrate:up:dry-run": "node dist/cli/migrate.js up --dry-run",
     "migrate:down": "node dist/cli/migrate.js down",
     "migrate:down-all": "node dist/cli/migrate.js down-all",
+    "preflight:application-access-uniqueness": "node dist/cli/preflight-application-access-uniqueness.js",
     "bootstrap:first-identity": "node dist/cli/bootstrap-first-identity.js",
     "bootstrap:first-admin-access": "node dist/cli/bootstrap-first-admin-access.js",
     "bootstrap:first-credential": "node dist/cli/bootstrap-first-credential.js"

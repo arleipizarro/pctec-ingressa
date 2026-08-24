@@ -31,6 +31,10 @@ export class FakeApplicationAccessRepository implements ApplicationAccessReposit
     return false;
   }
 
+  public async existsGrantedByIdentityAndApplication(): Promise<boolean> {
+    return false;
+  }
+
   public async insert(): Promise<void> {
     // não exercitado nesta fatia
   }
