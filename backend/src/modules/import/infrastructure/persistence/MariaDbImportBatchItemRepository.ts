@@ -69,7 +69,11 @@ export class MariaDbImportBatchItemRepository implements ImportBatchItemReposito
     // Uma instrução com múltiplos VALUES: um lote de AFIP grava ~8 itens,
     // um de IRSSL grava centenas. Um INSERT por item multiplicaria os
     // round-trips sem nenhum ganho de clareza.
-    const placeholders = items.map(() => "(?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, ?)").join(", ");
+    // `before_snapshot`/`after_snapshot` são colunas JSON e recebem a
+    // string JSON crua — sem `CAST(? AS JSON)`. No MariaDB, `JSON` é
+    // apelido de `LONGTEXT` com CHECK `json_valid(...)`, e
+    // `CAST(... AS JSON)` não existe na gramática (é sintaxe do MySQL 8).
+    const placeholders = items.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").join(", ");
     const params: unknown[] = [];
 
     for (const item of items) {

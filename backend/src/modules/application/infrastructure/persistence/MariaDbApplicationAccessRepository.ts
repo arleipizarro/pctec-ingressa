@@ -5,7 +5,7 @@ import { ApplicationAccessActiveGrantConflictError } from "../../domain/errors/A
 
 /**
  * Nome do índice único criado pela migration 0017 sobre a coluna gerada
- * `active_grant_key`. Só a violação DESTE índice vira erro de domínio —
+ * `active_grant_flag`. Só a violação DESTE índice vira erro de domínio —
  * duplicidade em `uk_application_accesses_public_id`, por exemplo,
  * indicaria bug de geração de UUID e deve continuar subindo crua.
  */

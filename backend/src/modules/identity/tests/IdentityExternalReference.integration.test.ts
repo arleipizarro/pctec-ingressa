@@ -261,4 +261,61 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
       connection.release();
     }
   });
+
+  /**
+   * Migration 0019 acrescentou CREATED_FROM_SOURCE ao ENUM
+   * `match_method`. Este teste fecha o ciclo no banco real: grava pelo
+   * repositório, confere o valor CRU na coluna (o ENUM aceitou) e
+   * reconstitui pelo repositório (o VO volta com o mesmo valor). Sem ele,
+   * a única prova de CREATED_FROM_SOURCE seria unitária — e um ENUM que
+   * não foi estendido no banco só falha em tempo de execução.
+   */
+  it("persiste e reconstitui matchMethod CREATED_FROM_SOURCE (migration 0019)", async () => {
+    const connection = await pool.getConnection();
+    try {
+      const identityRepository = new MariaDbIdentityRepository(connection);
+      const referenceRepository = new MariaDbIdentityExternalReferenceRepository(connection);
+
+      const identity = Identity.create({
+        type: "HUMAN",
+        email: "synthetic.test6.999997@example.invalid",
+        fullName: "Synthetic Test Identity 6",
+        actor: SYSTEM_ACTOR,
+        correlationId: CORRELATION_ID
+      });
+      await identityRepository.insert(identity);
+
+      const reference = IdentityExternalReference.create({
+        identityPublicId: identity.getPublicId().toString(),
+        systemCode: "PCTEC_PORTAL",
+        entityType: "portal_acesso",
+        legacyId: SYNTHETIC_LEGACY_ID,
+        matchMethod: "CREATED_FROM_SOURCE",
+        actorPublicId: "8f14e45f-ceea-467e-a1a3-000000000001",
+        correlationId: CORRELATION_ID
+      });
+      await referenceRepository.insert(reference);
+
+      // 1) valor cru na coluna — prova que o ENUM do banco aceitou.
+      const [rows] = await connection.execute(
+        `SELECT match_method FROM identity_external_references
+          WHERE legacy_id = ? AND status = 'ACTIVE'`,
+        [SYNTHETIC_LEGACY_ID]
+      );
+      const persistido = (rows as Array<{ match_method: string }>)[0]?.match_method;
+      expect(persistido).toBe("CREATED_FROM_SOURCE");
+
+      // 2) reconstituição pelo repositório — o VO volta com o mesmo valor.
+      const found = await referenceRepository.findActiveBySystemCodeEntityTypeAndLegacyId(
+        SystemCode.create("PCTEC_PORTAL"),
+        EntityType.create("portal_acesso"),
+        LegacyId.create(SYNTHETIC_LEGACY_ID)
+      );
+      expect(found).toBeDefined();
+      expect(found?.getMatchMethod().toString()).toBe("CREATED_FROM_SOURCE");
+      expect(found?.isActive()).toBe(true);
+    } finally {
+      connection.release();
+    }
+  });
 });

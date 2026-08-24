@@ -25,20 +25,41 @@
 --      concorrentes leem "não existe" e ambas inserem. Um importador em
 --      lote é exatamente o cenário que dispara isso.
 --
--- SOLUÇÃO — mesma técnica já usada em 0013/0016
+-- SOLUÇÃO — flag gerada NUMÉRICA + UNIQUE KEY COMPOSTA
 --
--- Coluna VIRTUAL gerada + UNIQUE KEY sobre ela. InnoDB trata cada NULL
--- como distinto numa UNIQUE KEY, então:
---   - status = 'GRANTED'  -> chave = 'identity:application' -> no máximo 1
---   - status = 'REVOKED'  -> chave = NULL -> quantas linhas históricas
+-- Coluna VIRTUAL gerada `active_grant_flag` (1 quando GRANTED, NULL caso
+-- contrário) e UNIQUE KEY sobre
+-- (identity_public_id, application_public_id, active_grant_flag).
+-- InnoDB trata cada NULL como distinto numa UNIQUE KEY, então:
+--   - status = 'GRANTED'  -> flag = 1    -> no máximo 1 linha por par
+--   - status = 'REVOKED'  -> flag = NULL -> quantas linhas históricas
 --                            forem necessárias, sem colidir entre si nem
 --                            com a linha GRANTED
+--
+-- POR QUE NÃO A CHAVE-TEXTO CONCATENADA DE 0013/0016
+--
+-- 0013 e 0016 usam `CONCAT(...)` numa coluna gerada indexada, e ali
+-- funciona: as colunas de origem são VARCHAR. Aqui as colunas de origem
+-- são CHAR(36) — e o MariaDB 10.11 RECUSA indexar coluna gerada cuja
+-- expressão passe uma coluna CHAR por função de string:
+--
+--   ERROR 1901 (HY000): Function or expression '...' cannot be used in
+--   the GENERATED ALWAYS AS clause of `active_grant_key`
+--
+-- O motivo é que a leitura de CHAR dentro de função de string depende de
+-- `PAD_CHAR_TO_FULL_LENGTH`, que é sql_mode de SESSÃO — a expressão
+-- deixa de ser estável entre conexões, e o índice, portanto, inválido.
+-- Verificado nesta versão exata do servidor (10.11.14), pelo driver da
+-- aplicação (mysql2) e não só pelo cliente de linha de comando.
+--
+-- A flag numérica evita a função de string por completo: o único termo
+-- gerado é derivado do ENUM `status`, e os dois public_id entram
+-- DIRETAMENTE na UNIQUE KEY, sem transformação. A garantia é a mesma, e
+-- o índice ainda serve de índice de busca por (identity, application).
 --
 -- O `access_profile` fica DELIBERADAMENTE FORA da chave. Incluí-lo
 -- reintroduziria exatamente o furo 1. Trocar de perfil passa a ser
 -- revoke + grant na mesma transação — nunca dois GRANTED coexistindo.
---
--- Tamanho da coluna: CHAR(36) + ':' + CHAR(36) = 73 caracteres.
 --
 -- PREFLIGHT OBRIGATÓRIO ANTES DE APLICAR
 --
@@ -58,9 +79,9 @@
 -- NÃO EXECUTAR AUTOMATICAMENTE NESTA FATIA.
 
 ALTER TABLE application_accesses
-    ADD COLUMN active_grant_key VARCHAR(73) GENERATED ALWAYS AS (
-        CASE WHEN status = 'GRANTED' THEN CONCAT(identity_public_id, ':', application_public_id) ELSE NULL END
+    ADD COLUMN active_grant_flag TINYINT UNSIGNED GENERATED ALWAYS AS (
+        CASE WHEN status = 'GRANTED' THEN 1 ELSE NULL END
     ) VIRTUAL
-        COMMENT 'Coluna gerada, uso exclusivo de uk_app_access_active_grant abaixo - nunca lida/gravada diretamente pela aplicacao. NULL quando status != GRANTED. access_profile fica FORA da chave de proposito: a regra e um acesso ativo por identidade por aplicacao, e o perfil e atributo do acesso.',
-    ADD UNIQUE KEY uk_app_access_active_grant (active_grant_key)
-        COMMENT 'Garante, NO PROPRIO BANCO e sem janela de corrida (TOCTOU), no maximo 1 linha GRANTED por (identity_public_id, application_public_id). Linhas REVOKED tem active_grant_key NULL e nunca colidem. Troca de perfil = revoke + grant transacional.';
+        COMMENT 'Coluna gerada, uso exclusivo de uk_app_access_active_grant abaixo - nunca lida/gravada diretamente pela aplicacao. 1 quando status = GRANTED, NULL caso contrario. Flag numerica (e nao chave-texto concatenada como em 0013/0016) porque identity_public_id/application_public_id sao CHAR(36) e o MariaDB 10.11 recusa indexar coluna gerada que passe CHAR por funcao de string (ERROR 1901).',
+    ADD UNIQUE KEY uk_app_access_active_grant (identity_public_id, application_public_id, active_grant_flag)
+        COMMENT 'Garante, NO PROPRIO BANCO e sem janela de corrida (TOCTOU), no maximo 1 linha GRANTED por (identity_public_id, application_public_id). Linhas REVOKED tem active_grant_flag NULL e nunca colidem. access_profile fica FORA da chave de proposito: a regra e um acesso ativo por identidade por aplicacao, e o perfil e atributo do acesso. Troca de perfil = revoke + grant transacional.';
