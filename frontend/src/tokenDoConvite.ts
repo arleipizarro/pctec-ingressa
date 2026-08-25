@@ -55,13 +55,22 @@ export function capturarTokenDoConvite(): string {
 }
 
 /**
- * Descarta a memória da captura — **uso exclusivo de teste**.
+ * Descarta o token da memória.
  *
- * Existe porque o cache acima é global ao módulo, e um teste que rodasse
- * depois do outro herdaria o token do anterior. Nenhum código de
- * produção chama isto: em produção a tela é carregada uma vez por
- * navegação, e a memória morre com a página.
+ * Chamado quando ele **não serve mais para nada**: o convite foi
+ * consumido com sucesso, ou o servidor respondeu que ele não é mais
+ * utilizável (inexistente, expirado, já usado). Nos dois casos, manter o
+ * valor vivo no processo seria guardar uma credencial sem propósito —
+ * ela sobreviveria a tudo que acontecesse na aba depois disso.
+ *
+ * **Não é chamado quando a senha é recusada pela política.** Ali o
+ * convite continua válido e a pessoa vai tentar de novo: apagar o token
+ * transformaria um erro de digitação em "peça um convite novo ao
+ * administrador".
+ *
+ * Os testes usam a mesma função — o cache é global ao módulo, e um teste
+ * herdaria o token do anterior sem isto.
  */
-export function esquecerTokenDoConviteParaTeste(): void {
+export function descartarTokenDoConvite(): void {
   tokenCapturado = null;
 }

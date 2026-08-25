@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { ConvitePage } from "../pages/ConvitePage.js";
 import { api, ApiError } from "../api.js";
-import { esquecerTokenDoConviteParaTeste } from "../tokenDoConvite.js";
+import { descartarTokenDoConvite } from "../tokenDoConvite.js";
 
 /**
  * Token sintético. Nenhum valor real — o teste-guarda
@@ -27,7 +27,7 @@ function renderizar() {
 beforeEach(() => {
   // O módulo memoriza o token capturado; sem isto, um teste herdaria o
   // token do anterior e a asserção mediria a coisa errada.
-  esquecerTokenDoConviteParaTeste();
+  descartarTokenDoConvite();
   abrirConviteCom(`#${TOKEN}`);
   vi.spyOn(api, "previewConvite").mockResolvedValue({
     fullName: "Pessoa Convidada Sintetica",
@@ -41,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  esquecerTokenDoConviteParaTeste();
+  descartarTokenDoConvite();
   window.history.replaceState(null, "", "/");
 });
 
@@ -151,7 +151,7 @@ describe("token do convite — remoção imediata do fragmento", () => {
   });
 
   it("sem fragmento, a tela pede um convite novo e nunca chama a API", async () => {
-    esquecerTokenDoConviteParaTeste();
+    descartarTokenDoConvite();
     abrirConviteCom("");
     const previa = vi.spyOn(api, "previewConvite");
 
@@ -159,5 +159,94 @@ describe("token do convite — remoção imediata do fragmento", () => {
 
     expect(await screen.findByText(/Link de convite incompleto/)).toBeInTheDocument();
     expect(previa).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Ciclo de vida do token DEPOIS da captura.
+ *
+ * O valor vive em dois lugares de memória: o cache do módulo (que
+ * sobrevive a remontagens da tela) e o estado do componente. "Apagado"
+ * significa sair dos dois — e a prova observável é remontar a tela:
+ * sem token em lugar nenhum, ela pede um convite novo.
+ */
+describe("token do convite — descarte depois de usado", () => {
+  it("é apagado após o resgate bem-sucedido", async () => {
+    renderizar().unmount();
+
+    // Remonta SEM fragmento na URL (ele já foi removido na captura).
+    // Se o token ainda estivesse em memória, a tela voltaria ao
+    // formulário; ela pede um convite novo, provando que não está.
+    renderizar();
+    const senha = await screen.findByLabelText("Nova senha");
+    await userEvent.type(senha, "senha-sintetica-longa");
+    await userEvent.type(screen.getByLabelText("Confirme a senha"), "senha-sintetica-longa");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    expect(await screen.findByText("Senha definida")).toBeInTheDocument();
+
+    const remontada = renderizar();
+    expect(await screen.findAllByText(/Link de convite incompleto/)).not.toHaveLength(0);
+    remontada.unmount();
+  });
+
+  it("é apagado quando o servidor recusa o convite (erro terminal)", async () => {
+    vi.spyOn(api, "previewConvite").mockRejectedValue(new ApiError(401, "INVITATION_NOT_USABLE", "falhou"));
+
+    const primeira = renderizar();
+    expect(await screen.findByText(/Convite inválido, expirado ou já utilizado/)).toBeInTheDocument();
+    primeira.unmount();
+
+    // O token saiu da memória: a remontagem não tem o que apresentar.
+    const previa = vi.spyOn(api, "previewConvite");
+    renderizar();
+    expect(await screen.findByText(/Link de convite incompleto/)).toBeInTheDocument();
+    expect(previa).not.toHaveBeenCalled();
+  });
+
+  it("é apagado quando o resgate falha por convite já consumido", async () => {
+    vi.spyOn(api, "definirSenhaPorConvite").mockRejectedValue(
+      new ApiError(401, "INVITATION_NOT_USABLE", "Convite inválido, expirado ou já utilizado.")
+    );
+
+    const primeira = renderizar();
+    const senha = await screen.findByLabelText("Nova senha");
+    await userEvent.type(senha, "senha-sintetica-longa");
+    await userEvent.type(screen.getByLabelText("Confirme a senha"), "senha-sintetica-longa");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    expect(await screen.findByText("Convite inválido, expirado ou já utilizado.")).toBeInTheDocument();
+    primeira.unmount();
+
+    renderizar();
+    expect(await screen.findByText(/Link de convite incompleto/)).toBeInTheDocument();
+  });
+
+  it("NÃO é apagado quando a senha é recusada pela política — a pessoa corrige e segue", async () => {
+    const definir = vi
+      .spyOn(api, "definirSenhaPorConvite")
+      .mockRejectedValueOnce(new ApiError(422, "CREDENTIAL_PASSWORD_POLICY_VIOLATION", "Dados inválidos. Revise os campos."))
+      .mockResolvedValue({ identity: { publicId: "11111111-1111-4111-8111-111111111111" }, loginEnabled: true });
+
+    renderizar();
+    const senha = await screen.findByLabelText("Nova senha");
+    await userEvent.type(senha, "senha-sintetica-longa");
+    await userEvent.type(screen.getByLabelText("Confirme a senha"), "senha-sintetica-longa");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    expect(await screen.findByText("Dados inválidos. Revise os campos.")).toBeInTheDocument();
+
+    // Segunda tentativa, na MESMA tela: o token ainda está em memória.
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+    expect(await screen.findByText("Senha definida")).toBeInTheDocument();
+    expect(definir.mock.calls[1]?.[0]).toBe(TOKEN);
+  });
+
+  it("a senha digitada também sai da memória depois do sucesso", async () => {
+    renderizar();
+    const senha = await screen.findByLabelText("Nova senha");
+    await userEvent.type(senha, "senha-sintetica-longa");
+    await userEvent.type(screen.getByLabelText("Confirme a senha"), "senha-sintetica-longa");
+    await userEvent.click(screen.getByRole("button", { name: "Definir senha" }));
+
+    expect(await screen.findByText("Senha definida")).toBeInTheDocument();
+    expect(document.body.textContent ?? "").not.toContain("senha-sintetica-longa");
   });
 });
