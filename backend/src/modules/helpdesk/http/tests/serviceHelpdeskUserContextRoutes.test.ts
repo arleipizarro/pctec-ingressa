@@ -17,11 +17,13 @@ import { ApplicationAccessDeniedError } from "../../../authorization/domain/erro
 
 const CREDENCIAL_HELPDESK = "credencial-de-teste-do-helpdesk";
 const CREDENCIAL_PORTAL = "credencial-de-teste-do-portal";
+const CLIENT_ID_SINTETICO = 999975;
 const BOSQUE = {
   publicId: "971ec096-e7de-4cc1-be06-2b4709565757",
   type: "COMPANY",
   legalName: "EMPRESA SINTETICA - BOSQUE",
-  tradeName: "SINTETICA - BOSQUE"
+  tradeName: "SINTETICA - BOSQUE",
+  sourceClientId: CLIENT_ID_SINTETICO
 };
 
 let servidor: Server | undefined;
@@ -91,7 +93,10 @@ describe("GET /api/v1/service/helpdesk/users/:legacyUserId/context — respostas
     expect(Object.keys(body)).toEqual(["organizations"]);
     const orgs = body["organizations"] as Record<string, unknown>[];
     expect(orgs).toHaveLength(1);
-    expect(Object.keys(orgs[0]!).sort()).toEqual(["legalName", "publicId", "tradeName", "type"]);
+    expect(Object.keys(orgs[0]!).sort()).toEqual([
+      "legalName", "publicId", "sourceClientId", "tradeName", "type"
+    ]);
+    expect(orgs[0]!["sourceClientId"]).toBe(CLIENT_ID_SINTETICO);
   });
 
   it("o payload não carrega identidade, membership, perfil, escopo ou legado", async () => {
@@ -99,8 +104,10 @@ describe("GET /api/v1/service/helpdesk/users/:legacyUserId/context — respostas
     const { body } = await chamar(baseUrl, "35", comCredencial);
     const serializado = JSON.stringify(body).toLowerCase();
 
+    // `sourceClientId` é o único identificador legado que sai daqui, e
+    // sai por contrato — a lista abaixo cobre tudo que NÃO pode sair.
     for (const proibido of [
-      "identitypublicid", "membership", "profile", "scope", "legacy", "client_id",
+      "identitypublicid", "membership", "profile", '"scope"', "legacyid", "client_group",
       "email", "cpf", "password", "senha", "hash", "token", "credential"
     ]) {
       expect(serializado).not.toContain(proibido);

@@ -52,5 +52,23 @@ export interface OrganizationExternalReferenceRepository {
     entityType: EntityType
   ): Promise<OrganizationExternalReference | undefined>;
 
+  /**
+   * Conta as referências ACTIVE de uma Organization num
+   * `(systemCode, entityType)`.
+   *
+   * A UNIQUE KEY cobre "duas ACTIVE para o MESMO legacyId"; ela não
+   * cobre "uma Organization com DUAS referências ACTIVE apontando para
+   * legacyIds diferentes no mesmo sistema" — que é exatamente a
+   * ambiguidade que a fronteira service-to-service precisa recusar em
+   * vez de escolher. `findActive...` devolveria uma delas em silêncio.
+   *
+   * Opcional no contrato para não obrigar test doubles existentes.
+   */
+  countActiveByOrganizationSystemCodeAndEntityType?(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<number>;
+
   insert(reference: OrganizationExternalReference): Promise<void>;
 }

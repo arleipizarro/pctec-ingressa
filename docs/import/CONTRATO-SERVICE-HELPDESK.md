@@ -44,8 +44,20 @@ credencial de serviço válida
   → users.id → IdentityExternalReference(PCTEC_HELPDESK,'users',id) → identityPublicId
   → AuthorizeApplicationAccessService(identityPublicId, PCTEC_HELPDESK, USER)
   → Memberships ativas → Organizations
-  → { organizations: [{ publicId, type, legalName, tradeName }] }
+  → { organizations: [{ publicId, type, legalName, tradeName, sourceClientId }] }
 ```
+
+`sourceClientId` é o `clients.id` do Helpdesk, resolvido **exclusivamente**
+pela `OrganizationExternalReference` ACTIVE de `PCTEC_HELPDESK`/`clients`
+daquela Organization. É ele que permite ao consumidor limitar as próprias
+consultas pelo escopo autorizado aqui, em vez de pelo `users.client_id`
+legado.
+
+Nunca é inferido por nome, documento, membership, `users.client_id` ou
+chamado. Ausência, duplicidade, referência órfã ou id inválido respondem
+**409** e derrubam o contexto inteiro — omitir a organização da lista
+seria perda silenciosa de acesso, e devolvê-la sem `sourceClientId` daria
+ao Helpdesk uma autorização que ele não consegue aplicar.
 
 ### Respostas
 

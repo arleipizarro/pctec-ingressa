@@ -16,6 +16,12 @@ const BOSQUE = {
   legalName: "EMPRESA SINTETICA - BOSQUE",
   tradeName: "SINTETICA - BOSQUE"
 };
+const CLIENT_ID_SINTETICO = 999975;
+// UUIDs sintéticos — o VO `PublicId` valida a forma, então fixture com
+// apelido ("grp-1") não passa nem no teste.
+const GRUPO = { publicId: "11111111-1111-4111-8111-111111111111", type: "BUSINESS_GROUP", legalName: "GRUPO", tradeName: "GRUPO" };
+const OUTRA = { publicId: "22222222-2222-4222-8222-222222222222", type: "COMPANY", legalName: "OUTRA", tradeName: "OUTRA" };
+const SEM_REFERENCIA = { publicId: "33333333-3333-4333-8333-333333333333", type: "COMPANY", legalName: "SEM REF", tradeName: "SEM REF" };
 
 interface Cenario {
   readonly referenciaExiste?: boolean;
@@ -23,6 +29,9 @@ interface Cenario {
   readonly identidade?: { status: string } | null;
   readonly acessoConcedido?: boolean;
   readonly contexto?: PortalContextResult;
+  /** Referências ACTIVE de PCTEC_HELPDESK por organização. */
+  readonly referenciasPorOrganizacao?: Record<string, number | undefined>;
+  readonly totalReferenciasPorOrganizacao?: Record<string, number>;
 }
 
 function montar(cenario: Cenario = {}) {
@@ -62,6 +71,15 @@ function montar(cenario: Cenario = {}) {
           cenario.contexto ?? { identityPublicId: IDENTITY_PUBLIC_ID, organizations: [BOSQUE] }
         );
       }
+    } as never,
+    {
+      countActiveByOrganizationSystemCodeAndEntityType: async (publicId: { toString(): string }) =>
+        cenario.totalReferenciasPorOrganizacao?.[publicId.toString()] ?? 1,
+      findActiveByOrganizationSystemCodeAndEntityType: async (publicId: { toString(): string }) => {
+        const mapa = cenario.referenciasPorOrganizacao ?? { [BOSQUE.publicId]: CLIENT_ID_SINTETICO };
+        const legacyId = mapa[publicId.toString()];
+        return legacyId === undefined ? undefined : { getLegacyId: () => ({ toNumber: () => legacyId }) };
+      }
     } as never
   );
 
@@ -73,7 +91,7 @@ describe("contexto do usuário do Helpdesk — pipeline", () => {
     const { service, chamadas } = montar();
     const resultado = await service.execute(35);
 
-    expect(resultado.organizations).toEqual([BOSQUE]);
+    expect(resultado.organizations).toEqual([{ ...BOSQUE, sourceClientId: CLIENT_ID_SINTETICO }]);
     expect(chamadas.contexto).toEqual([IDENTITY_PUBLIC_ID]);
   });
 
@@ -128,15 +146,52 @@ describe("contexto do usuário do Helpdesk — pipeline", () => {
     const grupoEFilhas: PortalContextResult = {
       identityPublicId: IDENTITY_PUBLIC_ID,
       organizations: [
-        { publicId: "grp-1", type: "BUSINESS_GROUP", legalName: "GRUPO", tradeName: "GRUPO" },
+        GRUPO,
         BOSQUE,
-        { publicId: "co-2", type: "COMPANY", legalName: "OUTRA", tradeName: "OUTRA" }
+        OUTRA
       ]
     };
-    const { service } = montar({ contexto: grupoEFilhas });
+    const { service } = montar({
+      contexto: grupoEFilhas,
+      referenciasPorOrganizacao: {
+        [GRUPO.publicId]: 999901,
+        [BOSQUE.publicId]: CLIENT_ID_SINTETICO,
+        [OUTRA.publicId]: 999902
+      }
+    });
     const resultado = await service.execute(44);
 
-    expect(resultado.organizations).toEqual(grupoEFilhas.organizations);
+    expect(resultado.organizations.map((o) => o.publicId)).toEqual(
+      grupoEFilhas.organizations.map((o) => o.publicId)
+    );
+    expect(resultado.organizations.map((o) => o.sourceClientId)).toEqual([999901, CLIENT_ID_SINTETICO, 999902]);
+  });
+
+  it("409 quando a organização autorizada não tem referência de PCTEC_HELPDESK", async () => {
+    const { service } = montar({ referenciasPorOrganizacao: {} });
+    await expect(service.execute(35)).rejects.toThrow(HelpdeskContextInconsistentError);
+  });
+
+  it("409 quando a organização tem mais de uma referência ACTIVE", async () => {
+    const { service } = montar({ totalReferenciasPorOrganizacao: { [BOSQUE.publicId]: 2 } });
+    await expect(service.execute(35)).rejects.toThrow(HelpdeskContextInconsistentError);
+  });
+
+  it.each([0, -1, 1.5])("409 quando o id legado da referência é inválido (%s)", async (legacyId) => {
+    const { service } = montar({ referenciasPorOrganizacao: { [BOSQUE.publicId]: legacyId } });
+    await expect(service.execute(35)).rejects.toThrow(HelpdeskContextInconsistentError);
+  });
+
+  it("uma organização sem referência derruba o contexto inteiro — nunca some da lista em silêncio", async () => {
+    const duas: PortalContextResult = {
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      organizations: [BOSQUE, SEM_REFERENCIA]
+    };
+    const { service } = montar({
+      contexto: duas,
+      referenciasPorOrganizacao: { [BOSQUE.publicId]: CLIENT_ID_SINTETICO }
+    });
+    await expect(service.execute(35)).rejects.toThrow(HelpdeskContextInconsistentError);
   });
 
   it("o resultado não carrega identityPublicId nem qualquer dado pessoal", async () => {
