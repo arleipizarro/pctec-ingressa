@@ -3,6 +3,7 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
+import { existeLinha } from "../../../shared/types/integration-preconditions.js";
 import { loadEnv } from "../../../app/config/env.js";
 import { createPool } from "../../../shared/database/Pool.js";
 import { createApp } from "../../../app/http/createApp.js";
@@ -67,7 +68,24 @@ import { PublicId } from "../../organization/domain/value-objects/PublicId.js";
  * (`fixtureCompanyPublicId`) já prova o mesmo caminho de código que
  * qualquer uma das 4 exercitaria.
  */
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Esta suíte verifica que fixtures previamente semeadas permanecem
+ * íntegras. Num schema de teste recém-criado elas não existem — e
+ * "não existe fixture para conferir" é ambiente, não defeito.
+ */
+const shouldRun =
+  shouldRunIntegrationTests() &&
+  (await existeLinha(CONFIG_DA_SONDA, "SELECT 1 FROM organizations WHERE legal_name LIKE ? LIMIT 1", [
+    "%Fixture External Reference%"
+  ]));
 
 describe.skipIf(!shouldRun)("OrganizationExternalReference route (integração - requer MariaDB real, P1)", () => {
   let pool: Pool;

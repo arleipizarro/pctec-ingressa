@@ -14,6 +14,7 @@
 import type { Pool } from "mysql2/promise";
 import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { fixtureRunId } from "../../../shared/types/integration-database-guard.js";
 
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
 import { loadEnv } from "../../../app/config/env.js";
@@ -31,6 +32,11 @@ import { SERVICE_CREDENTIAL_HEADER_NAME } from "../http/requireServiceCredential
 
 const shouldRun = shouldRunIntegrationTests();
 const SYNTHETIC_LEGACY_ID = 999997;
+/**
+ * E-mail único por execução: fixo, ele sobrevivia ao teardown parcial e
+ * a rodada seguinte colidia na UNIQUE KEY de e-mail.
+ */
+const EMAIL_SINTETICO = `synthetic.p1b0.${fixtureRunId()}@example.invalid`;
 const SYSTEM_ACTOR = ActorPublicId.system();
 const CORRELATION_ID = "8f14e45f-ceea-467e-a1a3-000000000001";
 const TEST_SERVICE_CREDENTIAL = "integracao-test-p1b0-fatia4-segredo";
@@ -53,15 +59,14 @@ describe.skipIf(!shouldRun)(
         password: env.DB_PASSWORD
       });
 
-      // Limpa fixtures sintéticas anteriores
-      await pool.execute(`DELETE FROM identity_external_references WHERE legacy_id = ?`, [SYNTHETIC_LEGACY_ID]);
+      await limparFixtures();
 
       // Cria Identity sintética como FK para a referência
       const unitOfWork = new MariaDbUnitOfWork(pool);
       const identity = Identity.create({
         type: "HUMAN",
         fullName: "Synthetic Integration Test P1B0 Fatia4",
-        email: "synthetic.p1b0.fatia4.999997@example.invalid",
+        email: EMAIL_SINTETICO,
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
       });
@@ -104,11 +109,27 @@ describe.skipIf(!shouldRun)(
       baseUrl = `http://127.0.0.1:${(address as { port: number }).port}`;
     });
 
+    // Teardown em `finally`: o servidor precisa fechar mesmo que a
+    // limpeza falhe, e a limpeza precisa acontecer mesmo que o
+    // fechamento falhe — senão a Identity sintética fica no banco, que
+    // foi como resíduo de teste acabou aparecendo na tela do DEV.
     afterAll(async () => {
-      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
-      await pool.execute(`DELETE FROM identity_external_references WHERE legacy_id = ?`, [SYNTHETIC_LEGACY_ID]);
-      await pool.end();
+      try {
+        await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+      } finally {
+        try {
+          await limparFixtures();
+        } finally {
+          await pool.end();
+        }
+      }
     });
+
+    /** Remove a referência E a Identity criada como FK dela. */
+    async function limparFixtures(): Promise<void> {
+      await pool.execute(`DELETE FROM identity_external_references WHERE legacy_id = ?`, [SYNTHETIC_LEGACY_ID]);
+      await pool.execute(`DELETE FROM identities WHERE email_normalized = ?`, [EMAIL_SINTETICO]);
+    }
 
     it("resolve legacyId=999997 → identityPublicId correto via banco real", async () => {
       const res = await fetch(

@@ -201,6 +201,19 @@ export class MariaDbIdentityRepository implements IdentityRepository {
    * condição `WHERE version = expectedVersion` continua sendo a
    * garantia de concorrência).
    */
+  /**
+   * DELETE físico com trava otimista. Devolve quantas linhas saíram — o
+   * chamador decide se zero é erro (é: significa que a versão mudou ou a
+   * linha já não existe).
+   */
+  public async deleteByPublicId(publicId: PublicId, expectedVersion: number): Promise<number> {
+    const [result] = await this.connection.execute(
+      `DELETE FROM identities WHERE public_id = ? AND version = ?`,
+      [publicId.toString(), expectedVersion]
+    );
+    return (result as { affectedRows?: number }).affectedRows ?? 0;
+  }
+
   public async update(identity: Identity, expectedVersion: number): Promise<void> {
     const cpf = identity.getCpf();
     const deletedBy = identity.getDeletedByPublicIdForPersistence();

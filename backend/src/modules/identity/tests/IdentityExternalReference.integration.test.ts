@@ -15,8 +15,9 @@
  * (auditoria de isolamento: só `identities` + `identity_external_references`
  * + `audit_events`).
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createPool } from "mysql2/promise";
+import { fixtureRunId } from "../../../shared/types/integration-database-guard.js";
 import { MariaDbIdentityRepository } from "../infrastructure/persistence/MariaDbIdentityRepository.js";
 import { MariaDbIdentityExternalReferenceRepository } from "../infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
 import { Identity } from "../domain/Identity.js";
@@ -39,17 +40,42 @@ const CORRELATION_ID = "8f14e45f-ceea-467e-a1a3-000000000002";
 // legacyId sintético — nunca colide com dado real de produção/piloto.
 const SYNTHETIC_LEGACY_ID = 999997;
 
+/**
+ * Sufixo único por execução. E-mail fixo fazia a segunda rodada colidir
+ * na UNIQUE KEY de e-mail — a suíte limpava as referências e deixava as
+ * Identities para trás. Com o sufixo, cada rodada tem seu próprio
+ * conjunto, e o teardown sabe exatamente o que remover.
+ */
+const RUN = fixtureRunId();
+const dominioDaRodada = (prefixo: string): string => `${prefixo}.${RUN}@example.invalid`;
+
 describe("IdentityExternalReference — integração MariaDB (migration 0016)", () => {
   let pool: Awaited<ReturnType<typeof createPool>>;
 
   beforeEach(async () => {
     pool = createPool(DB_CONFIG);
     // Limpa apenas as linhas sintéticas desta suíte — nunca DELETE geral.
-    await pool.execute(
-      `DELETE FROM identity_external_references WHERE legacy_id = ?`,
-      [SYNTHETIC_LEGACY_ID]
-    );
+    await limparFixtures();
   });
+
+  // Teardown no `afterEach`, e não só no `beforeEach`: uma suíte que
+  // limpa apenas na entrada deixa resíduo depois da última execução —
+  // que foi exatamente como seis Identities de teste acabaram visíveis
+  // na tela administrativa do DEV.
+  afterEach(async () => {
+    try {
+      await limparFixtures();
+    } finally {
+      await pool.end();
+    }
+  });
+
+  async function limparFixtures(): Promise<void> {
+    await pool.execute(`DELETE FROM identity_external_references WHERE legacy_id = ?`, [
+      SYNTHETIC_LEGACY_ID
+    ]);
+    await pool.execute(`DELETE FROM identities WHERE email_normalized LIKE ?`, [`%.${RUN}@example.invalid`]);
+  }
 
   it("insere e reconstrói IdentityExternalReference com matchMethod via MariaDB real", async () => {
     const connection = await pool.getConnection();
@@ -60,7 +86,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
       // Cria uma Identity sintética para ser a FK da referência.
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test"),
         fullName: "Synthetic Test Identity",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
@@ -111,7 +137,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
       const identityRepository = new MariaDbIdentityRepository(connection);
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test2.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test2"),
         fullName: "Synthetic Test Identity 2",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
@@ -148,7 +174,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
 
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test3.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test3"),
         fullName: "Synthetic Test Identity 3",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
@@ -184,7 +210,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
 
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test4.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test4"),
         fullName: "Synthetic Test Identity 4",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
@@ -228,7 +254,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
       const identityRepository = new MariaDbIdentityRepository(connection);
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test5.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test5"),
         fullName: "Synthetic Test Identity 5",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID
@@ -278,7 +304,7 @@ describe("IdentityExternalReference — integração MariaDB (migration 0016)", 
 
       const identity = Identity.create({
         type: "HUMAN",
-        email: "synthetic.test6.999997@example.invalid",
+        email: dominioDaRodada("synthetic.test6"),
         fullName: "Synthetic Test Identity 6",
         actor: SYSTEM_ACTOR,
         correlationId: CORRELATION_ID

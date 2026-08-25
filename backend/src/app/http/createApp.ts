@@ -371,7 +371,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
       applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
       profile: "ADMIN"
     }),
-    createAdminWhoamiRoutes(),
+    createAdminWhoamiRoutes(getIdentityByPublicId),
     // API administrativa da UI (v0.9.x) — MESMO namespace, MESMA cadeia
     // (sessão → ADMIN em PCTEC_INGRESSA), montada uma vez só. Leitura é
     // projeção paginada; toda mutação delega ao Application Service que

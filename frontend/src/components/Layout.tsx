@@ -38,7 +38,7 @@ export function Layout({ sessao, onSair }: { sessao: Sessao; onSair: () => void 
       <div className="conteudo">
         <header className="topo">
           <span className="usuario">
-            Identidade <strong>{sessao.identityPublicId.slice(0, 8)}…</strong> · perfil {sessao.accessProfile}
+            <strong>{sessao.nomeExibido}</strong> · perfil {sessao.accessProfile}
           </span>
           <button type="button" onClick={sair}>Sair</button>
         </header>

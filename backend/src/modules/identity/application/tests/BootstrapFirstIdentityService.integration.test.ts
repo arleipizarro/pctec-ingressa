@@ -2,6 +2,7 @@ import type { Pool } from "mysql2/promise";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shouldRunIntegrationTests } from "../../../../shared/types/integration-test-guard.js";
+import { tabelaEstaVazia } from "../../../../shared/types/integration-preconditions.js";
 import { loadEnv } from "../../../../app/config/env.js";
 import { createPool } from "../../../../shared/database/Pool.js";
 import { MariaDbIdentityRepository } from "../../infrastructure/persistence/MariaDbIdentityRepository.js";
@@ -33,7 +34,21 @@ import { BootstrapAlreadyCompletedError } from "../errors/BootstrapErrors.js";
  * limpeza remove a fixture criada, restaurando o banco a
  * `COUNT(identities) = 0` para a suíte poder ser executada de novo.
  */
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Esta suíte exige schema PRISTINO (`COUNT(identities) = 0`): ela prova o
+ * comportamento do primeiro bootstrap. Compartilhar o schema com outras
+ * suítes a faria falhar por contaminação, não por defeito — então pula
+ * com motivo explícito quando o schema já tem gente.
+ */
+const shouldRun = shouldRunIntegrationTests() && (await tabelaEstaVazia(CONFIG_DA_SONDA, "identities"));
 
 describe.skipIf(!shouldRun)("BootstrapFirstIdentityService (integração — requer MariaDB real, banco começando vazio)", () => {
   let pool: Pool;

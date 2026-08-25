@@ -57,7 +57,10 @@ async function requisitar<T>(caminho: string, init: RequestInit = {}): Promise<T
 }
 
 export const api = {
-  whoami: () => requisitar<{ identity: { publicId: string }; access: { profile: string } }>("/admin/whoami"),
+  whoami: () =>
+    requisitar<{ identity: { publicId: string; fullName: string | null }; access: { profile: string } }>(
+      "/admin/whoami"
+    ),
   login: (email: string, password: string) =>
     requisitar<unknown>("/sessions", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => requisitar<unknown>("/sessions/current", { method: "DELETE" }),
