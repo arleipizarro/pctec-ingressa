@@ -1,6 +1,8 @@
-# Contrato service-to-service do Helpdesk — a definir na próxima fatia
+# Contrato service-to-service do Helpdesk
 
-Status: **contrato registrado, não implementado** (v0.8.x, fundação).
+Status: **implementado** (v0.8.x). Rota, credencial e códigos de resposta
+conforme abaixo; a única diferença em relação ao registro original é o
+nome do header, explicada na seção seguinte.
 
 ## Credencial própria
 
@@ -16,8 +18,14 @@ aplicado às Applications: cada consumidor com identidade própria.
 
 ```
 GET /api/v1/service/helpdesk/users/:legacyUserId/context
-Header: X-Service-Credential: <INGRESSA_HELPDESK_SERVICE_CREDENTIAL>
+Header: X-Helpdesk-Service-Credential: <INGRESSA_HELPDESK_SERVICE_CREDENTIAL>
 ```
+
+O header é `X-Helpdesk-Service-Credential`, e não um `X-Service-Credential`
+genérico: com dois consumidores (Portal e Helpdesk), um header único faria
+a credencial de um ser aceita no namespace do outro — exatamente o
+acoplamento que a seção "Credencial própria" existe para impedir. O Portal
+já usa `X-Portal-Service-Credential` desde P1A.1; este é o par simétrico.
 
 ### Resolução interna
 
@@ -44,10 +52,19 @@ credencial de serviço válida
 | situação | resposta |
 |---|---|
 | credencial ausente/inválida | `401` |
-| sem `ApplicationAccess(PCTEC_HELPDESK)` | `403` |
-| sem membership | `403` — nunca `200` com lista vazia |
-| referência externa inexistente | `404` |
+| identidade não ACTIVE | `403` (`HELPDESK_IDENTITY_NOT_ACTIVE`) |
+| sem `ApplicationAccess(PCTEC_HELPDESK)` ou revogado | `403` |
+| sem membership | `403` (`HELPDESK_CONTEXT_EMPTY`) — nunca `200` com lista vazia |
+| referência externa inexistente | `404` — usuário ainda não gerenciado |
+| referência ambígua ou cadastro inconsistente | `409` |
+| `legacyUserId` malformado | `422` |
 | ok | `200` com as organizations autorizadas |
+
+**404 e 403 mandam o consumidor fazer coisas diferentes.** `404` significa
+"ainda não gerenciado pelo Ingressa": o Helpdesk mantém o comportamento
+legado. `403` significa "gerenciado e não autorizado": o Helpdesk nega, e
+cair no legado aqui devolveria o acesso que acabou de ser revogado. `409`
+também nega — não se adivinha sobre cadastro que ninguém entende.
 
 Cliente sem membership recebe **403**, não uma lista vazia: lista vazia é
 ambígua entre "não tem acesso" e "tem acesso a nada", e o consumidor

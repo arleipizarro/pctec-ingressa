@@ -5,6 +5,16 @@ import { ServiceCredentialInvalidError } from "../domain/errors/PortalErrors.js"
 export const SERVICE_CREDENTIAL_HEADER_NAME = "x-portal-service-credential";
 
 /**
+ * Header do consumidor Helpdesk. Cabeçalho PRÓPRIO, e não um genérico
+ * compartilhado: com dois consumidores, um header único faria a
+ * credencial do Helpdesk ser aceita no namespace do Portal e vice-versa
+ * — exatamente o acoplamento que o contrato
+ * (`docs/import/CONTRATO-SERVICE-HELPDESK.md`, "Credencial própria")
+ * existe para impedir.
+ */
+export const HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME = "x-helpdesk-service-credential";
+
+/**
  * Middleware — P1A.1 (v0.7.x). Protege a fronteira service-to-service
  * `/api/v1/service/portal/...`, **completamente separada** da fronteira
  * browser-facing `/api/v1/portal/...` (nunca a mesma rota, nunca o
@@ -36,7 +46,10 @@ export const SERVICE_CREDENTIAL_HEADER_NAME = "x-portal-service-credential";
  * só esta rota específica fica indisponível quando ela não está
  * configurada.
  */
-export function createRequireServiceCredential(configuredCredential: string) {
+export function createRequireServiceCredential(
+  configuredCredential: string,
+  headerName: string = SERVICE_CREDENTIAL_HEADER_NAME
+) {
   // Pré-computa o digest do segredo configurado uma única vez (não a
   // cada requisição) — o valor em si nunca muda durante a vida do
   // processo, só o header recebido varia por chamada.
@@ -56,7 +69,7 @@ export function createRequireServiceCredential(configuredCredential: string) {
       return;
     }
 
-    const receivedHeader = req.headers[SERVICE_CREDENTIAL_HEADER_NAME];
+    const receivedHeader = req.headers[headerName];
     const receivedCredential = Array.isArray(receivedHeader) ? receivedHeader[0] : receivedHeader;
     if (receivedCredential === undefined || receivedCredential.length === 0) {
       next(new ServiceCredentialInvalidError());
