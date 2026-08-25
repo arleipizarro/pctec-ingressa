@@ -9,6 +9,7 @@ import { OrganizacoesPage } from "./pages/OrganizacoesPage.js";
 import { OrganizacaoDetalhePage } from "./pages/OrganizacaoDetalhePage.js";
 import { ImportacoesPage } from "./pages/ImportacoesPage.js";
 import { LoteDetalhePage } from "./pages/LoteDetalhePage.js";
+import { NovaImportacaoPage } from "./pages/NovaImportacaoPage.js";
 
 export function App(): JSX.Element {
   const { sessao, carregando, recarregar, encerrar } = useSessao();
@@ -38,6 +39,8 @@ export function App(): JSX.Element {
         <Route path="organizacoes" element={<OrganizacoesPage />} />
         <Route path="organizacoes/:publicId" element={<OrganizacaoDetalhePage />} />
         <Route path="importacoes" element={<ImportacoesPage />} />
+        {/* Rota literal ANTES da paramétrica: `nova` não é um publicId. */}
+        <Route path="importacoes/nova" element={<NovaImportacaoPage />} />
         <Route path="importacoes/:publicId" element={<LoteDetalhePage />} />
         <Route path="*" element={<div className="vazio">Página não encontrada.</div>} />
       </Route>

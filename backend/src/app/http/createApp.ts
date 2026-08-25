@@ -1,4 +1,5 @@
-import express, { type Express, type NextFunction, type Response } from "express";
+import express, { Router, type Express, type NextFunction, type Response } from "express";
+import type { Pool } from "mysql2/promise";
 
 import { createPool } from "../../shared/database/Pool.js";
 import { loadEnv } from "../config/env.js";
@@ -27,6 +28,12 @@ import { AuthorizeApplicationAccessService } from "../../modules/authorization/a
 import { createRequireApplicationAccess } from "../../modules/authorization/http/requireApplicationAccess.js";
 import { createAdminWhoamiRoutes } from "../../modules/authorization/http/adminRoutes.js";
 import { createAdminApiRoutes, type AdminApiDeps } from "../../modules/admin/http/adminApiRoutes.js";
+import {
+  createHelpdeskImportRoutes,
+  type HelpdeskImportApiDeps
+} from "../../modules/admin/http/helpdeskImportRoutes.js";
+import { composeHelpdeskImport } from "../../modules/import/infrastructure/HelpdeskImportComposition.js";
+import { createRequireSafeOrigin } from "../../modules/security/http/requireSafeOrigin.js";
 import { MariaDbUnitOfWork } from "../../shared/database/UnitOfWork.js";
 import { MariaDbAdminReadRepository } from "../../modules/admin/infrastructure/persistence/MariaDbAdminReadRepository.js";
 import { RevokeApplicationAccessService } from "../../modules/application/application/RevokeApplicationAccessService.js";
@@ -155,6 +162,15 @@ export interface CreateAppOptions {
   /** Injetável para teste da API administrativa (v0.9.x). */
   readonly adminApi?: AdminApiDeps;
   /**
+   * Injetável para teste do assistente de importação (v0.10.x).
+   *
+   * Quando omitido, `createApp()` tenta montar o assistente real a
+   * partir de `loadHelpdeskSourceConfig()`. Faltando a configuração da
+   * fonte, as rotas do assistente respondem 503 — nunca somem
+   * silenciosamente e nunca operam com credencial adivinhada.
+   */
+  readonly helpdeskImport?: HelpdeskImportApiDeps;
+  /**
    * Injetável para testes — P1B.0 Fatia 4 (v0.7.x). Quando omitido,
    * `createApp()` constrói um `GetActiveIdentityExternalReferenceService`
    * real, usado por
@@ -254,6 +270,64 @@ function defaultResolvePortalTenantScopeService(
     new MariaDbOrganizationRelationshipRepository(pool),
     getActiveOrganizationExternalReferenceService
   );
+}
+
+/**
+ * Router do assistente — montado sempre, funcional só quando a fonte
+ * está configurada.
+ *
+ * A configuração da fonte Helpdesk (`HELPDESK_DB_*`) vive fora do
+ * `.env` do backend, num env-file próprio de permissão 600, e o
+ * processo do servidor pode legitimamente não tê-la. Três respostas
+ * seriam possíveis e duas são erradas:
+ *
+ *  - **derrubar o boot** puniria todo o resto da API por causa de uma
+ *    funcionalidade opcional: login, portal e contexto do Helpdesk
+ *    parariam junto;
+ *  - **não montar a rota** devolveria 404, que significa "não existe" —
+ *    e a rota existe, o que falta é configuração. Quem operasse iria
+ *    procurar erro de digitação na URL;
+ *  - **503 com código próprio** diz a verdade: a funcionalidade existe,
+ *    está indisponível, e o motivo é configuração ausente.
+ *
+ * Fail-closed em qualquer caso: sem credencial da fonte, nada é lido e
+ * nada é escrito. Nunca há default de host, usuário ou senha.
+ */
+function helpdeskImportRouter(options: CreateAppOptions, ingressaPool: Pool | undefined): Router {
+  if (options.helpdeskImport !== undefined) {
+    return createHelpdeskImportRoutes(options.helpdeskImport);
+  }
+
+  try {
+    const composicao = composeHelpdeskImport(ingressaPool!);
+    return createHelpdeskImportRoutes({
+      catalogService: composicao.catalogService,
+      wizardService: composicao.wizardService
+    });
+  } catch (error) {
+    // A mensagem do erro de configuração lista NOMES de variável, nunca
+    // valores (ver `MissingHelpdeskSourceConfigError`) — um erro de
+    // configuração não pode ser o caminho pelo qual a senha aparece num
+    // log de operação. Ainda assim ela não vai para a resposta HTTP:
+    // quem está do lado de fora não precisa da lista.
+    const motivo = error instanceof Error ? error.message : String(error);
+    const router = Router();
+    router.use((_req, res: Response) => {
+      res.status(503).json({
+        error: {
+          code: "IMPORT_WIZARD_SOURCE_NOT_CONFIGURED",
+          message:
+            "Assistente de importação indisponível: a configuração da fonte Helpdesk não está presente neste processo.",
+          details: []
+        }
+      });
+    });
+    // Registrado uma vez, no boot, para que a indisponibilidade seja
+    // diagnosticável sem precisar reproduzir a requisição.
+    // eslint-disable-next-line no-console -- diagnóstico de boot, sem valor de credencial.
+    console.warn(`[helpdesk-import] rotas do assistente indisponíveis: ${motivo}`);
+    return router;
+  }
 }
 
 /**
@@ -357,6 +431,30 @@ export function createApp(options: CreateAppOptions = {}): Express {
     "/api/v1/me",
     createRequireAuthenticatedSession(validateSessionService),
     createMeRoutes()
+  );
+  // Assistente de importação Helpdesk (v0.10.x) — MESMA cadeia de
+  // autorização do restante de /api/v1/admin (sessão → Identity ACTIVE →
+  // ADMIN em PCTEC_INGRESSA), MAIS a guarda de origem.
+  //
+  // Montado no próprio prefixo, ANTES do /api/v1/admin genérico, em vez
+  // de encaixado no meio da cadeia dele. A diferença é observável: como
+  // middleware do router administrativo inteiro, a guarda de origem
+  // passaria a responder 403 a qualquer método mutável que nenhuma rota
+  // administrativa atende — trocando o 404 correto ("essa rota não
+  // existe") por um 403 enganoso ("sua origem não é confiável").
+  //
+  // A guarda vale para o router inteiro do assistente, incluindo as
+  // rotas que ainda não existem: montada aqui, a rota nova nasce
+  // protegida, e desprotegê-la exige um ato deliberado.
+  app.use(
+    "/api/v1/admin/helpdesk-import",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
+      profile: "ADMIN"
+    }),
+    createRequireSafeOrigin(allowedOrigins),
+    helpdeskImportRouter(options, sharedPool)
   );
   // GET /api/v1/admin/whoami — v0.6.x, Fase F. Ordem OBRIGATÓRIA:
   // requireAuthenticatedSession (autenticação) SEMPRE antes de

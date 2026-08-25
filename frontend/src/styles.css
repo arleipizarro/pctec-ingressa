@@ -92,3 +92,12 @@ button:disabled { opacity: .55; cursor: not-allowed; }
   .sidebar nav a.ativo { border-left-color: transparent; border-bottom-color: #fff; }
   .chave-valor { grid-template-columns: 1fr; }
 }
+
+/* Link que age como botão primário — a ação de entrada do assistente é
+   uma NAVEGAÇÃO, não uma mutação, então o elemento certo é <a>. Só a
+   aparência é emprestada do botão. */
+.botao-primario { display: inline-block; padding: 8px 14px; border-radius: 6px;
+  background: var(--pctec-azul); color: #fff; border: 1px solid var(--pctec-azul); font-size: .9rem; }
+.botao-primario:hover { text-decoration: none; opacity: .92; }
+details > summary { cursor: pointer; padding: 8px 0; font-size: .92rem; }
+details[open] > summary { font-weight: 600; }

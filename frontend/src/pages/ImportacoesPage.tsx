@@ -15,9 +15,16 @@ export function ImportacoesPage(): JSX.Element {
     <>
       <h2>Importações</h2>
       <p className="subtitulo">
-        Lotes do importador. Esta tela é <strong>somente leitura</strong> — aplicar um lote continua
-        sendo operação de CLI, com aprovação explícita.
+        Lotes do importador. A listagem é somente leitura; para criar um lote novo, use o
+        assistente — ele executa o dry-run, mostra as decisões e exige confirmação forte antes de
+        aplicar.
       </p>
+
+      <div className="barra">
+        <Link className="botao-primario" to="/importacoes/nova">
+          Nova importação do Helpdesk
+        </Link>
+      </div>
 
       <Estado carregando={carregando} erro={erro} vazio={dados !== null && dados.items.length === 0}>
         {dados !== null && (
