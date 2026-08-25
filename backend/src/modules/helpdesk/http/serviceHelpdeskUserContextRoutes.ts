@@ -64,7 +64,8 @@ export function createServiceHelpdeskUserContextRoutes(
             publicId: org.publicId,
             type: org.type,
             legalName: org.legalName,
-            tradeName: org.tradeName ?? null
+            tradeName: org.tradeName ?? null,
+            sourceClientId: org.sourceClientId
           }))
         });
       })

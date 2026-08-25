@@ -307,7 +307,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
       new MariaDbIdentityExternalReferenceRepository(sharedPool!),
       identityRepository,
       authorizeApplicationAccessService,
-      getPortalContextService
+      getPortalContextService,
+      new MariaDbOrganizationExternalReferenceRepository(sharedPool!)
     );
   const resolvePortalTenantScopeService =
     options.resolvePortalTenantScopeService ??

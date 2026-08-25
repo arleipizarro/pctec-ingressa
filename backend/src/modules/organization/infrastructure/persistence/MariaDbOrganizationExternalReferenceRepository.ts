@@ -115,6 +115,26 @@ export class MariaDbOrganizationExternalReferenceRepository implements Organizat
   }
 
   /**
+   * Conta referências ACTIVE da Organization naquele sistema/entidade —
+   * usado pela fronteira service-to-service do Helpdesk para recusar
+   * ambiguidade. Sem `LIMIT`: saber se há mais de uma é o objetivo.
+   */
+  public async countActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<number> {
+    const [rows] = await this.connection.execute(
+      `SELECT COUNT(*) AS total
+         FROM organization_external_references
+        WHERE organization_public_id = ? AND system_code = ? AND entity_type = ? AND status = 'ACTIVE'`,
+      [organizationPublicId.toString(), systemCode.toString(), entityType.toString()]
+    );
+    const rowList = rows as { total: number | string }[];
+    return Number(rowList[0]?.total ?? 0);
+  }
+
+  /**
    * A checagem otimista (`existsActiveBySystemCodeEntityTypeAndLegacyId`,
    * chamada pelo Application Service antes deste `insert`) cobre o caso
    * comum com uma mensagem de erro de domínio amigável, mas **não é a
