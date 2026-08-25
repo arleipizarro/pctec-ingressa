@@ -16,12 +16,13 @@ import * as fixtures from "./fixtures.js";
  * TODAS as fixtures são sintéticas (`@example.invalid`, ids `9999xx`).
  * `semPiiNasFixtures.test.ts` reprova o contrário.
  */
-const SESSAO_ADMIN = {
+/** A sessão da UI vem de `/api/v1/apps` (ver `auth.ts`), não de `whoami`. */
+const PAINEL_ADMIN = {
   identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: "Administrador Sintetico" },
-  access: { profile: "ADMIN" }
+  applications: [{ code: "PCTEC_INGRESSA", name: "PCTEC Ingressa", profile: "ADMIN", launchUrl: "/admin" }]
 };
 
-function renderizar(rota = "/importacoes/nova") {
+function renderizar(rota = "/admin/importacoes/nova") {
   return render(
     <MemoryRouter initialEntries={[rota]}>
       <App />
@@ -30,7 +31,7 @@ function renderizar(rota = "/importacoes/nova") {
 }
 
 beforeEach(() => {
-  vi.spyOn(api, "whoami").mockResolvedValue(SESSAO_ADMIN);
+  vi.spyOn(api, "apps").mockResolvedValue(PAINEL_ADMIN);
   vi.spyOn(api, "importBatches").mockResolvedValue(fixtures.PAGINA_LOTES);
   vi.spyOn(api, "organizations").mockResolvedValue(fixtures.PAGINA_ORGANIZACOES_COM_GRUPO);
   vi.spyOn(api, "helpdeskCompanies").mockResolvedValue(fixtures.PAGINA_EMPRESAS);
@@ -67,14 +68,14 @@ async function avancarAte(destino: "SELECAO" | "MAPEAMENTO" | "PREVIA" | "REVISA
 
 describe("entrada do assistente", () => {
   it("a tela de Importações oferece o botão de nova importação", async () => {
-    renderizar("/importacoes");
+    renderizar("/admin/importacoes");
 
     const link = await screen.findByRole("link", { name: "Nova importação do Helpdesk" });
-    expect(link).toHaveAttribute("href", "/importacoes/nova");
+    expect(link).toHaveAttribute("href", "/admin/importacoes/nova");
   });
 
   it("o link leva ao assistente, na primeira etapa", async () => {
-    renderizar("/importacoes");
+    renderizar("/admin/importacoes");
 
     await userEvent.click(await screen.findByRole("link", { name: "Nova importação do Helpdesk" }));
 
@@ -434,7 +435,7 @@ describe("etapa 5 — resultado", () => {
 
     expect(screen.getByRole("link", { name: "Ver a trilha completa do lote" })).toHaveAttribute(
       "href",
-      `/importacoes/${fixtures.LOTE_APPLY_PUBLIC_ID}`
+      `/admin/importacoes/${fixtures.LOTE_APPLY_PUBLIC_ID}`
     );
   });
 

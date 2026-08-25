@@ -155,6 +155,58 @@ export class Credential {
     return credential;
   }
 
+  /**
+   * Cria a `Credential` `LOCAL_PASSWORD` de uma Identity que acabou de
+   * definir a própria senha por convite — v1.0.
+   *
+   * Distinta de `createFoundational()` num único ponto, e é o ponto que
+   * importa: aqui EXISTE um ator real — a própria pessoa — então o
+   * evento nunca carrega o marcador `"BOOTSTRAP"`. Reutilizar
+   * `createFoundational()` faria a auditoria dizer que a plataforma
+   * criou a senha, quando quem criou foi o titular.
+   *
+   * Continua sem conhecer senha em texto puro: recebe o `PasswordHash`
+   * já calculado pela infraestrutura, exatamente como as demais
+   * fábricas deste agregado.
+   */
+  public static createForInvitedIdentity(props: CreateFoundationalCredentialProps): Credential {
+    const publicId = PublicId.generate();
+    const type = CredentialType.localPassword();
+    const now = props.now ?? new Date();
+
+    const credential = new Credential({
+      internalId: undefined,
+      publicId,
+      identityPublicId: props.identityPublicId,
+      type,
+      passwordHash: props.passwordHash,
+      status: CredentialStatus.active(),
+      lastAuthenticatedAt: undefined,
+      version: 1,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    credential.domainEvents.push(
+      createCredentialCreatedEvent(
+        {
+          aggregatePublicId: publicId.toString(),
+          actorPublicId: props.identityPublicId,
+          correlationId: props.correlationId,
+          ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+          occurredAt: now
+        },
+        {
+          credentialPublicId: publicId.toString(),
+          identityPublicId: props.identityPublicId,
+          type: type.toString()
+        }
+      )
+    );
+
+    return credential;
+  }
+
   public static reconstitute(state: CredentialPersistedState): Credential {
     return new Credential({
       internalId: state.internalId,

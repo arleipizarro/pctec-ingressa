@@ -133,12 +133,12 @@ export function NovaImportacaoPage(): JSX.Element {
   }
 
   function cancelar(): void {
-    navegar("/importacoes");
+    navegar("/admin/importacoes");
   }
 
   return (
     <>
-      <p className="subtitulo"><Link to="/importacoes">← Importações</Link></p>
+      <p className="subtitulo"><Link to="/admin/importacoes">← Importações</Link></p>
       <h2>Nova importação do Helpdesk</h2>
       <p className="subtitulo">
         A tela envia apenas a <strong>seleção</strong>. O plano é recalculado no servidor a cada passo —
@@ -880,7 +880,7 @@ function EtapaResultado({
       </div>
 
       <div className="barra" style={{ marginTop: 16 }}>
-        <Link to={`/importacoes/${resultado.batchPublicId}`}>Ver a trilha completa do lote</Link>
+        <Link to={`/admin/importacoes/${resultado.batchPublicId}`}>Ver a trilha completa do lote</Link>
       </div>
 
       <div className="barra">

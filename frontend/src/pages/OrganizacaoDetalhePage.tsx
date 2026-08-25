@@ -9,7 +9,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
 
   return (
     <>
-      <p className="subtitulo"><Link to="/organizacoes">← Organizações</Link></p>
+      <p className="subtitulo"><Link to="/admin/organizacoes">← Organizações</Link></p>
       <Estado carregando={carregando} erro={erro} vazio={dados === null}>
         {dados !== null && (
           <>
@@ -33,14 +33,14 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                       {dados.parents.map((o) => (
                         <tr key={`p-${o.public_id}`}>
                           <td>Grupo</td>
-                          <td><Link to={`/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
+                          <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
                           <td>{o.type}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}
                       {dados.children.map((o) => (
                         <tr key={`f-${o.public_id}`}>
                           <td>Empresa</td>
-                          <td><Link to={`/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
+                          <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
                           <td>{o.type}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}

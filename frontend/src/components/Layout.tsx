@@ -3,10 +3,11 @@ import { api } from "../api.js";
 import type { Sessao } from "../auth.js";
 
 const ITENS = [
-  { para: "/", rotulo: "Painel", fim: true },
-  { para: "/usuarios", rotulo: "Usuários", fim: false },
-  { para: "/organizacoes", rotulo: "Organizações", fim: false },
-  { para: "/importacoes", rotulo: "Importações", fim: false }
+  { para: "/admin", rotulo: "Painel", fim: true },
+  { para: "/admin/usuarios", rotulo: "Usuários", fim: false },
+  { para: "/admin/organizacoes", rotulo: "Organizações", fim: false },
+  { para: "/admin/convites", rotulo: "Convites", fim: false },
+  { para: "/admin/importacoes", rotulo: "Importações", fim: false }
 ];
 
 export function Layout({ sessao, onSair }: { sessao: Sessao; onSair: () => void }): JSX.Element {
@@ -38,9 +39,15 @@ export function Layout({ sessao, onSair }: { sessao: Sessao; onSair: () => void 
       <div className="conteudo">
         <header className="topo">
           <span className="usuario">
-            <strong>{sessao.nomeExibido}</strong> · perfil {sessao.accessProfile}
+            <strong>{sessao.nomeExibido}</strong> · perfil {sessao.perfilNoIngressa ?? "—"}
           </span>
-          <button type="button" onClick={sair}>Sair</button>
+          <span className="acoes-topo">
+            {/* Volta ao launcher sem sair da sessão: administrar e usar os
+                produtos são coisas diferentes, e sair para trocar de uma
+                para a outra seria um caminho absurdo. */}
+            <NavLink to="/apps">Meus aplicativos</NavLink>
+            <button type="button" onClick={sair}>Sair</button>
+          </span>
         </header>
         <main>
           <Outlet />

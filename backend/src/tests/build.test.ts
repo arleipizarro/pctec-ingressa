@@ -71,7 +71,7 @@ describe("build", () => {
     expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_CREDENTIAL_JS)).toBe(true);
   });
 
-  it("gera dist/shared/database/migrations/ com exatamente as 42 migrations atuais (0001-0021, up/down)", () => {
+  it("gera dist/shared/database/migrations/ com exatamente as 46 migrations atuais (0001-0023, up/down)", () => {
     expect(existsSync(DIST_MIGRATIONS_DIR)).toBe(true);
     const distFiles = readdirSync(DIST_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     expect(distFiles).toEqual([
@@ -116,13 +116,17 @@ describe("build", () => {
       "0020_create_import_batches.down.sql",
       "0020_create_import_batches.up.sql",
       "0021_create_import_batch_items.down.sql",
-      "0021_create_import_batch_items.up.sql"
+      "0021_create_import_batch_items.up.sql",
+      "0022_create_sso_authorization_codes.down.sql",
+      "0022_create_sso_authorization_codes.up.sql",
+      "0023_create_identity_invitations.down.sql",
+      "0023_create_identity_invitations.up.sql"
     ]);
   });
 
   it("cada arquivo copiado para dist/ tem SHA-256 idêntico ao arquivo fonte em src/ (cópia byte-a-byte)", () => {
     const srcFiles = readdirSync(SRC_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql"));
-    expect(srcFiles.length).toBe(42);
+    expect(srcFiles.length).toBe(46);
     for (const name of srcFiles) {
       const srcHash = sha256(path.join(SRC_MIGRATIONS_DIR, name));
       const distHash = sha256(path.join(DIST_MIGRATIONS_DIR, name));
@@ -130,7 +134,7 @@ describe("build", () => {
     }
   });
 
-  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 21 migrations (0001-0021) sem depender de src/ nem de banco", async () => {
+  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 23 migrations (0001-0023) sem depender de src/ nem de banco", async () => {
     const compiledModuleUrl = pathToFileURL(path.join(DIST_DIR, "shared", "database", "loadMigrationDefinitions.js")).href;
     const { loadMigrationDefinitions } = (await import(compiledModuleUrl)) as {
       loadMigrationDefinitions: () => Array<{ id: string; up: string; down: string }>;
@@ -159,7 +163,9 @@ describe("build", () => {
       "0018_seed_pctec_helpdesk_application",
       "0019_add_match_method_created_from_source",
       "0020_create_import_batches",
-      "0021_create_import_batch_items"
+      "0021_create_import_batch_items",
+      "0022_create_sso_authorization_codes",
+      "0023_create_identity_invitations"
     ]);
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);
