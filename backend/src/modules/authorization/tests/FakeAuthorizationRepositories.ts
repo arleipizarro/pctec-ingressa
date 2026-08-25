@@ -20,6 +20,15 @@ export class FakeApplicationRepository implements ApplicationRepository {
 }
 
 export class FakeApplicationAccessRepository implements ApplicationAccessRepository {
+  public async findByPublicId(): Promise<undefined> {
+    return undefined;
+  }
+
+  /** Revogação não é exercida por estes testes; o double só satisfaz o contrato. */
+  public async update(): Promise<void> {
+    return undefined;
+  }
+
   public readonly byIdentityAndApplication = new Map<string, ApplicationAccess>();
   public findByIdentityAndApplicationCalls: Array<{ identityPublicId: string; applicationPublicId: string }> = [];
 

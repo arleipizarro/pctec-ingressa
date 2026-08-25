@@ -46,3 +46,40 @@ export function createApplicationAccessGrantedEvent(
     payload
   };
 }
+
+/**
+ * Evento `application-access.revoked`.
+ *
+ * A revogação é o par da concessão e precisa deixar rastro próprio: sem
+ * ela, o histórico só mostraria que alguém teve acesso, nunca que ele
+ * foi retirado — e "por que esta pessoa perdeu acesso na terça?" ficaria
+ * sem resposta. Mesmo payload mínimo do granted: public_ids e perfil,
+ * nenhum dado pessoal.
+ */
+export interface ApplicationAccessRevokedPayload {
+  readonly applicationAccessPublicId: string;
+  readonly identityPublicId: string;
+  readonly applicationPublicId: string;
+  readonly accessProfile: string;
+}
+
+export type ApplicationAccessRevokedEvent = DomainEvent<"application-access.revoked", ApplicationAccessRevokedPayload>;
+
+export function createApplicationAccessRevokedEvent(
+  envelope: EventEnvelopeInput,
+  payload: ApplicationAccessRevokedPayload
+): ApplicationAccessRevokedEvent {
+  const base = {
+    eventId: randomUUID(),
+    eventType: "application-access.revoked" as const,
+    eventVersion: 1,
+    aggregatePublicId: envelope.aggregatePublicId,
+    actorPublicId: envelope.actorPublicId,
+    correlationId: envelope.correlationId,
+    occurredAt: envelope.occurredAt
+  };
+  return {
+    ...(envelope.causationId === undefined ? base : { ...base, causationId: envelope.causationId }),
+    payload
+  };
+}

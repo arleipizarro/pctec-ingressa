@@ -1,0 +1,112 @@
+import { Link, useParams } from "react-router-dom";
+import { api } from "../api.js";
+import { usarRecurso } from "../usarRecurso.js";
+import { Badge, Estado } from "../components/ui.js";
+
+export function OrganizacaoDetalhePage(): JSX.Element {
+  const { publicId = "" } = useParams();
+  const { dados, carregando, erro } = usarRecurso(() => api.organization(publicId), [publicId]);
+
+  return (
+    <>
+      <p className="subtitulo"><Link to="/organizacoes">← Organizações</Link></p>
+      <Estado carregando={carregando} erro={erro} vazio={dados === null}>
+        {dados !== null && (
+          <>
+            <h2>{dados.legal_name}</h2>
+            <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
+
+            <dl className="chave-valor">
+              <dt>publicId</dt><dd><code>{dados.public_id}</code></dd>
+              <dt>Nome fantasia</dt><dd>{dados.trade_name ?? "—"}</dd>
+            </dl>
+
+            <div className="secao">
+              <h3>Hierarquia</h3>
+              {dados.parents.length === 0 && dados.children.length === 0 ? (
+                <div className="vazio">Sem relacionamentos cadastrados.</div>
+              ) : (
+                <div className="tabela-rolavel">
+                  <table>
+                    <thead><tr><th>Relação</th><th>Organização</th><th>Tipo</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {dados.parents.map((o) => (
+                        <tr key={`p-${o.public_id}`}>
+                          <td>Grupo</td>
+                          <td><Link to={`/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
+                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                        </tr>
+                      ))}
+                      {dados.children.map((o) => (
+                        <tr key={`f-${o.public_id}`}>
+                          <td>Empresa</td>
+                          <td><Link to={`/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
+                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="secao">
+              <h3>Referências externas</h3>
+              {dados.externalReferences.length === 0 ? <div className="vazio">Sem referências externas.</div> : (
+                <div className="tabela-rolavel">
+                  <table>
+                    <thead><tr><th>Sistema</th><th>Entidade</th><th>Id legado</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {dados.externalReferences.map((r) => (
+                        <tr key={r.public_id}>
+                          <td>{r.system_code}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
+                          <td><Badge valor={r.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="secao">
+              <h3>Membros</h3>
+              {dados.members.length === 0 ? <div className="vazio">Sem membros.</div> : (
+                <div className="tabela-rolavel">
+                  <table>
+                    <thead><tr><th>Pessoa</th><th>Perfil</th><th>Escopo</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {dados.members.map((m) => (
+                        <tr key={m.public_id}>
+                          <td>{m.full_name}</td><td>{m.profile}</td><td>{m.scope}</td><td><Badge valor={m.status} /></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="secao">
+              <h3>Aplicações dos membros ativos</h3>
+              {dados.applications.length === 0 ? <div className="vazio">Nenhum acesso concedido.</div> : (
+                <div className="tabela-rolavel">
+                  <table>
+                    <thead><tr><th>Aplicação</th><th>Perfil</th><th>Pessoas</th></tr></thead>
+                    <tbody>
+                      {dados.applications.map((a) => (
+                        <tr key={`${a.application_code}-${a.access_profile}`}>
+                          <td>{a.application_code}</td><td>{a.access_profile}</td><td>{a.total}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </Estado>
+    </>
+  );
+}
