@@ -44,6 +44,10 @@ beforeEach(() => {
   vi.spyOn(api, "summary").mockResolvedValue(fixtures.RESUMO);
   vi.spyOn(api, "identities").mockResolvedValue(fixtures.PAGINA_IDENTIDADES);
   vi.spyOn(api, "identity").mockResolvedValue(fixtures.IDENTIDADE_DETALHE);
+  // A tela de detalhe passou a carregar sessões e convites por conta
+  // própria; sem estes duplos, cada render dispararia fetch de verdade.
+  vi.spyOn(api, "sessions").mockResolvedValue({ items: [] });
+  vi.spyOn(api, "invitations").mockResolvedValue({ items: [] });
   vi.spyOn(api, "organizations").mockResolvedValue(fixtures.PAGINA_ORGANIZACOES_COM_GRUPO);
   vi.spyOn(api, "applications").mockResolvedValue(fixtures.APLICACOES);
   vi.spyOn(api, "organization").mockResolvedValue(fixtures.ORGANIZACAO_DETALHE);

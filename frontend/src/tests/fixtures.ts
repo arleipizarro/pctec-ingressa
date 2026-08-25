@@ -71,6 +71,7 @@ export const PAGINA_IDENTIDADES: Pagina<Identidade> = { items: [IDENTIDADE], tot
 
 export const IDENTIDADE_DETALHE: IdentidadeDetalhe = {
   ...IDENTIDADE,
+  version: 3,
   federated: true,
   externalReferences: [
     {

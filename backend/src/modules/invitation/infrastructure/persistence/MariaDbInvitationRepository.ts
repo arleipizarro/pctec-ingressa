@@ -133,6 +133,25 @@ export class MariaDbInvitationRepository implements InvitationRepository {
     return pendentes;
   }
 
+  public async revokeByPublicId(publicId: string, now: Date, reason: string): Promise<Invitation | undefined> {
+    const [resultado] = await this.connection.execute(
+      `UPDATE identity_invitations
+          SET status = 'REVOKED', revoked_at = ?, revocation_reason = ?
+        WHERE public_id = ? AND status = 'PENDING'`,
+      [now, reason, publicId]
+    );
+    if ((resultado as { affectedRows: number }).affectedRows === 0) {
+      return undefined;
+    }
+
+    const [rows] = await this.connection.execute(
+      `SELECT ${SELECT_COLUMNS} FROM identity_invitations WHERE public_id = ? LIMIT 1`,
+      [publicId]
+    );
+    const row = (rows as Row[])[0];
+    return row === undefined ? undefined : Invitation.reconstitute(mapRow(row));
+  }
+
   public async findUsableByTokenHash(tokenHash: string, now: Date): Promise<Invitation | undefined> {
     const [rows] = await this.connection.execute(
       `SELECT ${SELECT_COLUMNS}

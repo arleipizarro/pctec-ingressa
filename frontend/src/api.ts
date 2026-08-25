@@ -123,6 +123,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ expectedVersion })
     }),
+  // --- Ciclo de acesso de uma Identity (v1) -------------------------
+  sessions: (publicId: string) => requisitar<{ items: readonly SessaoAtiva[] }>(`/admin/identities/${publicId}/sessions`),
+  invitations: (publicId: string) => requisitar<{ items: readonly ConviteDaIdentidade[] }>(`/admin/identities/${publicId}/invitations`),
+  revokeAllSessions: (publicId: string) =>
+    requisitar<{ revoked: number }>(`/admin/identities/${publicId}/sessions/revoke-all`, { method: "POST", body: "{}" }),
+  /** `expectedVersion` é a versão EXIBIDA — trava otimista contra tela velha. */
+  blockIdentity: (publicId: string, expectedVersion: number) =>
+    requisitar<{ status: string; sessionsRevoked: number }>(`/admin/identities/${publicId}/block`, {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion })
+    }),
+  revokeInvitation: (invitationPublicId: string) =>
+    requisitar<unknown>(`/admin/invitations/${invitationPublicId}/revoke`, { method: "POST", body: "{}" }),
+
   createMembership: (payload: {
     identityPublicId: string;
     organizationPublicId: string;
@@ -334,7 +348,30 @@ export interface AcessoView {
   readonly version: number;
 }
 
+/** Nunca traz token nem hash — a projeção do servidor não os seleciona. */
+export interface SessaoAtiva {
+  readonly public_id: string;
+  readonly status: string;
+  readonly created_at: string;
+  readonly last_seen_at: string | null;
+  readonly expires_at: string;
+}
+
+export interface ConviteDaIdentidade {
+  readonly public_id: string;
+  readonly status: string;
+  readonly delivery_mode: string;
+  readonly created_at: string;
+  readonly expires_at: string;
+  readonly consumed_at: string | null;
+  readonly revoked_at: string | null;
+  /** `EXPIRED` não é status persistido — vem calculado pelo servidor. */
+  readonly expired: number;
+}
+
 export interface IdentidadeDetalhe extends Identidade {
+  /** Trava otimista: reenviada no bloqueio e comparada no servidor. */
+  readonly version: number;
   readonly federated: boolean;
   readonly externalReferences: readonly ReferenciaExterna[];
   readonly memberships: readonly MembershipView[];
