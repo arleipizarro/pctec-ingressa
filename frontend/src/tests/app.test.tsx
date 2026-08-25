@@ -31,7 +31,8 @@ beforeEach(() => {
   vi.spyOn(api, "summary").mockResolvedValue(fixtures.RESUMO);
   vi.spyOn(api, "identities").mockResolvedValue(fixtures.PAGINA_IDENTIDADES);
   vi.spyOn(api, "identity").mockResolvedValue(fixtures.IDENTIDADE_DETALHE);
-  vi.spyOn(api, "organizations").mockResolvedValue(fixtures.PAGINA_ORGANIZACOES);
+  vi.spyOn(api, "organizations").mockResolvedValue(fixtures.PAGINA_ORGANIZACOES_COM_GRUPO);
+  vi.spyOn(api, "applications").mockResolvedValue(fixtures.APLICACOES);
   vi.spyOn(api, "organization").mockResolvedValue(fixtures.ORGANIZACAO_DETALHE);
   vi.spyOn(api, "importBatches").mockResolvedValue(fixtures.PAGINA_LOTES);
   vi.spyOn(api, "importBatchItems").mockResolvedValue(fixtures.PAGINA_ITENS);
@@ -215,5 +216,185 @@ describe("organizações e importações", () => {
     renderizar("/importacoes");
     expect(await screen.findByText(/somente leitura/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /aplicar/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("conceder acesso", () => {
+  async function abrirFormulario() {
+    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    await userEvent.click(await screen.findByRole("button", { name: "Conceder acesso" }));
+    return screen.getByRole("dialog", { name: "Conceder acesso" });
+  }
+
+  it("só oferece aplicações ACTIVE", async () => {
+    const dialogo = await abrirFormulario();
+    const opcoes = within(dialogo).getByLabelText("Aplicação");
+
+    expect(within(opcoes).getByRole("option", { name: "APP_SINTETICA" })).toBeInTheDocument();
+    expect(within(opcoes).queryByRole("option", { name: "APP_DESATIVADA" })).not.toBeInTheDocument();
+  });
+
+  it("cancelar fecha sem chamar a API", async () => {
+    const conceder = vi.spyOn(api, "grantAccess").mockResolvedValue(undefined);
+    const dialogo = await abrirFormulario();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("dialog", { name: "Conceder acesso" })).not.toBeInTheDocument();
+    expect(conceder).not.toHaveBeenCalled();
+  });
+
+  it("sem aplicação selecionada, valida no formulário e não chama a API", async () => {
+    const conceder = vi.spyOn(api, "grantAccess").mockResolvedValue(undefined);
+    const dialogo = await abrirFormulario();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Conceder" }));
+
+    expect(within(dialogo).getByRole("alert")).toHaveTextContent("Selecione a aplicação.");
+    expect(conceder).not.toHaveBeenCalled();
+  });
+
+  it("sucesso concede com aplicação e perfil escolhidos e recarrega a tela", async () => {
+    const conceder = vi.spyOn(api, "grantAccess").mockResolvedValue(undefined);
+    const detalhe = vi.spyOn(api, "identity").mockResolvedValue(fixtures.IDENTIDADE_DETALHE);
+    const dialogo = await abrirFormulario();
+
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Aplicação"), "APP_SINTETICA");
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Perfil"), "ADMIN");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Conceder" }));
+
+    await waitFor(() => expect(conceder).toHaveBeenCalledWith(fixtures.IDENTIDADE_PUBLIC_ID, "APP_SINTETICA", "ADMIN"));
+    expect(await screen.findByText("Acesso concedido.")).toBeInTheDocument();
+    await waitFor(() => expect(detalhe.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("409 mantém o formulário aberto com mensagem de recarregar", async () => {
+    vi.spyOn(api, "grantAccess").mockRejectedValue(
+      new ApiError(409, "CONFLICT", "O registro mudou desde que a tela carregou. Recarregue e tente de novo.")
+    );
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Aplicação"), "APP_SINTETICA");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Conceder" }));
+
+    expect(await screen.findByText(/recarregue e tente de novo/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Conceder acesso" })).toBeInTheDocument();
+  });
+
+  it("403 vira mensagem de permissão, sem detalhe interno", async () => {
+    vi.spyOn(api, "grantAccess").mockRejectedValue(
+      new ApiError(403, "APPLICATION_ACCESS_DENIED", "Você não tem permissão para esta operação.")
+    );
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Aplicação"), "APP_SINTETICA");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Conceder" }));
+
+    const mensagem = await screen.findByText(/não tem permissão/i);
+    expect(mensagem.textContent ?? "").not.toMatch(/SQL|stack|Error:/i);
+  });
+
+  it("422 do servidor aparece como dados inválidos", async () => {
+    vi.spyOn(api, "grantAccess").mockRejectedValue(new ApiError(422, "X", "Dados inválidos. Revise os campos."));
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Aplicação"), "APP_SINTETICA");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Conceder" }));
+
+    expect(await screen.findByText(/dados inválidos/i)).toBeInTheDocument();
+  });
+});
+
+describe("criar membership", () => {
+  async function abrirFormulario() {
+    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    await userEvent.click(await screen.findByRole("button", { name: "Criar membership" }));
+    return screen.getByRole("dialog", { name: "Criar membership" });
+  }
+
+  it("COMPANY não oferece AND_DESCENDANTS e explica por quê", async () => {
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
+
+    const escopo = within(dialogo).getByLabelText("Escopo");
+    expect(within(escopo).getByRole("option", { name: "ORGANIZATION_ONLY" })).toBeInTheDocument();
+    expect(within(escopo).queryByRole("option", { name: "ORGANIZATION_AND_DESCENDANTS" })).not.toBeInTheDocument();
+    expect(within(dialogo).getByText(/não tem descendentes/i)).toBeInTheDocument();
+  });
+
+  it("BUSINESS_GROUP oferece os dois escopos", async () => {
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.GRUPO.public_id);
+
+    const escopo = within(dialogo).getByLabelText("Escopo");
+    expect(within(escopo).getByRole("option", { name: "ORGANIZATION_AND_DESCENDANTS" })).toBeInTheDocument();
+  });
+
+  it("trocar de grupo para empresa reverte o escopo incompatível", async () => {
+    const criar = vi.spyOn(api, "createMembership").mockResolvedValue(undefined);
+    const dialogo = await abrirFormulario();
+
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.GRUPO.public_id);
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Escopo"), "ORGANIZATION_AND_DESCENDANTS");
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
+
+    await waitFor(() => expect(criar).toHaveBeenCalled());
+    expect((criar.mock.calls[0]?.[0] as { scope: string }).scope).toBe("ORGANIZATION_ONLY");
+  });
+
+  it("cancelar fecha sem chamar a API", async () => {
+    const criar = vi.spyOn(api, "createMembership").mockResolvedValue(undefined);
+    const dialogo = await abrirFormulario();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("dialog", { name: "Criar membership" })).not.toBeInTheDocument();
+    expect(criar).not.toHaveBeenCalled();
+  });
+
+  it("sem organização selecionada, valida no formulário", async () => {
+    const criar = vi.spyOn(api, "createMembership").mockResolvedValue(undefined);
+    const dialogo = await abrirFormulario();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
+
+    expect(within(dialogo).getByRole("alert")).toHaveTextContent("Selecione a organização.");
+    expect(criar).not.toHaveBeenCalled();
+  });
+
+  it("sucesso cria com organização, perfil e escopo e recarrega a tela", async () => {
+    const criar = vi.spyOn(api, "createMembership").mockResolvedValue(undefined);
+    const detalhe = vi.spyOn(api, "identity").mockResolvedValue(fixtures.IDENTIDADE_DETALHE);
+    const dialogo = await abrirFormulario();
+
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Perfil"), "EMPLOYEE");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
+
+    await waitFor(() =>
+      expect(criar).toHaveBeenCalledWith({
+        identityPublicId: fixtures.IDENTIDADE_PUBLIC_ID,
+        organizationPublicId: fixtures.ORG_PUBLIC_ID,
+        profile: "EMPLOYEE",
+        scope: "ORGANIZATION_ONLY"
+      })
+    );
+    expect(await screen.findByText("Membership criado.")).toBeInTheDocument();
+    await waitFor(() => expect(detalhe.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it("409 de vínculo duplicado mantém o formulário aberto", async () => {
+    vi.spyOn(api, "createMembership").mockRejectedValue(
+      new ApiError(409, "CONFLICT", "O registro mudou desde que a tela carregou. Recarregue e tente de novo.")
+    );
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
+
+    expect(await screen.findByText(/recarregue e tente de novo/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Criar membership" })).toBeInTheDocument();
+  });
+
+  it("403 e 422 aparecem como mensagem de negócio", async () => {
+    vi.spyOn(api, "createMembership").mockRejectedValue(new ApiError(422, "X", "Dados inválidos. Revise os campos."));
+    const dialogo = await abrirFormulario();
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
+
+    expect(await screen.findByText(/dados inválidos/i)).toBeInTheDocument();
   });
 });

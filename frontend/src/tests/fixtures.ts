@@ -105,6 +105,28 @@ export const ORGANIZACAO_DETALHE: OrganizacaoDetalhe = {
   applications: [{ application_code: "APP_SINTETICA", access_profile: "USER", total: 1 }]
 };
 
+export const GRUPO: Organizacao = {
+  public_id: "88888888-8888-4888-8888-888888888888",
+  type: "BUSINESS_GROUP",
+  legal_name: "GRUPO SINTETICO",
+  trade_name: "GRUPO",
+  status: "ACTIVE"
+};
+
+export const PAGINA_ORGANIZACOES_COM_GRUPO: Pagina<Organizacao> = {
+  items: [ORGANIZACAO, GRUPO],
+  total: 2,
+  limit: 25,
+  offset: 0
+};
+
+export const APLICACOES = {
+  items: [
+    { public_id: "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "APP_SINTETICA", name: "Aplicação Sintética", status: "ACTIVE" },
+    { public_id: "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "APP_DESATIVADA", name: "Aplicação Desativada", status: "INACTIVE" }
+  ]
+};
+
 export const PAGINA_LOTES: Pagina<Lote> = { items: RESUMO.latestImportBatches as Lote[], total: 1, limit: 25, offset: 0 };
 
 export const ITEM_DE_LOTE: ItemDeLote = {

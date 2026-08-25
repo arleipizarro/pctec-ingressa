@@ -3,9 +3,12 @@ import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Confirmacao, Estado } from "../components/ui.js";
+import { FormularioConcederAcesso, FormularioCriarMembership } from "../components/formularios.js";
 
 type AcaoPendente =
   | { tipo: "ativar" }
+  | { tipo: "conceder" }
+  | { tipo: "criarMembership" }
   | { tipo: "revogar"; publicId: string; aplicacao: string; version: number }
   | { tipo: "encerrar"; publicId: string; organizacao: string }
   | null;
@@ -13,15 +16,46 @@ type AcaoPendente =
 export function UsuarioDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
   const { dados, carregando, erro, recarregar } = usarRecurso(() => api.identity(publicId), [publicId]);
+  // Listas dos seletores: carregadas junto da tela para que o formulário
+  // abra pronto, sem um segundo estado de "carregando" dentro do modal.
+  const { dados: aplicacoes } = usarRecurso(() => api.applications(), []);
+  const { dados: organizacoes } = usarRecurso(
+    () => api.organizations(new URLSearchParams({ status: "ACTIVE", limit: "100" })),
+    []
+  );
 
-  const [acao, setAcao] = useState<AcaoPendente>(null);
+  const [acao, setAcaoPendente] = useState<AcaoPendente>(null);
   const [motivo, setMotivo] = useState("");
-  const [confirmando, setConfirmando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
   const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+
+  /**
+   * Executa uma mutação e reconcilia a tela.
+   *
+   * O `recarregar()` no sucesso não é cosmético: sem ele, a tela
+   * continuaria mostrando o estado anterior — e a próxima revogação
+   * enviaria uma `version` velha, que o backend recusaria com 409.
+   */
+  async function executar(acao: () => Promise<unknown>, sucesso: string): Promise<void> {
+    setEnviando(true);
+    setMensagem(null);
+    try {
+      await acao();
+      setMensagem({ tipo: "ok", texto: sucesso });
+      setAcaoPendente(null);
+      recarregar();
+    } catch (falha) {
+      // 403, 409 e 422 já chegam como mensagem em português vinda de
+      // `api.ts`; o formulário fica aberto para a pessoa corrigir.
+      setMensagem({ tipo: "erro", texto: falha instanceof ApiError ? falha.message : "Falha ao executar a ação." });
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   async function confirmar(): Promise<void> {
     if (acao === null) return;
-    setConfirmando(true);
+    setEnviando(true);
     setMensagem(null);
     try {
       if (acao.tipo === "ativar") {
@@ -33,17 +67,21 @@ export function UsuarioDetalhePage(): JSX.Element {
         // responde 409 em vez de sobrescrever a decisão do outro.
         await api.revokeAccess(acao.publicId, acao.version);
         setMensagem({ tipo: "ok", texto: "Acesso revogado." });
-      } else {
+      } else if (acao.tipo === "encerrar") {
         await api.endMembership(acao.publicId, motivo.trim());
         setMensagem({ tipo: "ok", texto: "Membership encerrado." });
+      } else {
+        // "conceder" e "criarMembership" têm formulário próprio e não
+        // passam por este confirmador genérico.
+        return;
       }
-      setAcao(null);
+      setAcaoPendente(null);
       setMotivo("");
       recarregar();
     } catch (falha) {
       setMensagem({ tipo: "erro", texto: falha instanceof ApiError ? falha.message : "Falha ao executar a ação." });
     } finally {
-      setConfirmando(false);
+      setEnviando(false);
     }
   }
 
@@ -69,13 +107,15 @@ export function UsuarioDetalhePage(): JSX.Element {
               <dt>Login no Ingressa</dt><dd>{dados.login_enabled === 1 ? "habilitado" : "desabilitado"}</dd>
             </dl>
 
-            {dados.status === "PENDING" && dados.federated && (
-              <div className="secao">
-                <button type="button" className="primario" onClick={() => setAcao({ tipo: "ativar" })}>
+            <div className="secao barra">
+              {dados.status === "PENDING" && dados.federated && (
+                <button type="button" className="primario" onClick={() => setAcaoPendente({ tipo: "ativar" })}>
                   Ativar identidade federada
                 </button>
-              </div>
-            )}
+              )}
+              <button type="button" onClick={() => setAcaoPendente({ tipo: "conceder" })}>Conceder acesso</button>
+              <button type="button" onClick={() => setAcaoPendente({ tipo: "criarMembership" })}>Criar membership</button>
+            </div>
 
             <div className="secao">
               <h3>Referências externas</h3>
@@ -110,7 +150,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                           <td>
                             {m.status === "ACTIVE" && (
                               <button type="button" className="perigo"
-                                onClick={() => setAcao({ tipo: "encerrar", publicId: m.public_id, organizacao: m.trade_name ?? m.legal_name })}>
+                                onClick={() => setAcaoPendente({ tipo: "encerrar", publicId: m.public_id, organizacao: m.trade_name ?? m.legal_name })}>
                                 Encerrar
                               </button>
                             )}
@@ -136,7 +176,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                           <td>
                             {a.status === "GRANTED" && (
                               <button type="button" className="perigo"
-                                onClick={() => setAcao({ tipo: "revogar", publicId: a.public_id, aplicacao: a.application_code, version: a.version })}>
+                                onClick={() => setAcaoPendente({ tipo: "revogar", publicId: a.public_id, aplicacao: a.application_code, version: a.version })}>
                                 Revogar
                               </button>
                             )}
@@ -149,7 +189,32 @@ export function UsuarioDetalhePage(): JSX.Element {
               )}
             </div>
 
-            {acao !== null && (
+            {acao?.tipo === "conceder" && (
+              <FormularioConcederAcesso
+                aplicacoes={aplicacoes?.items ?? []}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(applicationCode, accessProfile) =>
+                  void executar(() => api.grantAccess(publicId, applicationCode, accessProfile), "Acesso concedido.")
+                }
+              />
+            )}
+
+            {acao?.tipo === "criarMembership" && (
+              <FormularioCriarMembership
+                organizacoes={organizacoes?.items ?? []}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(organizationPublicId, profile, scope) =>
+                  void executar(
+                    () => api.createMembership({ identityPublicId: publicId, organizationPublicId, profile, scope }),
+                    "Membership criado."
+                  )
+                }
+              />
+            )}
+
+            {(acao?.tipo === "ativar" || acao?.tipo === "revogar" || acao?.tipo === "encerrar") && (
               <Confirmacao
                 titulo={
                   acao.tipo === "ativar" ? "Ativar identidade federada"
@@ -163,9 +228,9 @@ export function UsuarioDetalhePage(): JSX.Element {
                       ? `O acesso a ${acao.aplicacao} cessa imediatamente. O histórico é preservado.`
                       : `A pessoa deixa de pertencer a ${acao.organizacao}. O histórico é preservado.`
                 }
-                confirmando={confirmando}
+                confirmando={enviando}
                 onConfirmar={confirmar}
-                onCancelar={() => { setAcao(null); setMotivo(""); }}
+                onCancelar={() => { setAcaoPendente(null); setMotivo(""); }}
               >
                 {acao.tipo === "encerrar" && (
                   <>

@@ -55,6 +55,9 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
       detalharIdentidade: vi.fn(async (id: string) => (id === IDENTITY ? IDENTIDADE_SINTETICA : undefined)),
       listarOrganizacoes: vi.fn(async () => ({ items: [{ public_id: ORG, type: "COMPANY" }], total: 1, limit: 25, offset: 0 })),
       detalharOrganizacao: vi.fn(async (id: string) => (id === ORG ? { public_id: ORG, members: [], children: [] } : undefined)),
+      listarAplicacoes: vi.fn(async () => [
+        { public_id: "app-1", code: "APP_SINTETICA", name: "Aplicação Sintética", status: "ACTIVE" }
+      ]),
       listarLotes: vi.fn(async () => ({ items: [{ public_id: BATCH, mode: "APPLY" }], total: 1, limit: 25, offset: 0 })),
       listarItensDoLote: vi.fn(async () => ({
         items: [
@@ -175,9 +178,17 @@ describe("API administrativa — leitura", () => {
     expect(serializado).toContain("bcrypt_hash");
   });
 
+  it("lista aplicações para o seletor de concessão", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/applications");
+
+    expect(r.status).toBe(200);
+    expect((r.body["items"] as { code: string }[])[0]?.code).toBe("APP_SINTETICA");
+  });
+
   it("nenhuma resposta de leitura carrega senha, hash ou token", async () => {
     const { baseUrl } = await subir();
-    for (const caminho of ["/api/v1/admin/summary", "/api/v1/admin/identities", "/api/v1/admin/organizations", "/api/v1/admin/import-batches"]) {
+    for (const caminho of ["/api/v1/admin/summary", "/api/v1/admin/identities", "/api/v1/admin/organizations", "/api/v1/admin/import-batches", "/api/v1/admin/applications"]) {
       const r = await chamar(baseUrl, caminho);
       const texto = JSON.stringify(r.body).toLowerCase();
       for (const proibido of ["password", "senha", "credential", '"token"', "secret"]) {
