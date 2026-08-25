@@ -21,12 +21,40 @@
 // que nunca inicia nada sozinho ao ser carregado; quem de fato chama
 // `startServer()` é `dist/main.js`. Ver `src/main.ts`/`src/server.ts`
 // para a causa raiz completa).
+// v0.10.x — `node_args` com DOIS `--env-file`.
+//
+// O processo já rodava com `--env-file=.env`, mas essa flag vinha da
+// linha de comando de quem deu `pm2 start`, não deste arquivo: o
+// ecosystem versionado não a declarava, e a diferença vivia só no
+// `pm2 save` fora do repositório. Declará-la aqui faz a configuração de
+// inicialização voltar a ser a que está sob revisão.
+//
+// O segundo arquivo é o da fonte Helpdesk, exigido pelo assistente de
+// importação (v0.10.x). Sem ele, `loadHelpdeskSourceConfig()` falha e
+// as rotas do assistente respondem 503 — fail-closed deliberado, nunca
+// um default de host, usuário ou senha.
+//
+// **Somente CAMINHOS aparecem aqui.** A credencial continua morando
+// exclusivamente em `/app/.config/pctec-ingressa/helpdesk-source.env`
+// (dir 700, arquivo 600, fora do repositório), lida pelo Node no boot.
+// Copiá-la para `backend/.env` criaria uma segunda cópia do segredo,
+// com outra permissão e outro ciclo de rotação — exatamente o que a
+// separação em env-file veio evitar.
+//
+// Node 22 aplica os `--env-file` na ordem dada e o último vence. Não há
+// colisão de nome entre os dois (o prefixo `HELPDESK_DB_*` existe para
+// isso), mas a ordem é a MESMA usada pelo CLI do importador, para que
+// servidor e CLI nunca resolvam a mesma variável de formas diferentes.
+const ENV_FILE_APLICACAO = ".env";
+const ENV_FILE_FONTE_HELPDESK = "/app/.config/pctec-ingressa/helpdesk-source.env";
+
 module.exports = {
   apps: [
     {
       name: "ingressa-backend",
       cwd: "/app/pctec-ingressa/backend",
       script: "dist/main.js",
+      node_args: [`--env-file=${ENV_FILE_APLICACAO}`, `--env-file=${ENV_FILE_FONTE_HELPDESK}`],
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
