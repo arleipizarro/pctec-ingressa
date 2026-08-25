@@ -37,4 +37,15 @@ export interface InvitationRepository {
    * criaria uma segunda Credential.
    */
   consumeByTokenHash(tokenHash: string, now: Date): Promise<Invitation | undefined>;
+
+  /**
+   * Revoga UM convite pendente, identificado pelo `publicId`.
+   *
+   * `undefined` quando não havia nada pendente para revogar — o chamador
+   * transforma isso em conflito explícito, em vez de responder "ok" a
+   * uma operação que não mudou estado. A condição `status = 'PENDING'`
+   * dentro do `UPDATE` também fecha a corrida entre dois administradores
+   * clicando ao mesmo tempo.
+   */
+  revokeByPublicId(publicId: string, now: Date, reason: string): Promise<Invitation | undefined>;
 }

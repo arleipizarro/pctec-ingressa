@@ -80,6 +80,9 @@ import { CryptoInvitationTokenGenerator } from "../../modules/invitation/infrast
 import { composeInvitationDelivery } from "../../modules/invitation/infrastructure/InvitationComposition.js";
 import { createAdminInvitationRoutes } from "../../modules/invitation/http/adminInvitationRoutes.js";
 import { createInvitationRoutes } from "../../modules/invitation/http/invitationRoutes.js";
+import { BlockIdentityService } from "../../modules/identity/application/BlockIdentityService.js";
+import { RevokeAllSessionsService } from "../../modules/security/application/RevokeAllSessionsService.js";
+import { RevokeInvitationService } from "../../modules/invitation/application/RevokeInvitationService.js";
 import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
 
 /**
@@ -662,6 +665,22 @@ export function createApp(options: CreateAppOptions = {}): Express {
         endMembershipService: new EndMembershipService(
           new MariaDbUnitOfWork(sharedPool!),
           (c) => new MariaDbMembershipRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        blockIdentityService: new BlockIdentityService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbIdentityRepository(c),
+          (c) => new MariaDbSessionRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        revokeAllSessionsService: new RevokeAllSessionsService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbSessionRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        revokeInvitationService: new RevokeInvitationService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbInvitationRepository(c),
           (c) => new MariaDbAuditEventRepository(c)
         ),
         activateFederatedIdentityService: new ActivateFederatedIdentityService({

@@ -188,6 +188,50 @@ export class MariaDbAdminReadRepository {
     };
   }
 
+  /**
+   * Sessões ainda válidas de uma Identity — para a tela administrativa.
+   *
+   * A projeção NUNCA seleciona `token_hash`. Não é só higiene: o hash é
+   * a chave de busca da sessão, e uma listagem que o exponha entrega ao
+   * leitor da tela exatamente o valor que o servidor usa para
+   * reconhecer o cookie.
+   *
+   * `expires_at > NOW(3)` junto de `status = 'ACTIVE'`: uma sessão
+   * expirada já não autentica, e mostrá-la como "ativa" faria alguém
+   * revogar o que já não vale.
+   */
+  public async listarSessoesAtivas(identityPublicId: string): Promise<readonly Record<string, unknown>[]> {
+    return this.select<Record<string, unknown>>(
+      `SELECT public_id, status, created_at, last_seen_at, expires_at
+         FROM sessions
+        WHERE identity_public_id = ? AND status = 'ACTIVE' AND expires_at > NOW(3)
+        ORDER BY created_at DESC`,
+      [identityPublicId]
+    );
+  }
+
+  /**
+   * Convites da Identity, do mais recente para o mais antigo.
+   *
+   * Sem `token_hash` e sem qualquer forma do token. `expired` é
+   * calculado aqui porque `EXPIRED` não é um status persistido — é
+   * `expires_at <= NOW()` — e a tela precisa distinguir "pendente e
+   * válido" de "pendente mas vencido" para saber se ainda faz sentido
+   * revogar ou se o caminho é emitir outro.
+   */
+  public async listarConvites(identityPublicId: string): Promise<readonly Record<string, unknown>[]> {
+    return this.select<Record<string, unknown>>(
+      `SELECT public_id, status, delivery_mode, created_at, expires_at,
+              consumed_at, revoked_at, revocation_reason,
+              (status = 'PENDING' AND expires_at <= NOW(3)) AS expired
+         FROM identity_invitations
+        WHERE identity_public_id = ?
+        ORDER BY created_at DESC
+        LIMIT 20`,
+      [identityPublicId]
+    );
+  }
+
   public async listarOrganizacoes(filtros: {
     readonly type?: unknown;
     readonly status?: unknown;

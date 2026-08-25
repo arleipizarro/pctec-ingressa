@@ -51,6 +51,16 @@ export class FakeInvitationRepository implements InvitationRepository {
     return pendentes;
   }
 
+  /** Mesma semântica do SQL: só revoga o que está PENDING. */
+  public async revokeByPublicId(publicId: string, now: Date, reason: string): Promise<Invitation | undefined> {
+    const convite = [...this.porTokenHash.values()].find((c) => c.getPublicId().toString() === publicId);
+    if (convite === undefined || convite.getStatus() !== "PENDING") {
+      return undefined;
+    }
+    convite.markRevoked(now, reason);
+    return convite;
+  }
+
   public async findUsableByTokenHash(tokenHash: string, now: Date): Promise<Invitation | undefined> {
     const convite = this.porTokenHash.get(tokenHash);
     return convite !== undefined && convite.isUsable(now) ? convite : undefined;

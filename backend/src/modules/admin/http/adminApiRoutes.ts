@@ -7,6 +7,9 @@ import type { RevokeApplicationAccessService } from "../../application/applicati
 import type { CreateMembershipService } from "../../organization/application/CreateMembershipService.js";
 import type { EndMembershipService } from "../../organization/application/EndMembershipService.js";
 import type { ActivateFederatedIdentityService } from "../../helpdesk/application/ActivateFederatedIdentityService.js";
+import type { BlockIdentityService } from "../../identity/application/BlockIdentityService.js";
+import type { RevokeAllSessionsService } from "../../security/application/RevokeAllSessionsService.js";
+import type { RevokeInvitationService } from "../../invitation/application/RevokeInvitationService.js";
 
 export interface AdminApiDeps {
   readonly readRepository: MariaDbAdminReadRepository;
@@ -15,6 +18,9 @@ export interface AdminApiDeps {
   readonly createMembershipService: CreateMembershipService;
   readonly endMembershipService: EndMembershipService;
   readonly activateFederatedIdentityService: ActivateFederatedIdentityService;
+  readonly blockIdentityService: BlockIdentityService;
+  readonly revokeAllSessionsService: RevokeAllSessionsService;
+  readonly revokeInvitationService: RevokeInvitationService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -198,6 +204,92 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       applicationAccessPublicId: publicId,
       revokedByIdentityPublicId: atorAutenticado(req),
       expectedVersion: Number(corpo.expectedVersion)
+    });
+    res.status(200).json(resultado);
+  }));
+
+  // ------------------------------------------------------------------
+  // Ciclo de acesso de uma Identity
+  // ------------------------------------------------------------------
+
+  router.get("/identities/:publicId/sessions", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "IDENTITY_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    res.status(200).json({ items: await deps.readRepository.listarSessoesAtivas(publicId) });
+  }));
+
+  router.get("/identities/:publicId/invitations", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "IDENTITY_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    res.status(200).json({ items: await deps.readRepository.listarConvites(publicId) });
+  }));
+
+  /**
+   * Encerra todas as sessões ativas. Idempotente: sem sessões, responde
+   * 200 com `revoked: 0` — o estado final desejado é o mesmo.
+   */
+  router.post("/identities/:publicId/sessions/revoke-all", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "IDENTITY_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const resultado = await deps.revokeAllSessionsService.execute({
+      identityPublicId: publicId,
+      actorPublicId: atorAutenticado(req),
+      correlationId: req.correlationId
+    });
+    res.status(200).json(resultado);
+  }));
+
+  /**
+   * Bloqueia a Identity e derruba as sessões na mesma transação.
+   *
+   * `expectedVersion` vem do corpo porque é a versão que a TELA exibia:
+   * se alguém mudou a identidade no meio, o backend responde 409 em vez
+   * de sobrescrever a decisão do outro. O ATOR, esse, nunca vem do
+   * corpo — sai da sessão administrativa.
+   */
+  router.post("/identities/:publicId/block", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "IDENTITY_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const expectedVersion = Number(corpo["expectedVersion"]);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      erro(res, 422, "IDENTITY_VERSION_INVALID", "expectedVersion é obrigatório.");
+      return;
+    }
+    const reasonCode = typeof corpo["reasonCode"] === "string" ? (corpo["reasonCode"] as string) : undefined;
+
+    const resultado = await deps.blockIdentityService.execute({
+      identityPublicId: publicId,
+      actorPublicId: atorAutenticado(req),
+      expectedVersion,
+      ...(reasonCode === undefined ? {} : { reasonCode }),
+      correlationId: req.correlationId
+    });
+    res.status(200).json(resultado);
+  }));
+
+  router.post("/invitations/:publicId/revoke", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "INVITATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const resultado = await deps.revokeInvitationService.execute({
+      invitationPublicId: publicId,
+      actorPublicId: atorAutenticado(req),
+      correlationId: req.correlationId
     });
     res.status(200).json(resultado);
   }));
