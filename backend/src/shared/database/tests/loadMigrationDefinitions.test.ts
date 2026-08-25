@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 21 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 23 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -26,7 +26,9 @@ describe("loadMigrationDefinitions", () => {
       "0018_seed_pctec_helpdesk_application",
       "0019_add_match_method_created_from_source",
       "0020_create_import_batches",
-      "0021_create_import_batch_items"
+      "0021_create_import_batch_items",
+      "0022_create_sso_authorization_codes",
+      "0023_create_identity_invitations"
     ]);
 
     for (const migration of migrations) {
@@ -35,7 +37,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019 são ALTER TABLE, 0007/0014/0018 são seed INSERT/DELETE, 0016/0020/0021 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019 são ALTER TABLE, 0007/0014/0018 são seed INSERT/DELETE, 0016/0020/0021/0022/0023 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",

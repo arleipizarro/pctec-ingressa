@@ -21,7 +21,7 @@ export function ImportacoesPage(): JSX.Element {
       </p>
 
       <div className="barra">
-        <Link className="botao-primario" to="/importacoes/nova">
+        <Link className="botao-primario" to="/admin/importacoes/nova">
           Nova importação do Helpdesk
         </Link>
       </div>
@@ -43,7 +43,7 @@ export function ImportacoesPage(): JSX.Element {
                       <td><Badge valor={lote.status} /></td>
                       <td>{lote.mapping_rules_version}</td>
                       <td>{lote.total_items}</td>
-                      <td><Link to={`/importacoes/${lote.public_id}`}>Itens</Link></td>
+                      <td><Link to={`/admin/importacoes/${lote.public_id}`}>Itens</Link></td>
                     </tr>
                   ))}
                 </tbody>

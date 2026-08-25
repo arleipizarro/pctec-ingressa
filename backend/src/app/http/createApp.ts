@@ -62,6 +62,25 @@ import { GetHelpdeskUserContextService } from "../../modules/helpdesk/applicatio
 import { HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
 import { ResolvePortalTenantScopeService } from "../../modules/portal/application/ResolvePortalTenantScopeService.js";
 import { createServicePortalTenantScopeRoutes } from "../../modules/portal/http/servicePortalTenantScopeRoutes.js";
+import { composeSso } from "../../modules/sso/infrastructure/SsoComposition.js";
+import { IssueAuthorizationCodeService } from "../../modules/sso/application/IssueAuthorizationCodeService.js";
+import { ExchangeAuthorizationCodeService } from "../../modules/sso/application/ExchangeAuthorizationCodeService.js";
+import { MariaDbAuthorizationCodeRepository } from "../../modules/sso/infrastructure/persistence/MariaDbAuthorizationCodeRepository.js";
+import { CryptoAuthorizationCodeGenerator } from "../../modules/sso/infrastructure/token/AuthorizationCodeGenerator.js";
+import { createSsoAuthorizeRoutes } from "../../modules/sso/http/ssoAuthorizeRoutes.js";
+import { createServiceSsoTokenRoutes } from "../../modules/sso/http/serviceSsoTokenRoutes.js";
+import { GetMyApplicationsService } from "../../modules/launcher/application/GetMyApplicationsService.js";
+import { MariaDbGrantedApplicationReadRepository } from "../../modules/launcher/infrastructure/persistence/MariaDbGrantedApplicationReadRepository.js";
+import { createAppsRoutes } from "../../modules/launcher/http/appsRoutes.js";
+import { CreateIdentityInvitationService } from "../../modules/invitation/application/CreateIdentityInvitationService.js";
+import { RedeemIdentityInvitationService } from "../../modules/invitation/application/RedeemIdentityInvitationService.js";
+import { MariaDbInvitationRepository } from "../../modules/invitation/infrastructure/persistence/MariaDbInvitationRepository.js";
+import { MariaDbInvitationEligibilityReadRepository } from "../../modules/invitation/infrastructure/persistence/MariaDbInvitationEligibilityReadRepository.js";
+import { CryptoInvitationTokenGenerator } from "../../modules/invitation/infrastructure/token/invitationToken.js";
+import { composeInvitationDelivery } from "../../modules/invitation/infrastructure/InvitationComposition.js";
+import { createAdminInvitationRoutes } from "../../modules/invitation/http/adminInvitationRoutes.js";
+import { createInvitationRoutes } from "../../modules/invitation/http/invitationRoutes.js";
+import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -183,6 +202,16 @@ export interface CreateAppOptions {
    * `GET /api/v1/service/portal/identities/:identityPublicId/organizations/:organizationPublicId/tenant-scope`.
    */
   readonly resolvePortalTenantScopeService?: ResolvePortalTenantScopeService;
+  /**
+   * Injetáveis para teste — v1.0 (autenticação central + launcher).
+   * Quando omitidos, `createApp()` compõe as versões reais a partir de
+   * `loadEnv()` e do pool compartilhado.
+   */
+  readonly issueAuthorizationCodeService?: IssueAuthorizationCodeService;
+  readonly exchangeAuthorizationCodeService?: ExchangeAuthorizationCodeService;
+  readonly getMyApplicationsService?: GetMyApplicationsService;
+  readonly createIdentityInvitationService?: CreateIdentityInvitationService;
+  readonly redeemIdentityInvitationService?: RedeemIdentityInvitationService;
 }
 
 /**
@@ -359,7 +388,12 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.getActiveOrganizationExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceService === undefined ||
     options.getHelpdeskUserContextService === undefined ||
-    options.resolvePortalTenantScopeService === undefined;
+    options.resolvePortalTenantScopeService === undefined ||
+    options.issueAuthorizationCodeService === undefined ||
+    options.exchangeAuthorizationCodeService === undefined ||
+    options.getMyApplicationsService === undefined ||
+    options.createIdentityInvitationService === undefined ||
+    options.redeemIdentityInvitationService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -405,6 +439,100 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const helpdeskServiceCredential =
     options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
 
+  // --- Autenticação central + launcher (v1.0) --------------------------
+  //
+  // Toda a composição abaixo reaproveita instâncias JÁ construídas
+  // acima: `authorizeApplicationAccessService` (Application ACTIVE +
+  // ApplicationAccess GRANTED + perfil) e `getPortalContextService`
+  // (Membership ACTIVE + expansão + deduplicação) são exatamente os
+  // mesmos objetos que servem `/api/v1/portal` e
+  // `/api/v1/service/portal`. O SSO não reimplementa nenhuma dessas
+  // regras — se um dia a regra mudar, muda em um lugar só.
+  const env = loadEnv();
+  const sso = composeSso({
+    portalRedirectUris: env.SSO_PORTAL_REDIRECT_URIS,
+    portalLaunchUrl: env.SSO_PORTAL_LAUNCH_URL
+  });
+  const unitOfWork = sharedPool === undefined ? undefined : new MariaDbUnitOfWork(sharedPool);
+
+  const issueAuthorizationCodeService =
+    options.issueAuthorizationCodeService ??
+    new IssueAuthorizationCodeService(
+      unitOfWork!,
+      (c) => new MariaDbIdentityRepository(c),
+      (c) => new MariaDbApplicationRepository(c),
+      (c) => new MariaDbAuthorizationCodeRepository(c),
+      (c) => new MariaDbAuditEventRepository(c),
+      authorizeApplicationAccessService,
+      getPortalContextService,
+      new CryptoAuthorizationCodeGenerator(),
+      env.SSO_AUTHORIZATION_CODE_TTL_SECONDS
+    );
+
+  const exchangeAuthorizationCodeService =
+    options.exchangeAuthorizationCodeService ??
+    new ExchangeAuthorizationCodeService(
+      unitOfWork!,
+      (c) => new MariaDbAuthorizationCodeRepository(c),
+      (c) => new MariaDbApplicationRepository(c),
+      (c) => new MariaDbAuditEventRepository(c),
+      identityRepository,
+      authorizeApplicationAccessService
+    );
+
+  // Destinos dos cards. `PCTEC_INGRESSA` aponta para um caminho RELATIVO
+  // (a própria UI administrativa) e os outros para URLs absolutas dos
+  // respectivos produtos — o card do Portal leva ao endpoint que INICIA
+  // o SSO lá, porque o `code_challenge` é do cliente e só ele pode
+  // gerá-lo. Entrada vazia vira card desabilitado, nunca card ausente.
+  const launchUrlByApplicationCode: Record<string, string> = { [PCTEC_INGRESSA_APPLICATION_CODE]: "/admin" };
+  if (env.SSO_PORTAL_LAUNCH_URL.trim().length > 0) {
+    launchUrlByApplicationCode[PCTEC_PORTAL_APPLICATION_CODE] = env.SSO_PORTAL_LAUNCH_URL;
+  }
+  if (env.HELPDESK_LAUNCH_URL.trim().length > 0) {
+    launchUrlByApplicationCode[PCTEC_HELPDESK_APPLICATION_CODE] = env.HELPDESK_LAUNCH_URL;
+  }
+
+  const getMyApplicationsService =
+    options.getMyApplicationsService ??
+    new GetMyApplicationsService(
+      identityRepository,
+      new MariaDbGrantedApplicationReadRepository(sharedPool!),
+      launchUrlByApplicationCode
+    );
+
+  const createIdentityInvitationService =
+    options.createIdentityInvitationService ??
+    new CreateIdentityInvitationService(
+      unitOfWork!,
+      new MariaDbInvitationEligibilityReadRepository(sharedPool!),
+      (c) => new MariaDbInvitationRepository(c),
+      (c) => new MariaDbAuditEventRepository(c),
+      new CryptoInvitationTokenGenerator(),
+      composeInvitationDelivery({
+        mode: env.INVITATION_DELIVERY_MODE,
+        smtpHost: env.INGRESSA_SMTP_HOST,
+        smtpUser: env.INGRESSA_SMTP_USER,
+        smtpPassword: env.INGRESSA_SMTP_PASSWORD,
+        smtpFrom: env.INGRESSA_SMTP_FROM
+      }),
+      env.INVITATION_TTL_SECONDS,
+      env.INGRESSA_PUBLIC_BASE_URL
+    );
+
+  const redeemIdentityInvitationService =
+    options.redeemIdentityInvitationService ??
+    new RedeemIdentityInvitationService(
+      unitOfWork!,
+      (c) => new MariaDbInvitationRepository(c),
+      (c) => new MariaDbIdentityRepository(c),
+      (c) => new MariaDbCredentialRepository(c),
+      (c) => new MariaDbAuditEventRepository(c),
+      new Argon2PasswordHasher(),
+      new MariaDbInvitationRepository(sharedPool!),
+      identityRepository
+    );
+
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
 
@@ -432,6 +560,41 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createRequireAuthenticatedSession(validateSessionService),
     createMeRoutes()
   );
+  // GET /api/v1/apps — painel "Meus aplicativos" (v1.0). Autenticação e
+  // SÓ autenticação: este é o painel de qualquer pessoa que entra, não
+  // uma rota administrativa. Os cards vêm de ApplicationAccess GRANTED,
+  // resolvido no service — o cliente não filtra nada.
+  app.use("/api/v1/apps", createRequireAuthenticatedSession(validateSessionService), createAppsRoutes(getMyApplicationsService));
+
+  // GET /api/v1/sso/authorize — entrada do fluxo SSO, vinda do
+  // navegador. Deliberadamente SEM `createRequireAuthenticatedSession`
+  // na cadeia: o middleware responde 401 em JSON, e aqui a resposta
+  // certa para "sem sessão" é mandar a pessoa para o login com o retorno
+  // preservado. A validação de sessão acontece dentro da rota, com o
+  // MESMO `ValidateSessionService`.
+  app.use("/api/v1/sso", createSsoAuthorizeRoutes(sso.registry, validateSessionService, issueAuthorizationCodeService, sso.requiredProfileByClientId));
+
+  // POST /api/v1/invitations/{preview,redeem} — rotas PÚBLICAS do
+  // convite de primeiro acesso. Quem as usa ainda não tem credencial; a
+  // autorização é o token de uso único, enviado no CORPO (nunca na URL).
+  app.use("/api/v1/invitations", createInvitationRoutes(redeemIdentityInvitationService));
+
+  // POST /api/v1/admin/invitations — emissão administrativa. Montada no
+  // próprio prefixo, ANTES do /api/v1/admin genérico, pelo mesmo motivo
+  // documentado no assistente de importação: a guarda de origem vale
+  // para este router inteiro sem transformar 404 de rota inexistente em
+  // 403 enganoso no resto da administração.
+  app.use(
+    "/api/v1/admin/invitations",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
+      profile: "ADMIN"
+    }),
+    createRequireSafeOrigin(allowedOrigins),
+    createAdminInvitationRoutes(createIdentityInvitationService)
+  );
+
   // Assistente de importação Helpdesk (v0.10.x) — MESMA cadeia de
   // autorização do restante de /api/v1/admin (sessão → Identity ACTIVE →
   // ADMIN em PCTEC_INGRESSA), MAIS a guarda de origem.
@@ -591,6 +754,17 @@ export function createApp(options: CreateAppOptions = {}): Express {
       requireOrganizationAccessService,
       resolvePortalTenantScopeService
     )
+  );
+
+  // POST /api/v1/service/sso/token — troca do código pelo backend do
+  // Portal. Reaproveita a credencial e o header que o Portal já usa
+  // desde P1A.1: um canal service-to-service novo significaria um
+  // segredo novo para distribuir, rotacionar e vazar. Um navegador nunca
+  // chega aqui — este namespace nunca aceita cookie de sessão.
+  app.use(
+    "/api/v1/service/sso",
+    createRequireServiceCredential(serviceCredential),
+    createServiceSsoTokenRoutes(exchangeAuthorizationCodeService, sso.registry, sso.requiredProfileByClientId)
   );
 
   // GET /api/v1/service/helpdesk/users/:legacyUserId/context — v0.8.x.

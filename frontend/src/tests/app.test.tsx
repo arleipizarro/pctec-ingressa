@@ -15,9 +15,18 @@ function renderizar(rota = "/") {
 }
 
 const NOME_ADMIN_SINTETICO = "Administrador Sintetico";
-const SESSAO_ADMIN = {
+/**
+ * A sessão da UI passou a vir de `GET /api/v1/apps` — a rota do usuário,
+ * que responde 200 para qualquer sessão válida — e não mais de
+ * `/admin/whoami`, que só responde 200 para ADMIN. O painel abaixo é o
+ * de um administrador: card do próprio Ingressa com perfil ADMIN.
+ */
+const PAINEL_ADMIN = {
   identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: NOME_ADMIN_SINTETICO },
-  access: { profile: "ADMIN" }
+  applications: [
+    { code: "PCTEC_INGRESSA", name: "PCTEC Ingressa", profile: "ADMIN", launchUrl: "/admin" },
+    { code: "PCTEC_PORTAL", name: "PCTEC Portal", profile: "USER", launchUrl: "https://portal.example.invalid/api/auth/ingressa/start" }
+  ]
 };
 
 /**
@@ -31,7 +40,7 @@ function erroDaApi(status: number): ApiError {
 }
 
 beforeEach(() => {
-  vi.spyOn(api, "whoami").mockResolvedValue(SESSAO_ADMIN);
+  vi.spyOn(api, "apps").mockResolvedValue(PAINEL_ADMIN);
   vi.spyOn(api, "summary").mockResolvedValue(fixtures.RESUMO);
   vi.spyOn(api, "identities").mockResolvedValue(fixtures.PAGINA_IDENTIDADES);
   vi.spyOn(api, "identity").mockResolvedValue(fixtures.IDENTIDADE_DETALHE);
@@ -48,29 +57,32 @@ afterEach(() => {
 
 describe("login e proteção de rotas", () => {
   it("sem sessão, qualquer rota mostra o login", async () => {
-    vi.spyOn(api, "whoami").mockRejectedValue(erroDaApi(401));
-    renderizar("/usuarios");
+    vi.spyOn(api, "apps").mockRejectedValue(erroDaApi(401));
+    renderizar("/admin/usuarios");
 
     expect(await screen.findByLabelText("E-mail")).toBeInTheDocument();
     expect(screen.queryByText("Usuários")).not.toBeInTheDocument();
   });
 
-  it("autentica e entra no painel", async () => {
-    const whoami = vi.spyOn(api, "whoami").mockRejectedValueOnce(erroDaApi(401)).mockResolvedValue(SESSAO_ADMIN);
+  it("autentica e entra no launcher", async () => {
+    const apps = vi.spyOn(api, "apps").mockRejectedValueOnce(erroDaApi(401)).mockResolvedValue(PAINEL_ADMIN);
     const login = vi.spyOn(api, "login").mockResolvedValue(undefined);
-    renderizar("/");
+    renderizar("/admin");
 
     await userEvent.type(await screen.findByLabelText("E-mail"), "admin@example.invalid");
     await userEvent.type(screen.getByLabelText("Senha"), "senha-sintetica");
     await userEvent.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => expect(login).toHaveBeenCalledWith("admin@example.invalid", "senha-sintetica"));
-    expect(await screen.findByRole("heading", { name: "Painel" })).toBeInTheDocument();
-    expect(whoami).toHaveBeenCalled();
+    // Depois do login, a primeira tela é "Meus aplicativos" — não a
+    // administração. Quem não é ADMIN também precisa chegar a algum
+    // lugar, e esse lugar é o launcher.
+    expect(await screen.findByText("Meus aplicativos")).toBeInTheDocument();
+    expect(apps).toHaveBeenCalled();
   });
 
   it("credencial recusada mostra mensagem em português, sem detalhe interno", async () => {
-    vi.spyOn(api, "whoami").mockRejectedValue(erroDaApi(401));
+    vi.spyOn(api, "apps").mockRejectedValue(erroDaApi(401));
     vi.spyOn(api, "login").mockRejectedValue(new ApiError(401, "AUTH", "Sua sessão expirou. Entre novamente."));
     renderizar("/login");
 
@@ -84,7 +96,7 @@ describe("login e proteção de rotas", () => {
   });
 
   it("não guarda nada em localStorage — a sessão é cookie do servidor", async () => {
-    renderizar("/");
+    renderizar("/admin");
     await screen.findByRole("heading", { name: "Painel" });
     expect(localStorage.length).toBe(0);
   });
@@ -92,7 +104,7 @@ describe("login e proteção de rotas", () => {
 
 describe("painel", () => {
   it("mostra contagens, alerta de conflito e últimos lotes", async () => {
-    renderizar("/");
+    renderizar("/admin");
 
     expect(await screen.findByRole("heading", { name: "Painel" })).toBeInTheDocument();
     expect(screen.getByText("Identidades ACTIVE")).toBeInTheDocument();
@@ -103,7 +115,7 @@ describe("painel", () => {
 
   it("mostra erro legível quando a API falha", async () => {
     vi.spyOn(api, "summary").mockRejectedValue(new ApiError(500, "X", "Erro interno. Tente novamente em instantes."));
-    renderizar("/");
+    renderizar("/admin");
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/erro interno/i);
   });
@@ -111,7 +123,7 @@ describe("painel", () => {
 
 describe("usuários", () => {
   it("lista e filtra por status", async () => {
-    renderizar("/usuarios");
+    renderizar("/admin/usuarios");
 
     expect(await screen.findByText("Piloto Um")).toBeInTheDocument();
     await userEvent.selectOptions(screen.getByLabelText("Filtrar por status"), "PENDING");
@@ -124,12 +136,12 @@ describe("usuários", () => {
 
   it("mostra vazio quando não há resultado", async () => {
     vi.spyOn(api, "identities").mockResolvedValue({ items: [], total: 0, limit: 25, offset: 0 });
-    renderizar("/usuarios");
+    renderizar("/admin/usuarios");
     expect(await screen.findByText("Nenhum registro encontrado.")).toBeInTheDocument();
   });
 
   it("detalhe mostra origem federada, referências, memberships e acessos", async () => {
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     expect(await screen.findByRole("heading", { name: "Piloto Um" })).toBeInTheDocument();
     expect(screen.getByText("FEDERADA")).toBeInTheDocument();
@@ -141,7 +153,7 @@ describe("usuários", () => {
 describe("ações com confirmação", () => {
   it("ativar identidade federada pede confirmação antes de chamar a API", async () => {
     const ativar = vi.spyOn(api, "activateFederated").mockResolvedValue(undefined);
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     await userEvent.click(await screen.findByRole("button", { name: /ativar identidade federada/i }));
     expect(ativar).not.toHaveBeenCalled();
@@ -156,7 +168,7 @@ describe("ações com confirmação", () => {
 
   it("cancelar fecha o diálogo sem chamar a API", async () => {
     const ativar = vi.spyOn(api, "activateFederated").mockResolvedValue(undefined);
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     await userEvent.click(await screen.findByRole("button", { name: /ativar identidade federada/i }));
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancelar" }));
@@ -167,7 +179,7 @@ describe("ações com confirmação", () => {
 
   it("revogar acesso envia a versão exibida — base do controle de concorrência", async () => {
     const revogar = vi.spyOn(api, "revokeAccess").mockResolvedValue(undefined);
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     await userEvent.click(await screen.findByRole("button", { name: "Revogar" }));
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirmar" }));
@@ -179,7 +191,7 @@ describe("ações com confirmação", () => {
     vi.spyOn(api, "revokeAccess").mockRejectedValue(
       new ApiError(409, "CONFLICT", "O registro mudou desde que a tela carregou. Recarregue e tente de novo.")
     );
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     await userEvent.click(await screen.findByRole("button", { name: "Revogar" }));
     await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Confirmar" }));
@@ -189,7 +201,7 @@ describe("ações com confirmação", () => {
 
   it("encerrar membership exige motivo digitado", async () => {
     const encerrar = vi.spyOn(api, "endMembership").mockResolvedValue(undefined);
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
 
     await userEvent.click(await screen.findByRole("button", { name: "Encerrar" }));
     const dialogo = screen.getByRole("dialog");
@@ -202,14 +214,14 @@ describe("ações com confirmação", () => {
 
 describe("organizações e importações", () => {
   it("lista organizações e abre o detalhe com hierarquia", async () => {
-    renderizar(`/organizacoes/${fixtures.ORG_PUBLIC_ID}`);
+    renderizar(`/admin/organizacoes/${fixtures.ORG_PUBLIC_ID}`);
 
     expect(await screen.findByRole("heading", { name: "EMPRESA SINTETICA LTDA" })).toBeInTheDocument();
     expect(screen.getByText("GRUPO SINTETICO")).toBeInTheDocument();
   });
 
   it("itens do lote mostram o campo redigido sem revelar o conteúdo", async () => {
-    renderizar(`/importacoes/${fixtures.LOTE_PUBLIC_ID}`);
+    renderizar(`/admin/importacoes/${fixtures.LOTE_PUBLIC_ID}`);
 
     expect(await screen.findByText("[REDIGIDO]")).toBeInTheDocument();
     expect(screen.getByText(/bcrypt_hash/)).toBeInTheDocument();
@@ -217,7 +229,7 @@ describe("organizações e importações", () => {
   });
 
   it("a tela de importações declara que é somente leitura", async () => {
-    renderizar("/importacoes");
+    renderizar("/admin/importacoes");
     expect(await screen.findByText(/somente leitura/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /aplicar/i })).not.toBeInTheDocument();
   });
@@ -225,7 +237,7 @@ describe("organizações e importações", () => {
 
 describe("conceder acesso", () => {
   async function abrirFormulario() {
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
     await userEvent.click(await screen.findByRole("button", { name: "Conceder acesso" }));
     return screen.getByRole("dialog", { name: "Conceder acesso" });
   }
@@ -306,7 +318,7 @@ describe("conceder acesso", () => {
 
 describe("criar membership", () => {
   async function abrirFormulario() {
-    renderizar(`/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
+    renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
     await userEvent.click(await screen.findByRole("button", { name: "Criar membership" }));
     return screen.getByRole("dialog", { name: "Criar membership" });
   }
@@ -404,8 +416,8 @@ describe("criar membership", () => {
 });
 
 describe("cabeçalho", () => {
-  it("mostra o nome vindo do whoami, nunca o publicId", async () => {
-    renderizar("/");
+  it("mostra o nome vindo do servidor, nunca o publicId", async () => {
+    renderizar("/admin");
     await screen.findByRole("heading", { name: "Painel" });
 
     expect(screen.getByText(NOME_ADMIN_SINTETICO)).toBeInTheDocument();
@@ -413,30 +425,24 @@ describe("cabeçalho", () => {
   });
 
   it("mostra o perfil ao lado do nome", async () => {
-    renderizar("/");
+    renderizar("/admin");
     await screen.findByRole("heading", { name: "Painel" });
     expect(screen.getByText(/perfil ADMIN/)).toBeInTheDocument();
   });
 
-  it("sem nome no whoami, usa rótulo neutro — nunca UUID parcial", async () => {
-    vi.spyOn(api, "whoami").mockResolvedValue({
-      identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: null },
-      access: { profile: "ADMIN" }
-    });
-    renderizar("/");
+  it("sem nome no servidor, usa rótulo neutro — nunca UUID parcial", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue({ ...PAINEL_ADMIN, identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: "" } });
+    renderizar("/admin");
     await screen.findByRole("heading", { name: "Painel" });
 
-    expect(screen.getByText("Administrador")).toBeInTheDocument();
+    expect(screen.getAllByText("Usuário").length).toBeGreaterThan(0);
     expect(document.body.textContent ?? "").not.toContain(fixtures.ADMIN_PUBLIC_ID.slice(0, 8));
   });
 
   it("nome só de espaços também cai no rótulo neutro", async () => {
-    vi.spyOn(api, "whoami").mockResolvedValue({
-      identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: "   " },
-      access: { profile: "ADMIN" }
-    });
-    renderizar("/");
+    vi.spyOn(api, "apps").mockResolvedValue({ ...PAINEL_ADMIN, identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: "   " } });
+    renderizar("/admin");
     await screen.findByRole("heading", { name: "Painel" });
-    expect(screen.getByText("Administrador")).toBeInTheDocument();
+    expect(screen.getAllByText("Usuário").length).toBeGreaterThan(0);
   });
 });

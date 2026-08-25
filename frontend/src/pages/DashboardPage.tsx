@@ -68,7 +68,7 @@ export function DashboardPage(): JSX.Element {
                     <tbody>
                       {dados.latestImportBatches.map((lote) => (
                         <tr key={lote.public_id}>
-                          <td><Link to={`/importacoes/${lote.public_id}`}>{lote.public_id.slice(0, 8)}…</Link></td>
+                          <td><Link to={`/admin/importacoes/${lote.public_id}`}>{lote.public_id.slice(0, 8)}…</Link></td>
                           <td>{lote.source_system}</td>
                           <td><Badge valor={lote.mode} /></td>
                           <td><Badge valor={lote.status} /></td>

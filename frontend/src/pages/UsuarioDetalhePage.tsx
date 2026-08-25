@@ -87,7 +87,7 @@ export function UsuarioDetalhePage(): JSX.Element {
 
   return (
     <>
-      <p className="subtitulo"><Link to="/usuarios">← Usuários</Link></p>
+      <p className="subtitulo"><Link to="/admin/usuarios">← Usuários</Link></p>
       <Estado carregando={carregando} erro={erro} vazio={dados === null}>
         {dados !== null && (
           <>
@@ -145,7 +145,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.memberships.map((m) => (
                         <tr key={m.public_id}>
-                          <td><Link to={`/organizacoes/${m.organization_public_id}`}>{m.trade_name ?? m.legal_name}</Link></td>
+                          <td><Link to={`/admin/organizacoes/${m.organization_public_id}`}>{m.trade_name ?? m.legal_name}</Link></td>
                           <td>{m.profile}</td><td>{m.scope}</td><td><Badge valor={m.status} /></td>
                           <td>
                             {m.status === "ACTIVE" && (

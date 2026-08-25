@@ -19,7 +19,7 @@ export function LoteDetalhePage(): JSX.Element {
 
   return (
     <>
-      <p className="subtitulo"><Link to="/importacoes">← Importações</Link></p>
+      <p className="subtitulo"><Link to="/admin/importacoes">← Importações</Link></p>
       <h2>Itens do lote</h2>
       <p className="subtitulo">
         <code>{publicId}</code> — campos sensíveis aparecem como <span className="redigido">[REDIGIDO]</span>,

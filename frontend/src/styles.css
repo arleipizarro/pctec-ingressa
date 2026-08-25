@@ -101,3 +101,35 @@ button:disabled { opacity: .55; cursor: not-allowed; }
 .botao-primario:hover { text-decoration: none; opacity: .92; }
 details > summary { cursor: pointer; padding: 8px 0; font-size: .92rem; }
 details[open] > summary { font-weight: 600; }
+
+/* --- Launcher "Meus aplicativos" (v1.0) --------------------------------
+   Grade de cards clicáveis, sem sidebar: esta é a primeira tela de quem
+   entra, e uma navegação administrativa aqui só teria itens que a
+   maioria das pessoas não pode abrir. */
+.launcher { max-width: 960px; margin: 0 auto; padding: 32px 24px 48px; }
+.launcher-topo { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 28px; }
+.launcher-topo h1 { margin: 0; font-size: 1.25rem; letter-spacing: .04em; color: var(--pctec-azul); }
+.launcher-usuario { display: flex; align-items: center; gap: 12px; font-size: .85rem; color: var(--pctec-texto-fraco); }
+.launcher-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+
+.app-card { display: flex; flex-direction: column; gap: 6px; background: var(--pctec-superficie);
+  border: 1px solid var(--pctec-borda); border-radius: 10px; padding: 18px; color: var(--pctec-texto); }
+.app-card:hover { text-decoration: none; border-color: var(--pctec-azul-claro); box-shadow: 0 2px 10px rgba(18,58,107,.08); }
+.app-card strong { font-size: 1.05rem; color: var(--pctec-azul); }
+.app-card-perfil { align-self: flex-start; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--pctec-texto-fraco); background: #eef2f7; border-radius: 999px; padding: 2px 8px; }
+.app-card-descricao { font-size: .85rem; color: var(--pctec-texto-fraco); }
+.app-card-aviso { font-size: .78rem; color: var(--pctec-alerta); }
+/* Card com acesso, mas sem destino configurado: continua visível — sumir
+   faria a pessoa achar que perdeu o acesso. */
+.app-card-indisponivel { opacity: .6; cursor: not-allowed; }
+.app-card-indisponivel:hover { border-color: var(--pctec-borda); box-shadow: none; }
+
+.acoes-topo { display: flex; align-items: center; gap: 12px; }
+.botao-link { display: inline-block; margin-top: 12px; }
+.painel-resultado { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda);
+  border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+.painel-resultado h3 { margin: 0 0 8px; font-size: 1rem; }
+/* O link do convite quebra em qualquer ponto: um token de 43 caracteres
+   numa célula estreita ficaria cortado, e um link cortado é inútil. */
+.link-convite { font-size: .78rem; word-break: break-all; }

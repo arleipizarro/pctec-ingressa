@@ -94,7 +94,58 @@ const envSchema = z.object({
   // funcional por omissao; sem ela configurada, so a rota
   // /api/v1/service/helpdesk/... fica indisponivel (401), e o resto da
   // aplicacao sobe normalmente.
-  INGRESSA_HELPDESK_SERVICE_CREDENTIAL: z.string().default("")
+  INGRESSA_HELPDESK_SERVICE_CREDENTIAL: z.string().default(""),
+  // --- SSO first-party Ingressa -> produtos (v1.0) ---
+  //
+  // Base pública da UI do Ingressa. Usada para montar o link do convite
+  // (`<base>/convite#<token>`) e nada mais. Default "" deliberado: sem
+  // ela, a emissão de convites fica indisponível com erro explícito, em
+  // vez de gerar um link para `undefined/convite`.
+  INGRESSA_PUBLIC_BASE_URL: z.string().default(""),
+  // Lista FECHADA de `redirect_uri` aceitos para o cliente
+  // `PCTEC_PORTAL`, separados por vírgula, em forma absoluta e exata.
+  // Nunca prefixo, nunca curinga: a comparação é igualdade de string, e
+  // é ela que impede open redirect. Vazia = SSO do Portal indisponível
+  // (fail-closed) — nunca "sem lista configurada = aceita qualquer
+  // URL", que seria o pior default possível nesta variável.
+  SSO_PORTAL_REDIRECT_URIS: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((uri) => uri.trim())
+        .filter((uri) => uri.length > 0)
+    ),
+  // URL que INICIA o fluxo, do lado do Portal (o card do launcher aponta
+  // para cá). Pertence ao Portal, não ao Ingressa — por isso é
+  // configuração, e por isso o card fica desabilitado quando ausente em
+  // vez de sumir: o acesso existe, o destino é que não foi configurado.
+  SSO_PORTAL_LAUNCH_URL: z.string().default(""),
+  // Mesmo papel, para o card do Helpdesk. Ausente = card desabilitado.
+  HELPDESK_LAUNCH_URL: z.string().default(""),
+  // Validade do código de autorização. O teto real (60s) vive no
+  // agregado `AuthorizationCode` — esta variável só permite encurtar,
+  // nunca esticar: afrouxar a janela de replay não pode ser um ajuste de
+  // configuração.
+  SSO_AUTHORIZATION_CODE_TTL_SECONDS: z.coerce.number().int().positive().max(60).default(60),
+  // --- Convite de primeiro acesso (v1.0) ---
+  // 24h por padrão; o teto de 7 dias vive no agregado `Invitation`.
+  INVITATION_TTL_SECONDS: z.coerce.number().int().positive().max(604_800).default(86_400),
+  // MANUAL_DEV: o link é mostrado UMA vez ao ADMIN e nada é enviado.
+  // EMAIL: entrega pelo transporte SMTP próprio do Ingressa.
+  // Recusado em produção (ver gate em `loadEnv`): mostrar o link na tela
+  // é um recurso de desenvolvimento, não uma política de entrega.
+  INVITATION_DELIVERY_MODE: z.enum(["MANUAL_DEV", "EMAIL"]).default("MANUAL_DEV"),
+  // SMTP PRÓPRIO do Ingressa — nunca compartilhado com o Portal, para
+  // que revogar uma credencial não derrube o outro produto. Nenhum valor
+  // real aqui e nenhum no Git: defaults "" e ausência = modo EMAIL
+  // indisponível, com erro operacional explícito.
+  INGRESSA_SMTP_HOST: z.string().default(""),
+  INGRESSA_SMTP_PORT: z.coerce.number().int().positive().max(65_535).default(587),
+  INGRESSA_SMTP_USER: z.string().default(""),
+  INGRESSA_SMTP_PASSWORD: z.string().default(""),
+  INGRESSA_SMTP_FROM: z.string().default("")
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -134,6 +185,19 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       throw new Error(
         "Configuração inválida: SESSION_TTL_SECONDS é obrigatório com NODE_ENV=production — " +
           "o default (8h) é pensado apenas para development/test, nunca aplicado silenciosamente em produção."
+      );
+    }
+    // 3. `INVITATION_DELIVERY_MODE=MANUAL_DEV` nunca é aceito em
+    //    produção. O modo manual devolve o link do convite para a tela
+    //    de quem administra — aceitável enquanto não há SMTP no
+    //    ambiente de desenvolvimento, inaceitável como política de
+    //    entrega de acesso em produção. Este gate é o "bloqueio
+    //    explícito para PRD": configurar SMTP é uma decisão que precisa
+    //    ser tomada, nunca contornada por omissão.
+    if (env.INVITATION_DELIVERY_MODE === "MANUAL_DEV") {
+      throw new Error(
+        "Configuração inválida: INVITATION_DELIVERY_MODE=MANUAL_DEV nunca é permitido com NODE_ENV=production — " +
+          "configure INVITATION_DELIVERY_MODE=EMAIL e as variáveis INGRESSA_SMTP_*."
       );
     }
   }

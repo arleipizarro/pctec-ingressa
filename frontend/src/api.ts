@@ -61,6 +61,32 @@ export const api = {
     requisitar<{ identity: { publicId: string; fullName: string | null }; access: { profile: string } }>(
       "/admin/whoami"
     ),
+  /**
+   * Painel "Meus aplicativos" — e, de quebra, a sessão.
+   *
+   * Substituiu `whoami` como fonte da sessão da UI: `whoami` responde
+   * 403 para quem não é ADMIN, o que fazia todo usuário federado cair no
+   * login como se não estivesse autenticado. `/apps` responde 200 para
+   * qualquer sessão válida e já traz os cards que a pessoa pode ver.
+   */
+  apps: () => requisitar<PainelDeAplicativos>("/apps"),
+  /** Convites (ADMIN). O link do modo manual volta UMA vez — não é reexibível. */
+  convidar: (identityPublicIds: readonly string[]) =>
+    requisitar<ResultadoDeConvites>("/admin/invitations", {
+      method: "POST",
+      body: JSON.stringify({ identityPublicIds })
+    }),
+  /** Convite (público) — o token vai no CORPO, nunca na URL. */
+  previewConvite: (token: string) =>
+    requisitar<{ fullName: string; expiresAt: string }>("/invitations/preview", {
+      method: "POST",
+      body: JSON.stringify({ token })
+    }),
+  definirSenhaPorConvite: (token: string, password: string, passwordConfirmation: string) =>
+    requisitar<{ identity: { publicId: string }; loginEnabled: boolean }>("/invitations/redeem", {
+      method: "POST",
+      body: JSON.stringify({ token, password, passwordConfirmation })
+    }),
   login: (email: string, password: string) =>
     requisitar<unknown>("/sessions", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => requisitar<unknown>("/sessions/current", { method: "DELETE" }),
@@ -354,4 +380,34 @@ export interface Resumo {
   readonly activeMemberships: number;
   readonly latestImportBatches: readonly Lote[];
   readonly importAlerts: readonly { action: string; total: number }[];
+}
+
+export interface AplicativoCard {
+  readonly code: string;
+  readonly name: string;
+  readonly profile: string;
+  /** `null` = há acesso, mas o destino não está configurado neste ambiente. */
+  readonly launchUrl: string | null;
+}
+
+export interface PainelDeAplicativos {
+  readonly identity: { readonly publicId: string; readonly fullName: string };
+  readonly applications: readonly AplicativoCard[];
+}
+
+export interface ConviteEmitido {
+  readonly identityPublicId: string;
+  readonly fullName: string;
+  readonly outcome: "CREATED" | "SKIPPED";
+  readonly reasonCode: string | null;
+  readonly invitationPublicId: string | null;
+  readonly expiresAt: string | null;
+  readonly deliveryMode: string | null;
+  readonly delivered: boolean;
+  readonly manualLink: string | null;
+}
+
+export interface ResultadoDeConvites {
+  readonly deliveryMode: string;
+  readonly results: readonly ConviteEmitido[];
 }

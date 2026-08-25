@@ -64,12 +64,12 @@ describe("loadEnv — SESSION_COOKIE_SECURE (v0.6.0, Fase D, revisão crítica i
   });
 
   it("produção com SESSION_COOKIE_SECURE ausente (assume default true) carrega normalmente — omissão nunca é insegura", () => {
-    const env = loadEnv({ NODE_ENV: "production", SESSION_TTL_SECONDS: "3600" });
+    const env = loadEnv({ NODE_ENV: "production", SESSION_TTL_SECONDS: "3600", INVITATION_DELIVERY_MODE: "EMAIL" });
     expect(env.SESSION_COOKIE_SECURE).toBe(true);
   });
 
   it("produção com SESSION_COOKIE_SECURE=true explícito carrega normalmente", () => {
-    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "3600" });
+    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "3600", INVITATION_DELIVERY_MODE: "EMAIL" });
     expect(env.SESSION_COOKIE_SECURE).toBe(true);
   });
 });
@@ -99,7 +99,7 @@ describe("loadEnv — SESSION_TTL_SECONDS (v0.6.0, Fase D, revisão crítica ite
   });
 
   it("produção COM SESSION_TTL_SECONDS explícito carrega normalmente, mesmo que o valor numérico coincida com o default", () => {
-    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800" });
+    const env = loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800", INVITATION_DELIVERY_MODE: "EMAIL" });
     expect(env.SESSION_TTL_SECONDS).toBe(28800);
   });
 
@@ -114,7 +114,14 @@ describe("loadEnv — INGRESSA_PORTAL_SERVICE_CREDENTIAL (P1A.1, v0.7.x — revi
     expect(() => loadEnv({})).not.toThrow();
     expect(() => loadEnv({ NODE_ENV: "development" })).not.toThrow();
     expect(() => loadEnv({ NODE_ENV: "test" })).not.toThrow();
-    expect(() => loadEnv({ NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800" })).not.toThrow();
+    expect(() =>
+      loadEnv({
+        NODE_ENV: "production",
+        SESSION_COOKIE_SECURE: "true",
+        SESSION_TTL_SECONDS: "28800",
+        INVITATION_DELIVERY_MODE: "EMAIL"
+      })
+    ).not.toThrow();
   });
 
   it("default é string vazia quando ausente — nunca um segredo funcional por omissão, mas também nunca um valor que impeça o boot", () => {
@@ -130,5 +137,74 @@ describe("loadEnv — INGRESSA_PORTAL_SERVICE_CREDENTIAL (P1A.1, v0.7.x — revi
   it("string vazia explícita também é aceita sem erro (mesmo resultado que ausência)", () => {
     expect(() => loadEnv({ INGRESSA_PORTAL_SERVICE_CREDENTIAL: "" })).not.toThrow();
     expect(loadEnv({ INGRESSA_PORTAL_SERVICE_CREDENTIAL: "" }).INGRESSA_PORTAL_SERVICE_CREDENTIAL).toBe("");
+  });
+});
+
+/**
+ * Gate de produção do modo de entrega de convite (v1.0).
+ *
+ * `MANUAL_DEV` devolve o link do convite para a tela de quem administra
+ * — aceitável enquanto não há SMTP no ambiente de desenvolvimento,
+ * inaceitável como política de entrega de acesso em produção. Este é o
+ * "bloqueio explícito para PRD": configurar SMTP passa a ser uma decisão
+ * consciente, nunca contornada por omissão.
+ */
+describe("loadEnv — INVITATION_DELIVERY_MODE (v1.0)", () => {
+  it("fora de produção, o padrão é MANUAL_DEV — nenhum e-mail é prometido sem SMTP", () => {
+    expect(loadEnv({}).INVITATION_DELIVERY_MODE).toBe("MANUAL_DEV");
+  });
+
+  it("produção com MANUAL_DEV (explícito ou por omissão) é RECUSADA", () => {
+    const base = { NODE_ENV: "production", SESSION_COOKIE_SECURE: "true", SESSION_TTL_SECONDS: "28800" };
+    expect(() => loadEnv(base)).toThrow(/INVITATION_DELIVERY_MODE/);
+    expect(() => loadEnv({ ...base, INVITATION_DELIVERY_MODE: "MANUAL_DEV" })).toThrow(/INVITATION_DELIVERY_MODE/);
+  });
+
+  it("produção com EMAIL carrega normalmente", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      SESSION_COOKIE_SECURE: "true",
+      SESSION_TTL_SECONDS: "28800",
+      INVITATION_DELIVERY_MODE: "EMAIL"
+    });
+    expect(env.INVITATION_DELIVERY_MODE).toBe("EMAIL");
+  });
+
+  it("a mensagem cita o NOME da variável, nunca valor de credencial SMTP", () => {
+    let mensagem = "";
+    try {
+      loadEnv({
+        NODE_ENV: "production",
+        SESSION_COOKIE_SECURE: "true",
+        SESSION_TTL_SECONDS: "28800",
+        INGRESSA_SMTP_PASSWORD: "senha-sintetica-de-smtp"
+      });
+    } catch (erro) {
+      mensagem = (erro as Error).message;
+    }
+    expect(mensagem).toContain("INVITATION_DELIVERY_MODE");
+    expect(mensagem).not.toContain("senha-sintetica-de-smtp");
+  });
+});
+
+/**
+ * `SSO_PORTAL_REDIRECT_URIS` vazia significa SSO indisponível — nunca
+ * "aceita qualquer URL". O default permissivo aqui seria um open
+ * redirect por omissão.
+ */
+describe("loadEnv — SSO first-party (v1.0)", () => {
+  it("sem SSO_PORTAL_REDIRECT_URIS, a lista é VAZIA — fail-closed", () => {
+    expect(loadEnv({}).SSO_PORTAL_REDIRECT_URIS).toEqual([]);
+  });
+
+  it("a lista é separada por vírgula, com espaços aparados e vazios descartados", () => {
+    const env = loadEnv({ SSO_PORTAL_REDIRECT_URIS: " https://a.invalid/cb , ,https://b.invalid/cb " });
+    expect(env.SSO_PORTAL_REDIRECT_URIS).toEqual(["https://a.invalid/cb", "https://b.invalid/cb"]);
+  });
+
+  it("o TTL do código de autorização nunca pode passar de 60 segundos", () => {
+    expect(loadEnv({}).SSO_AUTHORIZATION_CODE_TTL_SECONDS).toBe(60);
+    expect(() => loadEnv({ SSO_AUTHORIZATION_CODE_TTL_SECONDS: "3600" })).toThrow();
+    expect(loadEnv({ SSO_AUTHORIZATION_CODE_TTL_SECONDS: "30" }).SSO_AUTHORIZATION_CODE_TTL_SECONDS).toBe(30);
   });
 });

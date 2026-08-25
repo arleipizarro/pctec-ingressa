@@ -45,7 +45,7 @@ export function OrganizacoesPage(): JSX.Element {
                       <td>{o.trade_name ?? "—"}</td>
                       <td>{o.type}</td>
                       <td><Badge valor={o.status} /></td>
-                      <td><Link to={`/organizacoes/${o.public_id}`}>Detalhes</Link></td>
+                      <td><Link to={`/admin/organizacoes/${o.public_id}`}>Detalhes</Link></td>
                     </tr>
                   ))}
                 </tbody>

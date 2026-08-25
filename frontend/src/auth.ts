@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, ApiError } from "./api.js";
+import { api, ApiError, type AplicativoCard } from "./api.js";
 
 export interface Sessao {
   readonly identityPublicId: string;
-  readonly accessProfile: string;
   /** Nome de quem está logado, para o cabeçalho. Nunca vem do cliente. */
   readonly nomeExibido: string;
+  /** Cards autorizados — a lista é do servidor, inteira. */
+  readonly aplicativos: readonly AplicativoCard[];
+  /** Derivado da lista acima, nunca de um estado local editável. */
+  readonly ehAdministrador: boolean;
+  readonly perfilNoIngressa: string | null;
 }
+
+/** Código da própria plataforma como Application do catálogo. */
+export const CODIGO_INGRESSA = "PCTEC_INGRESSA";
 
 /**
  * Rótulo neutro quando o servidor não devolveu nome.
@@ -14,16 +21,24 @@ export interface Sessao {
  * Nunca cair para o publicId: um UUID truncado no cabeçalho não responde
  * "sou eu nesta sessão?" e ainda expõe identificador interno em tela.
  */
-export const NOME_NEUTRO = "Administrador";
+export const NOME_NEUTRO = "Usuário";
 
 /**
  * A sessão é do SERVIDOR. O frontend não guarda token e não decide
- * autorização: ele pergunta `/admin/whoami` — rota que só responde 200
- * para Identity ACTIVE com ApplicationAccess ADMIN em PCTEC_INGRESSA.
+ * autorização: ele pergunta `/apps`, rota que responde 200 para qualquer
+ * sessão válida e devolve exatamente os aplicativos que aquela
+ * identidade tem `ApplicationAccess` GRANTED para usar.
  *
- * Consequência deliberada: qualquer bypass no cliente (editar estado,
- * forjar rota) não abre nada, porque toda chamada seguinte continua
- * passando pelo mesmo gate no backend.
+ * **Mudou de `/admin/whoami` para `/apps` de propósito.** `whoami` só
+ * responde 200 para ADMIN em PCTEC_INGRESSA — com o launcher, todo
+ * usuário federado do Helpdesk passa por aqui, e ele cairia no login
+ * como se a senha estivesse errada. `/apps` é a rota do usuário; a
+ * administração continua atrás dos seus próprios gates.
+ *
+ * `ehAdministrador` é DERIVADO da resposta do servidor, não um estado
+ * que a tela possa ligar sozinha — e mesmo se alguém o forçasse no
+ * navegador, toda chamada administrativa seguinte continua passando pelo
+ * gate de `/api/v1/admin`.
  */
 export function useSessao(): {
   sessao: Sessao | null;
@@ -37,16 +52,19 @@ export function useSessao(): {
   const recarregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const resposta = await api.whoami();
-      const nome = (resposta.identity.fullName ?? "").trim();
+      const painel = await api.apps();
+      const nome = (painel.identity.fullName ?? "").trim();
+      const ingressa = painel.applications.find((app) => app.code === CODIGO_INGRESSA);
       setSessao({
-        identityPublicId: resposta.identity.publicId,
-        accessProfile: resposta.access.profile,
-        nomeExibido: nome.length > 0 ? nome : NOME_NEUTRO
+        identityPublicId: painel.identity.publicId,
+        nomeExibido: nome.length > 0 ? nome : NOME_NEUTRO,
+        aplicativos: painel.applications,
+        ehAdministrador: ingressa?.profile === "ADMIN",
+        perfilNoIngressa: ingressa?.profile ?? null
       });
     } catch (erro) {
-      // 401/403 significam "não autenticado como admin" — nunca é caso
-      // de tela de erro: é caso de mandar para o login.
+      // 401/403 significam "não autenticado" — nunca é caso de tela de
+      // erro: é caso de mandar para o login.
       if (!(erro instanceof ApiError)) {
         throw erro;
       }
