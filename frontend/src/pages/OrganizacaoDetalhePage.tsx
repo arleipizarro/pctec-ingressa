@@ -1,11 +1,55 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
+import { FormularioEditarOrganizacao } from "../components/formularios.js";
 
 export function OrganizacaoDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
-  const { dados, carregando, erro } = usarRecurso(() => api.organization(publicId), [publicId]);
+  const { dados, carregando, erro, recarregar } = usarRecurso(() => api.organization(publicId), [publicId]);
+  const [editando, setEditando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [aviso, setAviso] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+
+  async function salvar(valores: { legalName: string; tradeName: string }): Promise<void> {
+    if (dados === null) {
+      return;
+    }
+    setSalvando(true);
+    setAviso(null);
+    try {
+      const resultado = await api.renameOrganization(publicId, {
+        legalName: valores.legalName,
+        // Sempre enviado: a tela mostra o campo, então o que estiver
+        // nele é a intenção — inclusive vazio, que significa limpar.
+        tradeName: valores.tradeName,
+        expectedVersion: dados.version
+      });
+      setEditando(false);
+      setAviso({
+        tipo: "ok",
+        texto: resultado.changed
+          ? `Organização atualizada (versão ${resultado.version}).`
+          : "Nada mudou: o texto enviado era igual ao que já estava salvo."
+      });
+      // Recarrega do servidor em vez de costurar o novo nome na tela:
+      // a versão e o restante do detalhe vêm da fonte, não daqui.
+      recarregar();
+    } catch (falha) {
+      setAviso({
+        tipo: "erro",
+        texto: falha instanceof ApiError ? falha.message : "Falha inesperada. Nada foi alterado."
+      });
+      if (falha instanceof ApiError && falha.status === 409) {
+        // Conflito de versão: o que está na tela já está velho.
+        setEditando(false);
+        recarregar();
+      }
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   return (
     <>
@@ -16,10 +60,34 @@ export function OrganizacaoDetalhePage(): JSX.Element {
             <h2>{dados.legal_name}</h2>
             <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
 
+            {aviso !== null && (
+              <div
+                className={`aviso ${aviso.tipo === "ok" ? "aviso-ok" : "aviso-erro"}`}
+                role={aviso.tipo === "ok" ? "status" : "alert"}
+              >
+                {aviso.texto}
+              </div>
+            )}
+
+            <div className="barra">
+              <button type="button" onClick={() => { setAviso(null); setEditando(true); }}>
+                Editar organização
+              </button>
+            </div>
+
             <dl className="chave-valor">
               <dt>publicId</dt><dd><code>{dados.public_id}</code></dd>
               <dt>Nome fantasia</dt><dd>{dados.trade_name ?? "—"}</dd>
             </dl>
+
+            {editando && (
+              <FormularioEditarOrganizacao
+                organizacao={dados}
+                enviando={salvando}
+                onCancelar={() => setEditando(false)}
+                onConfirmar={(valores) => { void salvar(valores); }}
+              />
+            )}
 
             <div className="secao">
               <h3>Hierarquia</h3>

@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { OrganizationRepository } from "../../domain/OrganizationRepository.js";
 import { Organization, type OrganizationPersistedState } from "../../domain/Organization.js";
+import { OrganizationVersionConflictError } from "../../domain/errors/OrganizationErrors.js";
 import type { PublicId } from "../../domain/value-objects/PublicId.js";
 import type { OrganizationType } from "../../domain/value-objects/OrganizationType.js";
 import type { DocumentNumber } from "../../domain/value-objects/DocumentNumber.js";
@@ -113,4 +114,33 @@ export class MariaDbOrganizationRepository implements OrganizationRepository {
     const insertResult = result as { insertId: number };
     organization.assignInternalIdFromPersistence(insertResult.insertId);
   }
+
+  public async update(organization: Organization, expectedVersion: number): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE organizations
+          SET legal_name = ?,
+              trade_name = ?,
+              version = ?,
+              updated_at = ?
+        WHERE public_id = ?
+          AND version = ?`,
+      [
+        organization.getLegalName().toString(),
+        organization.getTradeName()?.toString() ?? null,
+        organization.getVersion(),
+        organization.getUpdatedAt(),
+        organization.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    // `type`, `status` e `document_number` ficam FORA do SET de
+    // propósito: não existe comando de domínio que os altere, e um
+    // UPDATE que os reescrevesse com o valor carregado transformaria
+    // qualquer leitura defasada em regravação silenciosa deles.
+    const { affectedRows } = result as { affectedRows: number };
+    if (affectedRows === 0) {
+      throw new OrganizationVersionConflictError(expectedVersion, organization.getVersion());
+    }
+  }
+
 }

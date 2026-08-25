@@ -33,3 +33,23 @@ export class OrganizationDocumentAlreadyExistsError extends DomainError {
     super("Já existe uma Organization com este documentNumber para este type.");
   }
 }
+
+/**
+ * A organização mudou entre a leitura da tela e o salvamento.
+ *
+ * `CONFLICT` → 409, e é o status certo: a requisição estava bem
+ * formada e a pessoa tinha permissão; o que mudou foi o mundo. A tela
+ * recarrega e mostra o valor atual, em vez de sobrescrever a correção
+ * de outra pessoa com um texto que já estava velho quando foi digitado.
+ */
+export class OrganizationVersionConflictError extends DomainError {
+  public readonly code = "ORGANIZATION_VERSION_CONFLICT";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(expectedVersion: number, actualVersion: number) {
+    super(
+      `Organização foi alterada por outra operação: versão esperada ${expectedVersion}, ` +
+        `versão atual ${actualVersion}. Recarregue a tela e revise antes de salvar de novo.`
+    );
+  }
+}

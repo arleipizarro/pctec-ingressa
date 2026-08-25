@@ -70,6 +70,21 @@ export const api = {
   identity: (publicId: string) => requisitar<IdentidadeDetalhe>(`/admin/identities/${publicId}`),
   organizations: (params: URLSearchParams) => requisitar<Pagina<Organizacao>>(`/admin/organizations?${params.toString()}`),
   organization: (publicId: string) => requisitar<OrganizacaoDetalhe>(`/admin/organizations/${publicId}`),
+  /**
+   * Correção de nomes da organização.
+   *
+   * `tradeName` só entra no corpo quando foi informado: ausente
+   * significa "manter", string vazia significa "limpar". Mandar sempre
+   * apagaria o nome fantasia de quem só corrigiu a razão social.
+   */
+  renameOrganization: (
+    publicId: string,
+    payload: { legalName: string; tradeName?: string | undefined; expectedVersion: number }
+  ) =>
+    requisitar<RenomeacaoDeOrganizacao>(`/admin/organizations/${publicId}/names`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   importBatches: (params: URLSearchParams) => requisitar<Pagina<Lote>>(`/admin/import-batches?${params.toString()}`),
   importBatchItems: (publicId: string, params: URLSearchParams) =>
     requisitar<Pagina<ItemDeLote>>(`/admin/import-batches/${publicId}/items?${params.toString()}`),
@@ -311,7 +326,18 @@ export interface Organizacao {
   readonly status: string;
 }
 
+export interface RenomeacaoDeOrganizacao {
+  readonly publicId: string;
+  readonly legalName: string;
+  readonly tradeName: string | null;
+  readonly version: number;
+  readonly changed: boolean;
+  readonly changedFields: readonly string[];
+}
+
 export interface OrganizacaoDetalhe extends Organizacao {
+  /** Trava otimista: reenviada no salvamento e comparada no servidor. */
+  readonly version: number;
   readonly parents: readonly Organizacao[];
   readonly children: readonly Organizacao[];
   readonly externalReferences: readonly ReferenciaExterna[];

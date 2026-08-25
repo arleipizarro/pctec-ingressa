@@ -162,3 +162,90 @@ export function FormularioCriarMembership({
     </div>
   );
 }
+
+/**
+ * Correção administrativa de nomes da organização.
+ *
+ * Só dois campos, e a ausência dos outros é a mensagem: `type`,
+ * `status`, documento e referências externas mudam o significado da
+ * organização para quem já depende dela, e nenhum deles tem campo aqui
+ * nem rota que os aceite. Nome é a única correção que não reescreve
+ * autorização nenhuma.
+ *
+ * `version` viaja escondida e volta no salvamento: é ela que faz o
+ * servidor recusar quando outra pessoa editou a mesma organização entre
+ * a abertura do formulário e o clique.
+ */
+export function FormularioEditarOrganizacao({
+  organizacao,
+  onConfirmar,
+  onCancelar,
+  enviando
+}: {
+  organizacao: { legal_name: string; trade_name: string | null; type: string; status: string; version: number };
+  onConfirmar: (valores: { legalName: string; tradeName: string }) => void;
+  onCancelar: () => void;
+  enviando: boolean;
+}): JSX.Element {
+  const [legalName, setLegalName] = useState(organizacao.legal_name);
+  const [tradeName, setTradeName] = useState(organizacao.trade_name ?? "");
+
+  const razaoSocialVazia = legalName.trim().length === 0;
+  const semMudanca =
+    legalName.trim() === organizacao.legal_name.trim() &&
+    tradeName.trim() === (organizacao.trade_name ?? "").trim();
+
+  return (
+    <div className="modal-fundo" role="dialog" aria-modal="true" aria-label="Editar organização">
+      <div className="modal">
+        <h3>Editar organização</h3>
+        <p className="subtitulo">
+          Corrige apenas os nomes. Tipo, situação, documento e referências externas não são
+          alterados por esta tela.
+        </p>
+
+        <label>
+          <span className="subtitulo" style={{ display: "block", margin: 0 }}>Razão social</span>
+          <input
+            aria-label="Razão social"
+            value={legalName}
+            onChange={(e) => setLegalName(e.target.value)}
+            style={{ width: "100%" }}
+          />
+        </label>
+        {razaoSocialVazia && (
+          <p className="aviso aviso-erro" role="alert" style={{ marginTop: 8 }}>
+            A razão social não pode ficar vazia.
+          </p>
+        )}
+
+        <label>
+          <span className="subtitulo" style={{ display: "block", margin: "10px 0 0" }}>Nome fantasia</span>
+          <input
+            aria-label="Nome fantasia"
+            value={tradeName}
+            onChange={(e) => setTradeName(e.target.value)}
+            placeholder="(opcional)"
+            style={{ width: "100%" }}
+          />
+        </label>
+        <p className="subtitulo" style={{ marginTop: 6 }}>
+          Deixar em branco remove o nome fantasia. Editando a versão {organizacao.version} —
+          se outra pessoa salvar antes, o servidor recusa e a tela recarrega.
+        </p>
+
+        <div className="acoes">
+          <button type="button" onClick={onCancelar} disabled={enviando}>Cancelar</button>
+          <button
+            type="button"
+            className="primario"
+            disabled={enviando || razaoSocialVazia || semMudanca}
+            onClick={() => onConfirmar({ legalName: legalName.trim(), tradeName: tradeName.trim() })}
+          >
+            {enviando ? "Salvando…" : "Salvar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

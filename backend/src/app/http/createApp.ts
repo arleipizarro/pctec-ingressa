@@ -38,6 +38,7 @@ import { MariaDbUnitOfWork } from "../../shared/database/UnitOfWork.js";
 import { MariaDbAdminReadRepository } from "../../modules/admin/infrastructure/persistence/MariaDbAdminReadRepository.js";
 import { RevokeApplicationAccessService } from "../../modules/application/application/RevokeApplicationAccessService.js";
 import { CreateMembershipService } from "../../modules/organization/application/CreateMembershipService.js";
+import { RenameOrganizationService } from "../../modules/organization/application/RenameOrganizationService.js";
 import { EndMembershipService } from "../../modules/organization/application/EndMembershipService.js";
 import { GrantApplicationAccessService } from "../../modules/application/application/GrantApplicationAccessService.js";
 import { ActivateFederatedIdentityService } from "../../modules/helpdesk/application/ActivateFederatedIdentityService.js";
@@ -499,6 +500,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
         endMembershipService: new EndMembershipService(
           new MariaDbUnitOfWork(sharedPool!),
           (c) => new MariaDbMembershipRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        renameOrganizationService: new RenameOrganizationService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbOrganizationRepository(c),
           (c) => new MariaDbAuditEventRepository(c)
         ),
         activateFederatedIdentityService: new ActivateFederatedIdentityService({

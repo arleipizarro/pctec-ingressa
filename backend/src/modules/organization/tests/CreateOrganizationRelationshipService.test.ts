@@ -31,6 +31,12 @@ class InMemoryOrganizationRepository implements OrganizationRepository {
     return false;
   }
 
+  /** Duplo: a trava otimista real e provada contra o MariaDB. */
+  public async update(organization: Organization, expectedVersion: number): Promise<void> {
+    void expectedVersion;
+    this.stored.set(organization.getPublicId().toString(), organization);
+  }
+
   public async insert(organization: Organization): Promise<void> {
     this.stored.set(organization.getPublicId().toString(), organization);
   }

@@ -24,4 +24,14 @@ export interface OrganizationRepository {
   existsByDocumentNumberAndType(documentNumber: DocumentNumber, type: OrganizationType): Promise<boolean>;
 
   insert(organization: Organization): Promise<void>;
+
+  /**
+   * Persiste uma mutação com trava otimista.
+   *
+   * `expectedVersion` vai para o `WHERE`, não para o `SET`: é o banco
+   * que decide se a linha ainda está na versão que foi revisada. Zero
+   * linhas afetadas significa que alguém chegou antes — e isso vira
+   * conflito, nunca sobrescrita silenciosa.
+   */
+  update(organization: Organization, expectedVersion: number): Promise<void>;
 }

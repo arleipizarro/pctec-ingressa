@@ -78,6 +78,16 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
     createMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP })) },
     endMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP, status: "INACTIVE" })) },
     activateFederatedIdentityService: { execute: vi.fn(async () => ({ identityPublicId: IDENTITY, status: "ACTIVE", alreadyActive: false })) },
+    renameOrganizationService: {
+      execute: vi.fn(async (r: Record<string, unknown>) => ({
+        publicId: r["organizationPublicId"],
+        legalName: r["legalName"],
+        tradeName: r["tradeName"] ?? null,
+        version: Number(r["expectedVersion"]) + 1,
+        changed: true,
+        changedFields: ["legal_name"]
+      }))
+    },
     ...overrides
   } as unknown as AdminApiDeps;
 }
@@ -277,5 +287,130 @@ describe("API administrativa — mutações", () => {
     for (const caminho of [`/api/v1/admin/identities/${IDENTITY}`, `/api/v1/admin/memberships/${MEMBERSHIP}`, `/api/v1/admin/application-accesses/${ACCESS}`]) {
       expect((await chamar(baseUrl, caminho, { method: "DELETE" })).status).toBe(404);
     }
+  });
+});
+
+describe("API administrativa — edição de nomes da organização", () => {
+  const ROTA = `/api/v1/admin/organizations/${ORG}/names`;
+
+  it("401 sem sessão e 403 sem ADMIN", async () => {
+    const semSessao = await subir();
+    expect((await chamar(semSessao.baseUrl, ROTA, { method: "POST", comSessao: false, body: "{}" })).status).toBe(401);
+
+    const semAdmin = await subir({ semAdmin: true });
+    expect((await chamar(semAdmin.baseUrl, ROTA, { method: "POST", body: "{}" })).status).toBe(403);
+  });
+
+  it("exige expectedVersion — sem ele não há trava de concorrência", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, ROTA, {
+      method: "POST",
+      body: JSON.stringify({ legalName: "EMPRESA SINTETICA LTDA" })
+    });
+
+    expect(r.status).toBe(422);
+    expect((r.body["error"] as Record<string, unknown>)["code"]).toBe("EXPECTED_VERSION_REQUIRED");
+    expect(deps.renameOrganizationService.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([[undefined], [""], ["   "], [42], [null]])(
+    "recusa razão social ausente ou não textual (%s)",
+    async (valor) => {
+      const { baseUrl, deps } = await subir();
+      const r = await chamar(baseUrl, ROTA, {
+        method: "POST",
+        body: JSON.stringify({ legalName: valor, expectedVersion: 1 })
+      });
+
+      // String vazia/espaços chegam ao serviço e o domínio recusa
+      // (`LegalName.create`); tipo errado para na fronteira.
+      if (typeof valor === "string") {
+        expect(deps.renameOrganizationService.execute).toHaveBeenCalled();
+      } else {
+        expect(r.status).toBe(422);
+        expect(deps.renameOrganizationService.execute).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it("422 para publicId malformado, sem tocar no serviço", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations/nao-e-uuid/names", {
+      method: "POST",
+      body: JSON.stringify({ legalName: "X", expectedVersion: 1 })
+    });
+
+    expect(r.status).toBe(422);
+    expect(deps.renameOrganizationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("o ator vem da SESSÃO — um ator no corpo é ignorado", async () => {
+    const { baseUrl, deps } = await subir();
+    await chamar(baseUrl, ROTA, {
+      method: "POST",
+      body: JSON.stringify({
+        legalName: "EMPRESA SINTETICA LTDA",
+        expectedVersion: 3,
+        actorPublicId: IDENTITY
+      })
+    });
+
+    const chamada = (deps.renameOrganizationService.execute as unknown as {
+      mock: { calls: Record<string, unknown>[][] };
+    }).mock.calls[0]?.[0];
+    expect(chamada?.["actorPublicId"]).toBe(ADMIN);
+  });
+
+  it("type, status, documento e referências NÃO têm caminho por esta rota", async () => {
+    const { baseUrl, deps } = await subir();
+    await chamar(baseUrl, ROTA, {
+      method: "POST",
+      body: JSON.stringify({
+        legalName: "EMPRESA SINTETICA LTDA",
+        expectedVersion: 1,
+        type: "BUSINESS_GROUP",
+        status: "INACTIVE",
+        documentNumber: "12345678000199",
+        externalReferences: []
+      })
+    });
+
+    const chamada = (deps.renameOrganizationService.execute as unknown as {
+      mock: { calls: Record<string, unknown>[][] };
+    }).mock.calls[0]?.[0];
+    expect(Object.keys(chamada ?? {}).sort()).toEqual([
+      "actorPublicId",
+      "expectedVersion",
+      "legalName",
+      "organizationPublicId",
+      "tradeName"
+    ]);
+  });
+
+  it("nome fantasia ausente significa MANTER; string vazia significa LIMPAR", async () => {
+    const { baseUrl, deps } = await subir();
+    await chamar(baseUrl, ROTA, { method: "POST", body: JSON.stringify({ legalName: "X", expectedVersion: 1 }) });
+    await chamar(baseUrl, ROTA, {
+      method: "POST",
+      body: JSON.stringify({ legalName: "X", expectedVersion: 1, tradeName: "" })
+    });
+
+    const calls = (deps.renameOrganizationService.execute as unknown as {
+      mock: { calls: Record<string, unknown>[][] };
+    }).mock.calls;
+    expect(calls[0]?.[0]?.["tradeName"]).toBeUndefined();
+    expect(calls[1]?.[0]?.["tradeName"]).toBe("");
+  });
+
+  it("200 devolve a versão nova e o que mudou", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, ROTA, {
+      method: "POST",
+      body: JSON.stringify({ legalName: "EMPRESA SINTETICA LTDA", tradeName: "SINTETICA", expectedVersion: 4 })
+    });
+
+    expect(r.status).toBe(200);
+    expect(r.body["version"]).toBe(5);
+    expect(r.body["changedFields"]).toEqual(["legal_name"]);
   });
 });
