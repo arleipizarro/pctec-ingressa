@@ -84,7 +84,17 @@ const envSchema = z.object({
   // — decisão deliberada do Product Owner, deixa explícito que é um
   // único segredo compartilhado entre os dois lados do canal, não dois
   // segredos coincidentemente parecidos.
-  INGRESSA_PORTAL_SERVICE_CREDENTIAL: z.string().default("")
+  INGRESSA_PORTAL_SERVICE_CREDENTIAL: z.string().default(""),
+  // --- Credencial service-to-service Ingressa<-Helpdesk (v0.8.x) ---
+  // Distinta e independente da credencial do Portal, por decisão do
+  // contrato (docs/import/CONTRATO-SERVICE-HELPDESK.md): credencial
+  // compartilhada significa que vazar a do Helpdesk da acesso ao
+  // contexto do Portal, e que revogar uma derruba os dois produtos.
+  // Default "" pelo mesmo motivo da do Portal — nunca um segredo
+  // funcional por omissao; sem ela configurada, so a rota
+  // /api/v1/service/helpdesk/... fica indisponivel (401), e o resto da
+  // aplicacao sobe normalmente.
+  INGRESSA_HELPDESK_SERVICE_CREDENTIAL: z.string().default("")
 });
 
 export type Env = z.infer<typeof envSchema>;

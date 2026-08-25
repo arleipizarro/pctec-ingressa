@@ -116,6 +116,27 @@ export class MariaDbIdentityExternalReferenceRepository implements IdentityExter
   }
 
   /**
+   * Conta referências ACTIVE da chave — usado pela fronteira
+   * service-to-service do Helpdesk para recusar ambiguidade em vez de
+   * escolher uma candidata. Sem `LIMIT`: o objetivo é justamente saber
+   * se existe mais de uma.
+   */
+  public async countActiveBySystemCodeEntityTypeAndLegacyId(
+    systemCode: SystemCode,
+    entityType: EntityType,
+    legacyId: LegacyId
+  ): Promise<number> {
+    const [rows] = await this.connection.execute(
+      `SELECT COUNT(*) AS total
+         FROM identity_external_references
+        WHERE system_code = ? AND entity_type = ? AND legacy_id = ? AND status = 'ACTIVE'`,
+      [systemCode.toString(), entityType.toString(), legacyId.toNumber()]
+    );
+    const rowList = rows as { total: number | string }[];
+    return Number(rowList[0]?.total ?? 0);
+  }
+
+  /**
    * A checagem otimista (`existsActiveBySystemCodeEntityTypeAndLegacyId`,
    * chamada pelo Application Service antes deste `insert`) cobre o caso
    * comum com uma mensagem de erro de domínio amigável, mas **não é a

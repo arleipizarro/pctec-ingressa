@@ -51,5 +51,25 @@ export interface IdentityExternalReferenceRepository {
     legacyId: LegacyId
   ): Promise<IdentityExternalReference | undefined>;
 
+  /**
+   * Conta as referências ACTIVE de `(systemCode, entityType, legacyId)`.
+   *
+   * A UNIQUE KEY `uk_id_ext_ref_active_match` já impede duas linhas
+   * ACTIVE para a mesma chave; este método existe para o caminho
+   * ANORMAL — restauração parcial de backup, escrita manual — em que a
+   * fronteira service-to-service precisa recusar em vez de escolher uma
+   * das candidatas. `findActive...` devolveria uma delas sem sinalizar
+   * que havia outra.
+   *
+   * Opcional no contrato para não obrigar todo test double existente a
+   * implementá-lo; quem não implementa simplesmente não exerce a
+   * checagem de ambiguidade.
+   */
+  countActiveBySystemCodeEntityTypeAndLegacyId?(
+    systemCode: SystemCode,
+    entityType: EntityType,
+    legacyId: LegacyId
+  ): Promise<number>;
+
   insert(reference: IdentityExternalReference): Promise<void>;
 }

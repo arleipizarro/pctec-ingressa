@@ -42,6 +42,9 @@ import { GetActiveIdentityExternalReferenceService } from "../../modules/identit
 import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
 import { createServicePortalIdentityExternalReferenceRoutes } from "../../modules/portal/http/servicePortalIdentityExternalReferenceRoutes.js";
 import { createServicePortalIdentityContextRoutes } from "../../modules/portal/http/servicePortalIdentityContextRoutes.js";
+import { createServiceHelpdeskUserContextRoutes } from "../../modules/helpdesk/http/serviceHelpdeskUserContextRoutes.js";
+import { GetHelpdeskUserContextService } from "../../modules/helpdesk/application/GetHelpdeskUserContextService.js";
+import { HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
 import { ResolvePortalTenantScopeService } from "../../modules/portal/application/ResolvePortalTenantScopeService.js";
 import { createServicePortalTenantScopeRoutes } from "../../modules/portal/http/servicePortalTenantScopeRoutes.js";
 
@@ -133,6 +136,14 @@ export interface CreateAppOptions {
    * por omissão.
    */
   readonly serviceCredential?: string;
+  /**
+   * Credencial do consumidor Helpdesk — separada da do Portal por
+   * decisão de contrato. Ausente/vazia, só a rota
+   * `/api/v1/service/helpdesk/...` fica indisponível (401).
+   */
+  readonly helpdeskServiceCredential?: string;
+  /** Injetável para teste; por padrão é composto aqui a partir dos demais. */
+  readonly getHelpdeskUserContextService?: GetHelpdeskUserContextService;
   /**
    * Injetável para testes — P1B.0 Fatia 4 (v0.7.x). Quando omitido,
    * `createApp()` constrói um `GetActiveIdentityExternalReferenceService`
@@ -263,6 +274,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.requireOrganizationAccessService === undefined ||
     options.getActiveOrganizationExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceService === undefined ||
+    options.getHelpdeskUserContextService === undefined ||
     options.resolvePortalTenantScopeService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
@@ -285,6 +297,18 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const getActiveIdentityExternalReferenceService =
     options.getActiveIdentityExternalReferenceService ??
     new GetActiveIdentityExternalReferenceService(new MariaDbIdentityExternalReferenceRepository(sharedPool!));
+  // Contexto do Helpdesk — composição, não redesenho: os quatro
+  // colaboradores são os MESMOS já usados pelo Portal, nas mesmas
+  // instâncias construídas acima.
+  const getHelpdeskUserContextService =
+    options.getHelpdeskUserContextService ??
+    new GetHelpdeskUserContextService(
+      getActiveIdentityExternalReferenceService,
+      new MariaDbIdentityExternalReferenceRepository(sharedPool!),
+      identityRepository,
+      authorizeApplicationAccessService,
+      getPortalContextService
+    );
   const resolvePortalTenantScopeService =
     options.resolvePortalTenantScopeService ??
     defaultResolvePortalTenantScopeService(sharedPool!, getActiveOrganizationExternalReferenceService);
@@ -293,6 +317,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
   };
   const allowedOrigins = options.allowedOrigins ?? loadEnv().ALLOWED_ORIGINS;
   const serviceCredential = options.serviceCredential ?? loadEnv().INGRESSA_PORTAL_SERVICE_CREDENTIAL;
+  const helpdeskServiceCredential =
+    options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
 
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
@@ -415,6 +441,24 @@ export function createApp(options: CreateAppOptions = {}): Express {
       requireOrganizationAccessService,
       resolvePortalTenantScopeService
     )
+  );
+
+  // GET /api/v1/service/helpdesk/users/:legacyUserId/context — v0.8.x.
+  //
+  // NAMESPACE PRÓPRIO, com CREDENCIAL PRÓPRIA e HEADER PRÓPRIO. Não é
+  // reaproveitamento do namespace do Portal, e a separação é o ponto:
+  // vazar a credencial do Helpdesk não pode dar acesso ao contexto do
+  // Portal, e revogar uma não pode derrubar os dois produtos
+  // (docs/import/CONTRATO-SERVICE-HELPDESK.md, "Credencial própria").
+  //
+  // Pipeline: requireServiceCredential(helpdesk)
+  //   → GetHelpdeskUserContextService (referência externa → Identity
+  //     ACTIVE → ApplicationAccess(PCTEC_HELPDESK, USER) → Memberships)
+  //   → organizations sanitizadas.
+  app.use(
+    "/api/v1/service/helpdesk",
+    createRequireServiceCredential(helpdeskServiceCredential, HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME),
+    createServiceHelpdeskUserContextRoutes(getHelpdeskUserContextService)
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404
