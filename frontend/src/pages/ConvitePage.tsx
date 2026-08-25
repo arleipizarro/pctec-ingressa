@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api.js";
-import { capturarTokenDoConvite } from "../tokenDoConvite.js";
+import { capturarTokenDoConvite, descartarTokenDoConvite } from "../tokenDoConvite.js";
 
 /**
  * Tela pública de definição de senha por convite.
@@ -23,7 +23,7 @@ export function ConvitePage(): JSX.Element {
   // qualquer efeito. Quando o formulário aparece na tela, o fragmento já
   // saiu da barra de endereço — e nenhuma chamada de API aconteceu ainda,
   // porque o `preview` mora num `useEffect`, que roda depois.
-  const [token] = useState(capturarTokenDoConvite);
+  const [token, setToken] = useState(capturarTokenDoConvite);
   const [nome, setNome] = useState<string | null>(null);
   const [validade, setValidade] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -55,6 +55,9 @@ export function ConvitePage(): JSX.Element {
               ? "Convite inválido, expirado ou já utilizado. Peça um novo ao administrador."
               : "Não foi possível verificar o convite."
           );
+          // Erro TERMINAL: o servidor disse que este token não vale mais.
+          // Guardá-lo seria manter uma credencial sem propósito.
+          descartarToken();
         }
       } finally {
         if (!cancelado) {
@@ -66,7 +69,24 @@ export function ConvitePage(): JSX.Element {
     return () => {
       cancelado = true;
     };
-  }, [token]);
+    // Dependência VAZIA de propósito: esta é uma carga única por
+    // montagem. Depender de `token` faria o efeito rodar de novo no
+    // instante em que o descartamos — e a tela trocaria "convite
+    // inválido" (a verdade) por "link incompleto" (que descreve outro
+    // problema). O valor lido aqui é o capturado na inicialização.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Apaga o token dos DOIS lugares em que ele existe: a memória do
+   * módulo (que sobrevive a remontagens da tela) e o estado deste
+   * componente. Sem os dois, o valor continuaria acessível a qualquer
+   * código que rodasse na aba depois.
+   */
+  function descartarToken(): void {
+    descartarTokenDoConvite();
+    setToken("");
+  }
 
   async function definir(evento: FormEvent): Promise<void> {
     evento.preventDefault();
@@ -74,9 +94,24 @@ export function ConvitePage(): JSX.Element {
     setEnviando(true);
     try {
       await api.definirSenhaPorConvite(token, senha, confirmacao);
+      // Consumido com sucesso: o token não abre mais nada, e manter uma
+      // credencial gasta em memória não serve a ninguém.
+      descartarToken();
+      // A senha digitada também sai da memória junto — ela já virou hash
+      // no servidor, e o campo não será mostrado de novo.
+      setSenha("");
+      setConfirmacao("");
       setConcluido(true);
     } catch (falha) {
-      setErro(falha instanceof ApiError ? falha.message : "Não foi possível definir a senha.");
+      const apiErro = falha instanceof ApiError ? falha : null;
+      setErro(apiErro !== null ? apiErro.message : "Não foi possível definir a senha.");
+      // 422 é a política de senha: o convite CONTINUA válido e a pessoa
+      // vai corrigir e tentar de novo — apagar o token aqui transformaria
+      // um erro de digitação em "peça um convite novo". Qualquer outro
+      // status significa que o convite em si não vale mais.
+      if (apiErro !== null && apiErro.status !== 422) {
+        descartarToken();
+      }
     } finally {
       setEnviando(false);
     }
