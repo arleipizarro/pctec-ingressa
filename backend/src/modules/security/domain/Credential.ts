@@ -1,8 +1,17 @@
+import {
+  CredentialNotActiveError,
+  CredentialVersionConflictError
+} from "./errors/CredentialErrors.js";
 import { PublicId } from "./value-objects/PublicId.js";
 import { CredentialType } from "./value-objects/CredentialType.js";
 import { CredentialStatus } from "./value-objects/CredentialStatus.js";
 import { PasswordHash } from "./value-objects/PasswordHash.js";
-import { createCredentialCreatedEvent, type CredentialCreatedEvent } from "./events/CredentialDomainEvents.js";
+import {
+  createCredentialCreatedEvent,
+  createCredentialChangedEvent,
+  type CredentialCreatedEvent,
+  type CredentialChangedEvent
+} from "./events/CredentialDomainEvents.js";
 
 export interface CreateFoundationalCredentialProps {
   readonly identityPublicId: string;
@@ -56,19 +65,22 @@ export const CREDENTIAL_BOOTSTRAP_EVENT_ACTOR_MARKER = "BOOTSTRAP" as const;
  * type)`, para sempre (ADR-029, "Rotação de senha e unicidade") —
  * garantido pelo banco (`UNIQUE`), não pelo domínio em memória.
  */
+/** Eventos que este agregado emite. */
+export type CredentialDomainEvent = CredentialCreatedEvent | CredentialChangedEvent;
+
 export class Credential {
   private internalId: number | undefined;
   private readonly publicId: PublicId;
   private readonly identityPublicId: string;
   private readonly type: CredentialType;
-  private readonly passwordHash: PasswordHash;
+  private passwordHash: PasswordHash;
   private readonly status: CredentialStatus;
   private lastAuthenticatedAt: Date | undefined;
   private version: number;
   private readonly createdAt: Date;
   private updatedAt: Date;
 
-  private readonly domainEvents: CredentialCreatedEvent[] = [];
+  private readonly domainEvents: CredentialDomainEvent[] = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -158,7 +170,7 @@ export class Credential {
     });
   }
 
-  public pullDomainEvents(): CredentialCreatedEvent[] {
+  public pullDomainEvents(): CredentialDomainEvent[] {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;
@@ -220,6 +232,63 @@ export class Credential {
    * Incrementa `version` — a persistência (`CredentialRepository.update`)
    * usa optimistic locking, mesmo padrão já usado para `Identity`.
    */
+  /**
+   * Redefine a senha de uma credencial existente — recuperação
+   * administrativa.
+   *
+   * NÃO cria credencial nova: a mesma linha muda de hash e sobe de
+   * versão. Criar outra deixaria duas credenciais LOCAL_PASSWORD para a
+   * mesma identidade, e a autenticação passaria a depender de qual delas
+   * o repositório devolvesse primeiro.
+   *
+   * O Aggregate continua sem conhecer senha em texto puro: recebe o
+   * `PasswordHash` já calculado pela infraestrutura, exatamente como em
+   * `createFoundational`.
+   *
+   * `expectedVersion` é comparado aqui e de novo no `WHERE version = ?`
+   * do UPDATE: o primeiro dá erro legível, o segundo é a trava real sob
+   * concorrência.
+   */
+  public resetPassword(input: {
+    readonly newPasswordHash: PasswordHash;
+    readonly actorPublicId: string;
+    readonly reasonCode: string;
+    readonly expectedVersion: number;
+    readonly correlationId: string;
+    readonly causationId?: string | undefined;
+    readonly now?: Date | undefined;
+  }): void {
+    if (!this.status.isActive()) {
+      throw new CredentialNotActiveError(this.status.toString());
+    }
+    if (this.version !== input.expectedVersion) {
+      throw new CredentialVersionConflictError(input.expectedVersion, this.version);
+    }
+
+    const agora = input.now ?? new Date();
+    this.passwordHash = input.newPasswordHash;
+    this.version += 1;
+    this.updatedAt = agora;
+
+    this.domainEvents.push(
+      createCredentialChangedEvent(
+        {
+          aggregatePublicId: this.publicId.toString(),
+          actorPublicId: input.actorPublicId,
+          correlationId: input.correlationId,
+          ...(input.causationId === undefined ? {} : { causationId: input.causationId }),
+          occurredAt: agora
+        },
+        {
+          credentialPublicId: this.publicId.toString(),
+          identityPublicId: this.identityPublicId,
+          type: this.type.toString(),
+          reasonCode: input.reasonCode
+        }
+      )
+    );
+  }
+
   public recordSuccessfulAuthentication(now: Date = new Date()): void {
     this.lastAuthenticatedAt = now;
     this.updatedAt = now;

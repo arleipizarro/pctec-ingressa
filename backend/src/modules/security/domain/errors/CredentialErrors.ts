@@ -51,3 +51,19 @@ export class CredentialVersionConflictError extends DomainError {
     );
   }
 }
+
+/**
+ * Redefinir senha de credencial que não está ACTIVE.
+ *
+ * Recusa em vez de reativar por efeito colateral: se a credencial foi
+ * desativada, isso foi uma decisão — e recuperação de senha não é o
+ * lugar para revertê-la sem que ninguém veja.
+ */
+export class CredentialNotActiveError extends DomainError {
+  public readonly code = "CREDENTIAL_NOT_ACTIVE";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(status: string) {
+    super(`credencial está ${status} — somente credencial ACTIVE pode ter a senha redefinida.`);
+  }
+}
