@@ -1,20 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api.js";
-
-/**
- * Lê o token do FRAGMENTO da URL (`/convite#<token>`).
- *
- * O fragmento nunca é enviado ao servidor: não entra em access log de
- * Nginx, não vai no cabeçalho `Referer` de nenhum recurso da página e
- * não aparece em log de proxy. Um token em query string apareceria nos
- * três — por isso o link do convite usa `#`, e por isso esta função
- * existe em vez de um `useParams`.
- */
-function lerTokenDoFragmento(): string {
-  const bruto = window.location.hash;
-  return bruto.startsWith("#") ? decodeURIComponent(bruto.slice(1)) : "";
-}
+import { capturarTokenDoConvite } from "../tokenDoConvite.js";
 
 /**
  * Tela pública de definição de senha por convite.
@@ -32,7 +19,11 @@ function lerTokenDoFragmento(): string {
  * continuaria sendo uma credencial depois de usado.
  */
 export function ConvitePage(): JSX.Element {
-  const [token] = useState(lerTokenDoFragmento);
+  // Inicializador de estado: roda na PRIMEIRA renderização, antes de
+  // qualquer efeito. Quando o formulário aparece na tela, o fragmento já
+  // saiu da barra de endereço — e nenhuma chamada de API aconteceu ainda,
+  // porque o `preview` mora num `useEffect`, que roda depois.
+  const [token] = useState(capturarTokenDoConvite);
   const [nome, setNome] = useState<string | null>(null);
   const [validade, setValidade] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -83,10 +74,6 @@ export function ConvitePage(): JSX.Element {
     setEnviando(true);
     try {
       await api.definirSenhaPorConvite(token, senha, confirmacao);
-      // Limpa o fragmento assim que o convite é consumido: manter o
-      // token na barra de endereço depois de usado só cria chance de ele
-      // ser copiado por engano.
-      window.history.replaceState(null, "", "/convite");
       setConcluido(true);
     } catch (falha) {
       setErro(falha instanceof ApiError ? falha.message : "Não foi possível definir a senha.");
