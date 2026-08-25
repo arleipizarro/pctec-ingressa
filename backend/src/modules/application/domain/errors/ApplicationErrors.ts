@@ -57,3 +57,30 @@ export class ApplicationAccessVersionConflictError extends DomainError {
     );
   }
 }
+
+/**
+ * Revogar acesso que não está GRANTED.
+ *
+ * Recusa em vez de no-op: quem chamou acreditava haver acesso ativo, e
+ * silenciar essa divergência esconderia um estado que o operador
+ * precisa ver — inclusive o caso de duas pessoas revogando o mesmo
+ * acesso ao mesmo tempo.
+ */
+export class ApplicationAccessNotGrantedError extends DomainError {
+  public readonly code = "APPLICATION_ACCESS_NOT_GRANTED";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(status: string) {
+    super(`acesso está ${status} — somente acesso GRANTED pode ser revogado.`);
+  }
+}
+
+/** Acesso inexistente — 404, nunca 500. */
+export class ApplicationAccessNotFoundError extends DomainError {
+  public readonly code = "APPLICATION_ACCESS_NOT_FOUND";
+  public readonly classification = "VALIDATION" as const;
+
+  constructor(publicId: string) {
+    super(`ApplicationAccess ${publicId} não encontrado.`);
+  }
+}

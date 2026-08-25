@@ -51,7 +51,18 @@ export interface ApplicationAccessRepository {
    * `applicationAccess.assignInternalIdFromPersistence(...)` com o `id`
    * gerado pelo banco.
    */
+  /** Busca por publicId — usado pela revogação administrativa. */
+  findByPublicId(publicId: string): Promise<ApplicationAccess | undefined>;
+
   insert(applicationAccess: ApplicationAccess): Promise<void>;
+
+  /**
+   * Persiste mudança de estado (hoje, revogação) com trava otimista.
+   * `expectedVersion` é a versão lida antes da mutação: se outra escrita
+   * passou no meio, nenhuma linha casa e o service falha em vez de
+   * sobrescrever decisão alheia.
+   */
+  update(applicationAccess: ApplicationAccess, expectedVersion: number): Promise<void>;
 
   /**
    * Busca a `ApplicationAccess` completa (entidade, não boolean) para a

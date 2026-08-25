@@ -26,6 +26,14 @@ import { PCTEC_INGRESSA_APPLICATION_CODE, PCTEC_PORTAL_APPLICATION_CODE } from "
 import { AuthorizeApplicationAccessService } from "../../modules/authorization/application/AuthorizeApplicationAccessService.js";
 import { createRequireApplicationAccess } from "../../modules/authorization/http/requireApplicationAccess.js";
 import { createAdminWhoamiRoutes } from "../../modules/authorization/http/adminRoutes.js";
+import { createAdminApiRoutes, type AdminApiDeps } from "../../modules/admin/http/adminApiRoutes.js";
+import { MariaDbUnitOfWork } from "../../shared/database/UnitOfWork.js";
+import { MariaDbAdminReadRepository } from "../../modules/admin/infrastructure/persistence/MariaDbAdminReadRepository.js";
+import { RevokeApplicationAccessService } from "../../modules/application/application/RevokeApplicationAccessService.js";
+import { CreateMembershipService } from "../../modules/organization/application/CreateMembershipService.js";
+import { EndMembershipService } from "../../modules/organization/application/EndMembershipService.js";
+import { GrantApplicationAccessService } from "../../modules/application/application/GrantApplicationAccessService.js";
+import { ActivateFederatedIdentityService } from "../../modules/helpdesk/application/ActivateFederatedIdentityService.js";
 import { MariaDbMembershipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbMembershipRepository.js";
 import { MariaDbOrganizationRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRepository.js";
 import { MariaDbOrganizationRelationshipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRelationshipRepository.js";
@@ -144,6 +152,8 @@ export interface CreateAppOptions {
   readonly helpdeskServiceCredential?: string;
   /** Injetável para teste; por padrão é composto aqui a partir dos demais. */
   readonly getHelpdeskUserContextService?: GetHelpdeskUserContextService;
+  /** Injetável para teste da API administrativa (v0.9.x). */
+  readonly adminApi?: AdminApiDeps;
   /**
    * Injetável para testes — P1B.0 Fatia 4 (v0.7.x). Quando omitido,
    * `createApp()` constrói um `GetActiveIdentityExternalReferenceService`
@@ -361,7 +371,48 @@ export function createApp(options: CreateAppOptions = {}): Express {
       applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
       profile: "ADMIN"
     }),
-    createAdminWhoamiRoutes()
+    createAdminWhoamiRoutes(),
+    // API administrativa da UI (v0.9.x) — MESMO namespace, MESMA cadeia
+    // (sessão → ADMIN em PCTEC_INGRESSA), montada uma vez só. Leitura é
+    // projeção paginada; toda mutação delega ao Application Service que
+    // já detém a regra.
+    createAdminApiRoutes(
+      options.adminApi ?? {
+        readRepository: new MariaDbAdminReadRepository(sharedPool!),
+        grantApplicationAccessService: new GrantApplicationAccessService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbApplicationRepository(c),
+          (c) => new MariaDbIdentityRepository(c),
+          (c) => new MariaDbApplicationAccessRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        revokeApplicationAccessService: new RevokeApplicationAccessService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbApplicationAccessRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        createMembershipService: new CreateMembershipService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbIdentityRepository(c),
+          (c) => new MariaDbOrganizationRepository(c),
+          (c) => new MariaDbMembershipRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        endMembershipService: new EndMembershipService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbMembershipRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        activateFederatedIdentityService: new ActivateFederatedIdentityService({
+          unitOfWork: new MariaDbUnitOfWork(sharedPool!),
+          identityRepositoryFactory: (c) => new MariaDbIdentityRepository(c),
+          identityExternalReferenceRepositoryFactory: (c) => new MariaDbIdentityExternalReferenceRepository(c),
+          applicationRepositoryFactory: (c) => new MariaDbApplicationRepository(c),
+          applicationAccessRepositoryFactory: (c) => new MariaDbApplicationAccessRepository(c),
+          auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c)
+        })
+      }
+    )
   );
   // GET /api/v1/portal/context — G3 (v0.6.x). Mesma ordem obrigatória:
   // requireAuthenticatedSession (autenticação) SEMPRE antes de

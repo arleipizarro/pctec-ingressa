@@ -56,7 +56,15 @@ class InMemoryIdentityRepository implements IdentityRepository {
 }
 
 class InMemoryApplicationAccessRepository implements ApplicationAccessRepository {
+  public async findByPublicId(): Promise<undefined> {
+    return undefined;
+  }
+
   public readonly stored: ApplicationAccess[] = [];
+  /** Revogação não é exercida aqui; o double só satisfaz o contrato. */
+  public async update(): Promise<void> {
+    return undefined;
+  }
   public async existsGrantedByApplicationAndProfile(applicationPublicId: string, accessProfile: string): Promise<boolean> {
     return this.stored.some(
       (a) => a.getApplicationPublicId() === applicationPublicId && a.getAccessProfile().toString() === accessProfile && a.isGranted()

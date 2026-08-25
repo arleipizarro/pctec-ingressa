@@ -1,0 +1,94 @@
+/* Identidade visual PCTEC Ingressa — azul institucional, superfícies
+   claras, tipografia de sistema. Sem framework: o MVP não precisa de
+   um, e cada dependência a mais é uma superfície a manter. */
+:root {
+  --pctec-azul: #123a6b;
+  --pctec-azul-claro: #1e5aa8;
+  --pctec-fundo: #f4f6f9;
+  --pctec-superficie: #ffffff;
+  --pctec-borda: #d8dee7;
+  --pctec-texto: #1c2530;
+  --pctec-texto-fraco: #5b6675;
+  --pctec-ok: #1b7a4b;
+  --pctec-alerta: #a86a00;
+  --pctec-erro: #b3261e;
+  --pctec-neutro: #64748b;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--pctec-fundo); color: var(--pctec-texto); }
+a { color: var(--pctec-azul-claro); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
+.sidebar { background: var(--pctec-azul); color: #fff; padding: 20px 0; }
+.sidebar h1 { font-size: 1.05rem; margin: 0 20px 24px; letter-spacing: .04em; }
+.sidebar h1 small { display: block; font-weight: 400; opacity: .75; font-size: .75rem; }
+.sidebar nav a { display: block; color: #dce6f4; padding: 10px 20px; border-left: 3px solid transparent; }
+.sidebar nav a.ativo { background: rgba(255,255,255,.12); border-left-color: #fff; color: #fff; }
+.sidebar nav a:hover { text-decoration: none; background: rgba(255,255,255,.08); }
+
+.conteudo { display: flex; flex-direction: column; }
+header.topo { display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  background: var(--pctec-superficie); border-bottom: 1px solid var(--pctec-borda); padding: 12px 24px; }
+header.topo .usuario { font-size: .85rem; color: var(--pctec-texto-fraco); }
+main { padding: 24px; }
+
+h2 { margin: 0 0 4px; font-size: 1.35rem; }
+.subtitulo { color: var(--pctec-texto-fraco); margin: 0 0 20px; font-size: .9rem; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 8px; padding: 16px; }
+.card .rotulo { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pctec-texto-fraco); }
+.card .valor { font-size: 1.9rem; font-weight: 600; margin-top: 6px; }
+
+table { width: 100%; border-collapse: collapse; background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--pctec-borda); font-size: .9rem; vertical-align: middle; }
+th { background: #eef2f7; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pctec-texto-fraco); }
+tbody tr:last-child td { border-bottom: none; }
+.tabela-rolavel { overflow-x: auto; }
+
+.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; letter-spacing: .02em; }
+.badge-ok { background: #e3f3ea; color: var(--pctec-ok); }
+.badge-alerta { background: #fdf1de; color: var(--pctec-alerta); }
+.badge-erro { background: #fbe6e5; color: var(--pctec-erro); }
+.badge-neutro { background: #eceff3; color: var(--pctec-neutro); }
+
+.barra { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+input, select, button { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--pctec-borda); background: #fff; }
+button { cursor: pointer; }
+button.primario { background: var(--pctec-azul); color: #fff; border-color: var(--pctec-azul); }
+button.perigo { background: #fff; color: var(--pctec-erro); border-color: var(--pctec-erro); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+
+.aviso { padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }
+.aviso-erro { background: #fbe6e5; color: var(--pctec-erro); }
+.aviso-ok { background: #e3f3ea; color: var(--pctec-ok); }
+.vazio { padding: 28px; text-align: center; color: var(--pctec-texto-fraco); background: var(--pctec-superficie); border: 1px dashed var(--pctec-borda); border-radius: 8px; }
+
+.login { display: grid; place-items: center; min-height: 100vh; }
+.login form { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 10px; padding: 28px; width: min(380px, 92vw); display: grid; gap: 12px; }
+.login h1 { margin: 0; font-size: 1.3rem; color: var(--pctec-azul); }
+.login label { font-size: .85rem; color: var(--pctec-texto-fraco); }
+
+.modal-fundo { position: fixed; inset: 0; background: rgba(18,25,35,.45); display: grid; place-items: center; padding: 16px; }
+.modal { background: var(--pctec-superficie); border-radius: 10px; padding: 22px; width: min(460px, 96vw); }
+.modal h3 { margin: 0 0 8px; }
+.modal .acoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+.secao { margin-top: 28px; }
+.secao h3 { margin: 0 0 10px; font-size: 1.05rem; }
+.chave-valor { display: grid; grid-template-columns: 200px 1fr; gap: 6px 16px; font-size: .9rem; }
+.chave-valor dt { color: var(--pctec-texto-fraco); }
+.chave-valor dd { margin: 0; }
+.redigido { color: var(--pctec-alerta); font-style: italic; }
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  .sidebar { display: flex; flex-wrap: wrap; align-items: center; padding: 12px; gap: 4px; }
+  .sidebar h1 { margin: 0 16px 0 4px; }
+  .sidebar nav { display: flex; flex-wrap: wrap; }
+  .sidebar nav a { padding: 8px 12px; border-left: none; border-bottom: 3px solid transparent; }
+  .sidebar nav a.ativo { border-left-color: transparent; border-bottom-color: #fff; }
+  .chave-valor { grid-template-columns: 1fr; }
+}

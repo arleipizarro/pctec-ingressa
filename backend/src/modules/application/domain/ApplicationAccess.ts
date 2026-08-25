@@ -2,8 +2,14 @@ import { PublicId } from "./value-objects/PublicId.js";
 import { AccessProfile } from "./value-objects/AccessProfile.js";
 import {
   createApplicationAccessGrantedEvent,
-  type ApplicationAccessGrantedEvent
+  createApplicationAccessRevokedEvent,
+  type ApplicationAccessGrantedEvent,
+  type ApplicationAccessRevokedEvent
 } from "./events/ApplicationAccessDomainEvents.js";
+import {
+  ApplicationAccessNotGrantedError,
+  ApplicationAccessVersionConflictError
+} from "./errors/ApplicationErrors.js";
 
 export type ApplicationAccessStatusValue = "GRANTED" | "REVOKED";
 
@@ -78,6 +84,9 @@ export const APPLICATION_ACCESS_BOOTSTRAP_EVENT_ACTOR_MARKER = "BOOTSTRAP" as co
  * — G3 não implementa revogação, mesmo princípio de minimalismo já
  * aplicado a `Membership`/`OrganizationExternalReference` em G2.
  */
+/** Eventos que este agregado emite. */
+export type ApplicationAccessDomainEvent = ApplicationAccessGrantedEvent | ApplicationAccessRevokedEvent;
+
 export class ApplicationAccess {
   private internalId: number | undefined;
   private readonly publicId: PublicId;
@@ -93,7 +102,7 @@ export class ApplicationAccess {
   private readonly createdAt: Date;
   private updatedAt: Date;
 
-  private readonly domainEvents: ApplicationAccessGrantedEvent[] = [];
+  private readonly domainEvents: ApplicationAccessDomainEvent[] = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -259,7 +268,66 @@ export class ApplicationAccess {
     });
   }
 
-  public pullDomainEvents(): ApplicationAccessGrantedEvent[] {
+  /**
+   * Revoga o acesso.
+   *
+   * Não apaga a linha e não zera `granted_at`: muda o status para
+   * REVOKED e carimba quem revogou e quando. A coluna gerada
+   * `active_grant_flag` vira NULL e libera a UNIQUE KEY
+   * `uk_app_access_active_grant` para uma concessão futura — que é
+   * exatamente o comportamento desenhado na migration 0017.
+   *
+   * Revogar o que já está revogado é recusado em vez de virar no-op: o
+   * chamador achava que havia acesso ativo, e essa divergência precisa
+   * aparecer.
+   */
+  public revoke(input: {
+    readonly revokedByIdentityPublicId: string;
+    readonly expectedVersion: number;
+    readonly correlationId: string;
+    readonly now?: Date | undefined;
+  }): void {
+    if (this.status !== "GRANTED") {
+      throw new ApplicationAccessNotGrantedError(this.status);
+    }
+    if (this.version !== input.expectedVersion) {
+      throw new ApplicationAccessVersionConflictError(input.expectedVersion, this.version);
+    }
+
+    const agora = input.now ?? new Date();
+    this.status = "REVOKED";
+    this.revokedAt = agora;
+    this.revokedByIdentityPublicId = input.revokedByIdentityPublicId;
+    this.version += 1;
+    this.updatedAt = agora;
+
+    this.domainEvents.push(
+      createApplicationAccessRevokedEvent(
+        {
+          aggregatePublicId: this.publicId.toString(),
+          actorPublicId: input.revokedByIdentityPublicId,
+          correlationId: input.correlationId,
+          occurredAt: agora
+        },
+        {
+          applicationAccessPublicId: this.publicId.toString(),
+          identityPublicId: this.identityPublicId,
+          applicationPublicId: this.applicationPublicId,
+          accessProfile: this.accessProfile.toString()
+        }
+      )
+    );
+  }
+
+  public getRevokedAt(): Date | undefined {
+    return this.revokedAt;
+  }
+
+  public getRevokedByIdentityPublicId(): string | undefined {
+    return this.revokedByIdentityPublicId;
+  }
+
+  public pullDomainEvents(): ApplicationAccessDomainEvent[] {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;

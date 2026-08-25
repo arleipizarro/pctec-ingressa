@@ -1,4 +1,5 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
+import { ApplicationAccessVersionConflictError } from "../../domain/errors/ApplicationErrors.js";
 import type { ApplicationAccessRepository } from "../../domain/ApplicationAccessRepository.js";
 import { ApplicationAccess, type ApplicationAccessPersistedState } from "../../domain/ApplicationAccess.js";
 import { ApplicationAccessActiveGrantConflictError } from "../../domain/errors/ApplicationErrors.js";
@@ -216,4 +217,42 @@ export class MariaDbApplicationAccessRepository implements ApplicationAccessRepo
     const row = rowList[0];
     return row === undefined ? undefined : ApplicationAccess.reconstitute(mapRowToPersistedState(row));
   }
+
+  public async findByPublicId(publicId: string): Promise<ApplicationAccess | undefined> {
+    const [rows] = await this.connection.execute(
+      `SELECT ${SELECT_COLUMNS} FROM application_accesses WHERE public_id = ? LIMIT 1`,
+      [publicId]
+    );
+    const rowList = rows as ApplicationAccessRow[];
+    const row = rowList[0];
+    return row === undefined ? undefined : ApplicationAccess.reconstitute(mapRowToPersistedState(row));
+  }
+
+  /**
+   * Revogação com trava otimista. O `WHERE version = ?` é a trava real:
+   * se ninguém casou, outra escrita passou no meio e a decisão de quem
+   * chegou depois não pode sobrescrever a de quem chegou antes.
+   */
+  public async update(applicationAccess: ApplicationAccess, expectedVersion: number): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE application_accesses
+          SET status = ?, revoked_at = ?, revoked_by_identity_public_id = ?,
+              version = ?, updated_at = ?
+        WHERE public_id = ? AND version = ?`,
+      [
+        applicationAccess.getStatus(),
+        applicationAccess.getRevokedAt() ?? null,
+        applicationAccess.getRevokedByIdentityPublicId() ?? null,
+        applicationAccess.getVersion(),
+        new Date(),
+        applicationAccess.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    const afetadas = (result as { affectedRows?: number }).affectedRows ?? 0;
+    if (afetadas === 0) {
+      throw new ApplicationAccessVersionConflictError(expectedVersion, applicationAccess.getVersion());
+    }
+  }
+
 }
