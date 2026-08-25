@@ -7,6 +7,7 @@ import type { RevokeApplicationAccessService } from "../../application/applicati
 import type { CreateMembershipService } from "../../organization/application/CreateMembershipService.js";
 import type { EndMembershipService } from "../../organization/application/EndMembershipService.js";
 import type { ActivateFederatedIdentityService } from "../../helpdesk/application/ActivateFederatedIdentityService.js";
+import type { RenameOrganizationService } from "../../organization/application/RenameOrganizationService.js";
 
 export interface AdminApiDeps {
   readonly readRepository: MariaDbAdminReadRepository;
@@ -15,6 +16,7 @@ export interface AdminApiDeps {
   readonly createMembershipService: CreateMembershipService;
   readonly endMembershipService: EndMembershipService;
   readonly activateFederatedIdentityService: ActivateFederatedIdentityService;
+  readonly renameOrganizationService: RenameOrganizationService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -198,6 +200,54 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       applicationAccessPublicId: publicId,
       revokedByIdentityPublicId: atorAutenticado(req),
       expectedVersion: Number(corpo.expectedVersion)
+    });
+    res.status(200).json(resultado);
+  }));
+
+  /**
+   * Correção administrativa de nomes da organização (v0.10.1).
+   *
+   * `POST .../names`, e não um `PUT`/`PATCH` no recurso inteiro, porque
+   * o que esta rota aceita é estritamente isto: razão social e nome
+   * fantasia. Um verbo de recurso inteiro convidaria a mandar `type`,
+   * `status` ou `document_number` no mesmo corpo — e a única defesa
+   * seria lembrar de ignorá-los. Aqui não há o que ignorar: eles não
+   * têm campo.
+   *
+   * `expectedVersion` é obrigatório. Sem ele, duas pessoas editando a
+   * mesma organização viram "a última salva vence", e a correção de uma
+   * some sem aviso.
+   */
+  router.post("/organizations/:publicId/names", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as {
+      legalName?: unknown;
+      tradeName?: unknown;
+      expectedVersion?: unknown;
+    };
+    if (!Number.isInteger(corpo.expectedVersion)) {
+      erro(res, 422, "EXPECTED_VERSION_REQUIRED", "expectedVersion é obrigatório para editar.");
+      return;
+    }
+    if (typeof corpo.legalName !== "string") {
+      erro(res, 422, "ORGANIZATION_LEGAL_NAME_INVALID", "Informe a razão social.");
+      return;
+    }
+
+    const resultado = await deps.renameOrganizationService.execute({
+      organizationPublicId: publicId,
+      legalName: corpo.legalName,
+      // Três estados distintos, e a diferença importa: ausente = manter,
+      // string vazia = limpar, texto = definir. Colapsar os dois
+      // primeiros apagaria o nome fantasia de quem só corrigiu a razão
+      // social.
+      tradeName: corpo.tradeName === undefined ? undefined : String(corpo.tradeName ?? ""),
+      expectedVersion: Number(corpo.expectedVersion),
+      actorPublicId: atorAutenticado(req)
     });
     res.status(200).json(resultado);
   }));

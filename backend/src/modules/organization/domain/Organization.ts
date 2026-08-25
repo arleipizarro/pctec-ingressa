@@ -3,10 +3,13 @@ import { OrganizationType } from "./value-objects/OrganizationType.js";
 import { LegalName } from "./value-objects/LegalName.js";
 import { TradeName } from "./value-objects/TradeName.js";
 import { DocumentNumber } from "./value-objects/DocumentNumber.js";
+import { OrganizationVersionConflictError } from "./errors/OrganizationErrors.js";
 import {
+  createOrganizationCreatedEvent,
+  createOrganizationUpdatedEvent,
   type EventEnvelopeInput,
   type OrganizationCreatedEvent,
-  createOrganizationCreatedEvent
+  type OrganizationUpdatedEvent
 } from "./events/OrganizationDomainEvents.js";
 
 export type OrganizationStatusValue = "ACTIVE" | "INACTIVE";
@@ -67,19 +70,40 @@ export interface OrganizationPersistedState {
  *   coletado internamente e lido via `pullDomainEvents()` — mesmo
  *   padrão já usado por `Identity`/`ApplicationAccess`/`Session`/`Credential`.
  */
+/** Eventos que este Aggregate sabe emitir. */
+export type OrganizationDomainEvent = OrganizationCreatedEvent | OrganizationUpdatedEvent;
+
+export interface RenameOrganizationProps {
+  readonly legalName: string;
+  /**
+   * `undefined` = não mexer no nome fantasia. `null` = limpar.
+   *
+   * A distinção existe porque a tela envia os dois campos sempre, e
+   * "não informei" e "quero apagar" não podem colapsar no mesmo valor —
+   * colapsar apagaria o nome fantasia de quem só corrigiu a razão
+   * social.
+   */
+  readonly tradeName: string | null | undefined;
+  readonly expectedVersion: number;
+  readonly actorPublicId: string;
+  readonly correlationId: string;
+  readonly causationId?: string | undefined;
+  readonly now?: Date | undefined;
+}
+
 export class Organization {
   private internalId: number | undefined;
   private readonly publicId: PublicId;
   private readonly type: OrganizationType;
-  private readonly legalName: LegalName;
-  private readonly tradeName: TradeName | undefined;
+  private legalName: LegalName;
+  private tradeName: TradeName | undefined;
   private readonly documentNumber: DocumentNumber | undefined;
   private readonly status: OrganizationStatusValue;
-  private readonly version: number;
+  private version: number;
   private readonly createdAt: Date;
-  private readonly updatedAt: Date;
+  private updatedAt: Date;
 
-  private readonly domainEvents: OrganizationCreatedEvent[] = [];
+  private readonly domainEvents: OrganizationDomainEvent[] = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -174,12 +198,86 @@ export class Organization {
   // Helpers internos
   // ---------------------------------------------------------------------
 
-  private recordEvent(event: OrganizationCreatedEvent): void {
+  private recordEvent(event: OrganizationDomainEvent): void {
     this.domainEvents.push(event);
   }
 
   /** Retorna e limpa os eventos de domínio produzidos desde a última leitura. */
-  public pullDomainEvents(): OrganizationCreatedEvent[] {
+  // ---------------------------------------------------------------------
+  // Correção administrativa de nomes (comando RenameOrganization, v0.10.1)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Corrige razão social e/ou nome fantasia.
+   *
+   * É o PRIMEIRO comando de mutação deste Aggregate, e o escopo é
+   * deliberadamente estreito: só nome. `type`, `status`,
+   * `documentNumber` e referências externas continuam sem caminho de
+   * alteração aqui — cada um deles muda o significado da organização
+   * para quem já depende dela (o `type` decide o que pode ser pai de
+   * quem, o `status` decide quem enxerga o quê, o documento é chave de
+   * unicidade). Nome é a única correção que não reescreve autorização
+   * nenhuma, e por isso é a única que cabe numa tela de edição.
+   *
+   * `expectedVersion` é exigido, não derivado do estado carregado: quem
+   * salva precisa afirmar QUAL versão revisou. Derivar internamente
+   * transformaria "duas pessoas editando" em "a última vence em
+   * silêncio".
+   *
+   * Sem mudança efetiva, nada acontece: nem versão, nem evento, nem
+   * `updated_at`. Salvar duas vezes o mesmo texto não é uma correção, e
+   * registrar uma auditoria vazia só suja a trilha de quem depois
+   * procura quando o nome de fato mudou.
+   */
+  public rename(props: RenameOrganizationProps): void {
+    if (props.expectedVersion !== this.version) {
+      throw new OrganizationVersionConflictError(props.expectedVersion, this.version);
+    }
+
+    const novaRazaoSocial = LegalName.create(props.legalName);
+    const novoNomeFantasia =
+      props.tradeName === undefined ? this.tradeName : TradeName.createOptional(props.tradeName);
+
+    const mudou: string[] = [];
+    if (novaRazaoSocial.toString() !== this.legalName.toString()) {
+      mudou.push("legal_name");
+    }
+    if ((novoNomeFantasia?.toString() ?? null) !== (this.tradeName?.toString() ?? null)) {
+      mudou.push("trade_name");
+    }
+    if (mudou.length === 0) {
+      return;
+    }
+
+    const now = props.now ?? new Date();
+    const versaoAnterior = this.version;
+
+    this.legalName = novaRazaoSocial;
+    this.tradeName = novoNomeFantasia;
+    this.version = versaoAnterior + 1;
+    this.updatedAt = now;
+
+    const envelope: EventEnvelopeInput = {
+      aggregatePublicId: this.publicId.toString(),
+      actorPublicId: props.actorPublicId,
+      correlationId: props.correlationId,
+      ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+      occurredAt: now
+    };
+
+    this.recordEvent(
+      createOrganizationUpdatedEvent(envelope, {
+        organizationPublicId: this.publicId.toString(),
+        // Nomes dos campos, nunca os valores: um evento circula mais
+        // longe do que a linha da tabela.
+        changedFields: mudou,
+        previousVersion: versaoAnterior,
+        version: this.version
+      })
+    );
+  }
+
+  public pullDomainEvents(): OrganizationDomainEvent[] {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;
