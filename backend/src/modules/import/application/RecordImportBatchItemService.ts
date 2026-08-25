@@ -5,6 +5,7 @@ import type { ImportBatchItemRepository } from "../domain/ImportBatchItemReposit
 import { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { ImportItemSnapshot } from "../domain/ImportItemSnapshot.js";
 import { ImportBatchNotFoundError } from "../domain/errors/ImportErrors.js";
+import { ExistingConnectionUnitOfWork } from "./ExistingConnectionUnitOfWork.js";
 
 export interface RecordImportItemInput {
   readonly entityKind: string;
@@ -52,6 +53,24 @@ export class RecordImportBatchItemService {
     private readonly importBatchRepositoryFactory: (connection: Queryable) => ImportBatchRepository,
     private readonly importBatchItemRepositoryFactory: (connection: Queryable) => ImportBatchItemRepository
   ) {}
+
+  /**
+   * Devolve um service equivalente que PARTICIPA de uma transação já
+   * aberta, em vez de abrir a sua.
+   *
+   * É o que permite ao APPLY gravar a entidade de destino e o item que a
+   * explica no mesmo COMMIT: ou os dois entram, ou nenhum entra. Sem
+   * isso, um processo morto entre a escrita e o registro deixaria no
+   * banco um acesso que nenhum item de lote justifica — e a trilha de
+   * auditoria passaria a mentir por omissão.
+   */
+  public withConnection(connection: Queryable): RecordImportBatchItemService {
+    return new RecordImportBatchItemService(
+      new ExistingConnectionUnitOfWork(connection),
+      this.importBatchRepositoryFactory,
+      this.importBatchItemRepositoryFactory
+    );
+  }
 
   public async execute(request: RecordImportBatchItemsRequest): Promise<RecordImportBatchItemsResult> {
     return this.unitOfWork.runInTransaction(async (connection) => {
