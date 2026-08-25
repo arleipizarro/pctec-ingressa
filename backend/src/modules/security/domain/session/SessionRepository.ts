@@ -32,5 +32,13 @@ export interface SessionRepository {
    * `SessionVersionConflictError`. Uso desta fatia (v0.6.x, Fase E):
    * exclusivamente para persistir `revoke()` (logout).
    */
+  /**
+   * Sessões ainda válidas de uma Identity — base da revogação em massa
+   * na recuperação de senha. Sem isto, trocar a senha deixaria vivas
+   * todas as sessões abertas com a senha ANTIGA, que é exatamente o
+   * acesso que a recuperação existe para cortar.
+   */
+  findActiveByIdentityPublicId?(identityPublicId: string): Promise<readonly Session[]>;
+
   update(session: Session, expectedVersion: number): Promise<void>;
 }

@@ -44,3 +44,45 @@ export function createCredentialCreatedEvent(
     payload
   };
 }
+
+/**
+ * Evento `credential.changed` — já catalogado em
+ * `docs/02-arquitetura/CATALOGO-DE-EVENTOS.md` como o evento de
+ * ALTERAÇÃO de uma credencial existente, e usado pela primeira vez aqui,
+ * na recuperação administrativa de senha.
+ *
+ * `reasonCode` diz POR QUE a credencial mudou. Sem ele, a trilha
+ * mostraria "a senha do administrador mudou às 15h" sem distinguir uma
+ * troca de rotina de uma recuperação de acesso — que é exatamente a
+ * diferença que importa numa auditoria.
+ *
+ * Payload contém EXCLUSIVAMENTE identificadores e metadados: nunca
+ * senha, hash, salt ou qualquer derivação (coberto por teste).
+ */
+export interface CredentialChangedPayload {
+  readonly credentialPublicId: string;
+  readonly identityPublicId: string;
+  readonly type: string;
+  readonly reasonCode: string;
+}
+
+export type CredentialChangedEvent = DomainEvent<"credential.changed", CredentialChangedPayload>;
+
+export function createCredentialChangedEvent(
+  envelope: EventEnvelopeInput,
+  payload: CredentialChangedPayload
+): CredentialChangedEvent {
+  const base = {
+    eventId: randomUUID(),
+    eventType: "credential.changed" as const,
+    eventVersion: 1,
+    aggregatePublicId: envelope.aggregatePublicId,
+    actorPublicId: envelope.actorPublicId,
+    correlationId: envelope.correlationId,
+    occurredAt: envelope.occurredAt
+  };
+  return {
+    ...(envelope.causationId === undefined ? base : { ...base, causationId: envelope.causationId }),
+    payload
+  };
+}

@@ -75,6 +75,22 @@ const SELECT_COLUMNS = `id, public_id, identity_public_id, token_hash, status, c
 export class MariaDbSessionRepository implements SessionRepository {
   public constructor(private readonly connection: Queryable) {}
 
+  /**
+   * Sessões ainda válidas de uma Identity. `status = 'ACTIVE'` e
+   * `expires_at > NOW()`: uma sessão expirada já não autentica, então
+   * revogá-la seria escrita sem efeito.
+   */
+  public async findActiveByIdentityPublicId(identityPublicId: string): Promise<readonly Session[]> {
+    const [rows] = await this.connection.execute(
+      `SELECT ${SELECT_COLUMNS}
+         FROM sessions
+        WHERE identity_public_id = ? AND status = 'ACTIVE' AND expires_at > NOW()
+        ORDER BY id`,
+      [identityPublicId]
+    );
+    return (rows as SessionRow[]).map((row) => Session.reconstitute(mapRowToPersistedState(row)));
+  }
+
   public async insert(session: Session): Promise<void> {
     const [result] = await this.connection.execute(
       `INSERT INTO sessions
