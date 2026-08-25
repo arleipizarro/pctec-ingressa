@@ -1,49 +1,111 @@
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { api } from "../api.js";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { api, ApiError, type AplicativoCard, type OrganizacaoDoUsuario } from "../api.js";
 import type { Sessao } from "../auth.js";
-import type { AplicativoCard } from "../api.js";
+import { CODIGO_INGRESSA } from "../auth.js";
+
+const CODIGO_PORTAL = "PCTEC_PORTAL";
+const CODIGO_HELPDESK = "PCTEC_HELPDESK";
 
 /**
- * Descrições dos produtos conhecidos. Puramente textual — NÃO decide
- * quais cards aparecem, nem em qual ordem. Um código desconhecido cai no
- * texto genérico e continua aparecendo: se o servidor autorizou, a tela
- * mostra, mesmo que este arquivo nunca tenha ouvido falar do produto.
+ * Textos e rótulo de ação por produto conhecido.
+ *
+ * Puramente de apresentação: NÃO decide quais cards aparecem nem se são
+ * clicáveis. Um código desconhecido cai no texto genérico e continua
+ * aparecendo — se o servidor autorizou, a tela mostra.
  */
-const DESCRICOES: Readonly<Record<string, string>> = {
-  PCTEC_PORTAL: "Contratos, chamados e faturamento das empresas onde você tem vínculo.",
-  PCTEC_HELPDESK: "Abertura e acompanhamento de chamados de suporte.",
-  PCTEC_INGRESSA: "Identidades, organizações, acessos e importações da plataforma."
+const APRESENTACAO: Readonly<Record<string, { descricao: string; acao: string }>> = {
+  [CODIGO_PORTAL]: {
+    descricao: "Contratos, equipamentos e faturamento das empresas onde você tem vínculo.",
+    acao: "Acessar Portal"
+  },
+  [CODIGO_HELPDESK]: {
+    descricao: "Abertura e acompanhamento de chamados de suporte.",
+    acao: "Acessar Helpdesk"
+  },
+  [CODIGO_INGRESSA]: {
+    descricao: "Identidades, organizações, acessos e importações da plataforma.",
+    acao: "Abrir administração"
+  }
 };
 
-function descricao(card: AplicativoCard): string {
-  return DESCRICOES[card.code] ?? "Aplicativo do ecossistema PCTEC.";
+function apresentacao(card: AplicativoCard): { descricao: string; acao: string } {
+  return APRESENTACAO[card.code] ?? { descricao: "Aplicativo do ecossistema PCTEC.", acao: "Acessar" };
 }
 
+/** Iniciais para o avatar — nunca cai em "?" nem mostra identificador interno. */
+function iniciais(nome: string): string {
+  const partes = nome.trim().split(/\s+/).filter(Boolean);
+  if (partes.length === 0) {
+    return "PC";
+  }
+  const primeira = partes[0]?.[0] ?? "";
+  const ultima = partes.length > 1 ? (partes[partes.length - 1]?.[0] ?? "") : "";
+  return (primeira + ultima).toUpperCase();
+}
+
+type EstadoDasOrganizacoes =
+  | { situacao: "carregando" }
+  | { situacao: "ok"; itens: readonly OrganizacaoDoUsuario[] }
+  | { situacao: "indisponivel" }
+  | { situacao: "erro" };
+
 /**
- * Painel "Meus aplicativos" — a primeira tela de quem entra no Ingressa.
+ * Página inicial de quem entra no Ingressa.
  *
  * **Esta tela não decide autorização.** Ela desenha `sessao.aplicativos`,
  * que é a resposta de `GET /api/v1/apps` — e essa resposta só contém
  * `ApplicationAccess` GRANTED para `Application` ACTIVE. Não há filtro,
  * lista fixa ou condição de perfil aqui: card ausente significa acesso
- * ausente, e esconder um card nunca seria proteção de qualquer forma.
+ * ausente, e esconder um card no cliente nunca seria proteção de
+ * qualquer forma.
  *
- * O clique no card do Portal navega para a URL que INICIA o SSO **no
- * Portal** — é lá que nascem `state` e `code_verifier`. O Ingressa não
- * pode gerá-los pelo cliente: o verifier precisa ficar guardado do lado
- * de quem vai trocar o código, e um verifier que passou pelo Ingressa
- * não prova mais nada.
+ * O botão do Portal aponta para a URL que INICIA o SSO **no Portal** — é
+ * lá que nascem `state` e `code_verifier`. O Ingressa não pode gerá-los
+ * pelo cliente: um verifier que passou por aqui não prova mais nada.
+ *
+ * Produto sem destino configurado aparece como **"Em breve"**, nunca com
+ * um endereço inventado: enquanto não houver um caminho de entrada
+ * seguro e pronto, oferecer um botão seria prometer o que não existe.
  */
 export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: () => void }): JSX.Element {
   const [parametros] = useSearchParams();
   const navegar = useNavigate();
+  const [organizacoes, setOrganizacoes] = useState<EstadoDasOrganizacoes>({ situacao: "carregando" });
+  const [saindo, setSaindo] = useState(false);
+
   const erroSso = parametros.get("sso_erro");
   const appDoErro = parametros.get("app");
 
+  const carregarOrganizacoes = useCallback(async () => {
+    setOrganizacoes({ situacao: "carregando" });
+    try {
+      const resposta = await api.organizacoes();
+      setOrganizacoes({ situacao: "ok", itens: resposta.organizations });
+    } catch (falha) {
+      // 403 aqui NÃO é erro: é a rota de contexto do Portal recusando
+      // quem não tem acesso ao Portal. Vínculo empresarial e acesso a
+      // produto são eixos independentes — tratar como falha faria a tela
+      // acusar um problema que não existe.
+      if (falha instanceof ApiError && (falha.status === 403 || falha.status === 404)) {
+        setOrganizacoes({ situacao: "indisponivel" });
+        return;
+      }
+      setOrganizacoes({ situacao: "erro" });
+    }
+  }, []);
+
+  useEffect(() => {
+    void carregarOrganizacoes();
+  }, [carregarOrganizacoes]);
+
   async function sair(): Promise<void> {
+    setSaindo(true);
     try {
       await api.logout();
     } finally {
+      // Falha no logout do servidor não pode prender a pessoa na tela:
+      // a sessão local cai de qualquer forma e ela volta ao login.
       onSair();
       navegar("/login");
     }
@@ -52,15 +114,22 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
   return (
     <div className="launcher">
       <header className="launcher-topo">
-        <div>
-          <h1>PCTEC Ingressa</h1>
-          <p className="subtitulo" style={{ margin: 0 }}>Meus aplicativos</p>
+        <div className="launcher-marca">
+          <span className="launcher-logo" aria-hidden="true">PC</span>
+          <div>
+            <h1>PCTEC Ingressa</h1>
+            <p>Meus aplicativos</p>
+          </div>
         </div>
         <div className="launcher-usuario">
-          <span>
+          <span className="launcher-avatar" aria-hidden="true">{iniciais(sessao.nomeExibido)}</span>
+          <span className="launcher-identificacao">
             <strong>{sessao.nomeExibido}</strong>
+            {sessao.ehAdministrador && <span className="launcher-selo">Administrador</span>}
           </span>
-          <button type="button" onClick={sair}>Sair</button>
+          <button type="button" onClick={sair} disabled={saindo}>
+            {saindo ? "Saindo…" : "Sair"}
+          </button>
         </div>
       </header>
 
@@ -71,42 +140,104 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
         </div>
       )}
 
-      <main className="launcher-grade">
-        {sessao.aplicativos.length === 0 && (
-          <div className="vazio">
-            Você ainda não tem acesso a nenhum aplicativo. Fale com o administrador da PCTEC.
-          </div>
-        )}
-        {sessao.aplicativos.map((card) => (
-          <CardDeAplicativo key={card.code} card={card} />
-        ))}
+      <main>
+        <section aria-labelledby="titulo-aplicativos">
+          <h2 id="titulo-aplicativos" className="launcher-secao">Aplicativos</h2>
+          {sessao.aplicativos.length === 0 ? (
+            <div className="vazio">
+              Você ainda não tem acesso a nenhum aplicativo. Fale com o administrador da PCTEC.
+            </div>
+          ) : (
+            <div className="launcher-grade">
+              {sessao.aplicativos.map((card) => (
+                <CardDeAplicativo key={card.code} card={card} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section aria-labelledby="titulo-organizacoes" className="launcher-organizacoes">
+          <h2 id="titulo-organizacoes" className="launcher-secao">Suas empresas</h2>
+          <ResumoDeOrganizacoes estado={organizacoes} onTentarDeNovo={() => void carregarOrganizacoes()} />
+        </section>
       </main>
     </div>
   );
 }
 
 function CardDeAplicativo({ card }: { card: AplicativoCard }): JSX.Element {
+  const { descricao, acao } = apresentacao(card);
   const indisponivel = card.launchUrl === null;
+
   return (
-    <a
-      className={`app-card${indisponivel ? " app-card-indisponivel" : ""}`}
-      href={card.launchUrl ?? undefined}
-      aria-disabled={indisponivel}
-      onClick={(evento) => {
-        if (indisponivel) {
-          evento.preventDefault();
-        }
-      }}
-    >
-      <span className="app-card-perfil">{card.profile}</span>
-      <strong>{card.name}</strong>
-      <span className="app-card-descricao">{descricao(card)}</span>
-      {indisponivel && (
-        // O acesso existe; o destino é que não está configurado neste
-        // ambiente. Sumir com o card faria a pessoa achar que perdeu o
-        // acesso, e o administrador procurar no lugar errado.
-        <span className="app-card-aviso">Destino não configurado neste ambiente.</span>
+    <article className={`app-card${indisponivel ? " app-card-indisponivel" : ""}`}>
+      <header>
+        <span className="app-card-sigla" aria-hidden="true">{card.name.slice(0, 2).toUpperCase()}</span>
+        <div>
+          <strong>{card.name}</strong>
+          <span className="app-card-perfil">{card.profile}</span>
+        </div>
+      </header>
+      <p className="app-card-descricao">{descricao}</p>
+      {indisponivel ? (
+        // Sem destino configurado. O acesso EXISTE — por isso o card não
+        // some; o que falta é um caminho de entrada pronto, e inventar
+        // uma URL aqui seria oferecer uma porta que ninguém abriu.
+        <span className="app-card-embreve">Em breve</span>
+      ) : card.launchUrl.startsWith("/") ? (
+        // Destino interno (a própria UI do Ingressa): navegação do router,
+        // sem recarregar a aplicação inteira.
+        <Link className="app-card-acao" to={card.launchUrl}>{acao}</Link>
+      ) : (
+        // Destino externo: navegação NATIVA, de propósito. O SSO começa
+        // com um redirect do outro produto, e `fetch`/router não seguem
+        // esse caminho.
+        <a className="app-card-acao" href={card.launchUrl}>{acao}</a>
       )}
-    </a>
+    </article>
+  );
+}
+
+function ResumoDeOrganizacoes({
+  estado,
+  onTentarDeNovo
+}: {
+  estado: EstadoDasOrganizacoes;
+  onTentarDeNovo: () => void;
+}): JSX.Element {
+  if (estado.situacao === "carregando") {
+    return <div className="vazio" role="status">Carregando suas empresas…</div>;
+  }
+
+  if (estado.situacao === "erro") {
+    return (
+      <div className="aviso aviso-erro" role="alert">
+        Não foi possível carregar suas empresas.{" "}
+        <button type="button" className="ligacao" onClick={onTentarDeNovo}>Tentar de novo</button>
+      </div>
+    );
+  }
+
+  if (estado.situacao === "indisponivel") {
+    return (
+      <div className="vazio">
+        A lista de empresas fica disponível para quem tem acesso ao PCTEC Portal.
+      </div>
+    );
+  }
+
+  if (estado.itens.length === 0) {
+    return <div className="vazio">Você ainda não está vinculado a nenhuma empresa.</div>;
+  }
+
+  return (
+    <ul className="lista-organizacoes">
+      {estado.itens.map((org) => (
+        <li key={org.publicId}>
+          <span className="organizacao-nome">{org.tradeName ?? org.legalName}</span>
+          <span className="organizacao-tipo">{org.type === "BUSINESS_GROUP" ? "Grupo" : "Empresa"}</span>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -70,6 +70,18 @@ export const api = {
    * qualquer sessão válida e já traz os cards que a pessoa pode ver.
    */
   apps: () => requisitar<PainelDeAplicativos>("/apps"),
+  /**
+   * Organizações com membership ACTIVE.
+   *
+   * Hoje o único endpoint browser-facing que devolve isso é
+   * `/portal/context`, que está atrás de
+   * `ApplicationAccess(PCTEC_PORTAL, USER)`. Quem não tem acesso ao
+   * Portal recebe 403 — e a tela trata esse caso explicitamente, em vez
+   * de fingir que a pessoa não tem vínculo nenhum. Ver nota no PR: o
+   * vínculo empresarial e o acesso a produto são eixos independentes
+   * (ADR-031 §6), e a rota certa para o launcher ainda não existe.
+   */
+  organizacoes: () => requisitar<{ organizations: readonly OrganizacaoDoUsuario[] }>("/portal/context"),
   /** Convites (ADMIN). O link do modo manual volta UMA vez — não é reexibível. */
   convidar: (identityPublicIds: readonly string[]) =>
     requisitar<ResultadoDeConvites>("/admin/invitations", {
@@ -388,6 +400,13 @@ export interface AplicativoCard {
   readonly profile: string;
   /** `null` = há acesso, mas o destino não está configurado neste ambiente. */
   readonly launchUrl: string | null;
+}
+
+export interface OrganizacaoDoUsuario {
+  readonly publicId: string;
+  readonly type: string;
+  readonly legalName: string;
+  readonly tradeName: string | null;
 }
 
 export interface PainelDeAplicativos {
