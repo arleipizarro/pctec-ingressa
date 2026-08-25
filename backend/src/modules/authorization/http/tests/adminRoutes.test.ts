@@ -147,8 +147,12 @@ describe("GET /api/v1/admin/whoami", () => {
     });
     const body = (await res.json()) as Record<string, unknown>;
 
+    // `fullName` entrou em v0.9.1 por decisão explícita: o cabeçalho da
+    // UI mostrava um UUID truncado, que não responde "sou eu nesta
+    // sessão?". `null` quando a identidade não pôde ser carregada — o
+    // whoami não deixa de responder por causa do nome.
     expect(body).toEqual({
-      identity: { publicId: VALID_AUTHORIZATION.identityPublicId },
+      identity: { publicId: VALID_AUTHORIZATION.identityPublicId, fullName: null },
       application: { code: VALID_AUTHORIZATION.applicationCode },
       access: { profile: VALID_AUTHORIZATION.accessProfile }
     });
@@ -164,8 +168,12 @@ describe("GET /api/v1/admin/whoami", () => {
     expect(bodyText.toLowerCase()).not.toContain("password");
     expect(bodyText.toLowerCase()).not.toContain("credential");
     expect(bodyText.toLowerCase()).not.toContain("token");
+    // E-mail continua PROIBIDO: identifica a pessoa fora do sistema e
+    // nenhuma tela precisa dele para dizer quem está logado. `fullName`
+    // é o dado menos revelador que responde a essa pergunta, e por isso
+    // é o único que passou a ser permitido (v0.9.1).
     expect(bodyText.toLowerCase()).not.toContain("email");
-    expect(bodyText.toLowerCase()).not.toContain("fullname");
+    expect(bodyText.toLowerCase()).not.toContain("cpf");
   });
 
   it("23. correlation-id preservado", async () => {

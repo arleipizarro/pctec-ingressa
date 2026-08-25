@@ -27,6 +27,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPool as createMysqlPool, type Pool } from "mysql2/promise";
 import { shouldRunIntegrationTests } from "../../types/integration-test-guard.js";
+import { podeCriarBanco } from "../../types/integration-preconditions.js";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 import { MigrationExecutionError, MigrationRunner, type MigrationDefinition } from "../MigrationRunner.js";
 
@@ -86,7 +87,20 @@ async function colunasDe(pool: Pool, tabela: string): Promise<string[]> {
   return (linhas as Array<{ nome: string }>).map((linha) => linha.nome);
 }
 
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Esta suíte cria bancos descartáveis para provar o fail-closed das
+ * migrations 0020/0021. Sem privilégio de CREATE DATABASE ela não tem
+ * como rodar — pula com motivo, em vez de falhar como se fosse bug.
+ */
+const shouldRun = shouldRunIntegrationTests() && (await podeCriarBanco(CONFIG_DA_SONDA));
 
 describe.skipIf(!shouldRun)("migrations de importação — fail-closed contra tabela homônima", () => {
   let admin: Pool;

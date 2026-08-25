@@ -14,10 +14,30 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../../../app/http/createApp.js";
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
+import { existeLinha } from "../../../shared/types/integration-preconditions.js";
 import { HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME } from "../../portal/http/requireServiceCredential.js";
 
 const CREDENCIAL = "credencial-de-integracao-somente-deste-processo";
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Esta suíte é READ-ONLY sobre o piloto já importado. Num banco que não
+ * tem o piloto (um schema de teste limpo, por exemplo) não há o que
+ * verificar — pula, em vez de reportar 404 como se fosse regressão.
+ */
+const shouldRun =
+  shouldRunIntegrationTests() &&
+  (await existeLinha(
+    CONFIG_DA_SONDA,
+    "SELECT 1 FROM identity_external_references WHERE system_code = ? AND entity_type = ? AND status = ? LIMIT 1",
+    ["PCTEC_HELPDESK", "users", "ACTIVE"]
+  ));
 
 /**
  * Ids do piloto vêm do ambiente, com default só para a suíte local.

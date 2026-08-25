@@ -2,6 +2,7 @@ import type { Pool } from "mysql2/promise";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
+import { tabelaEstaVazia } from "../../../shared/types/integration-preconditions.js";
 import { loadEnv } from "../../../app/config/env.js";
 import { createPool } from "../../../shared/database/Pool.js";
 import { MariaDbIdentityRepository } from "../../identity/infrastructure/persistence/MariaDbIdentityRepository.js";
@@ -45,7 +46,20 @@ import { ActorPublicId } from "../../identity/domain/value-objects/ActorPublicId
  *   (usa exclusivamente `env.DB_USER`, o usuário runtime, nunca o
  *   migrator).
  */
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Mesmo caso do bootstrap de Identity: só faz sentido contra schema sem
+ * nenhuma Credential. Com uma já existente, o guard global do serviço
+ * recusa — o que é o comportamento correto, e não um defeito a reportar.
+ */
+const shouldRun = shouldRunIntegrationTests() && (await tabelaEstaVazia(CONFIG_DA_SONDA, "credentials"));
 
 describe.skipIf(!shouldRun)(
   "BootstrapFirstCredentialService (integração — requer MariaDB real, nenhuma Credential LOCAL_PASSWORD pré-existente)",

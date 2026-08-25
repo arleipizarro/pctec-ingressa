@@ -14,7 +14,11 @@ function renderizar(rota = "/") {
   );
 }
 
-const SESSAO_ADMIN = { identity: { publicId: fixtures.ADMIN_PUBLIC_ID }, access: { profile: "ADMIN" } };
+const NOME_ADMIN_SINTETICO = "Administrador Sintetico";
+const SESSAO_ADMIN = {
+  identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: NOME_ADMIN_SINTETICO },
+  access: { profile: "ADMIN" }
+};
 
 /**
  * Erro REAL da API, não um objeto parecido: `useSessao` distingue
@@ -396,5 +400,43 @@ describe("criar membership", () => {
     await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
 
     expect(await screen.findByText(/dados inválidos/i)).toBeInTheDocument();
+  });
+});
+
+describe("cabeçalho", () => {
+  it("mostra o nome vindo do whoami, nunca o publicId", async () => {
+    renderizar("/");
+    await screen.findByRole("heading", { name: "Painel" });
+
+    expect(screen.getByText(NOME_ADMIN_SINTETICO)).toBeInTheDocument();
+    expect(document.body.textContent ?? "").not.toContain(fixtures.ADMIN_PUBLIC_ID.slice(0, 8));
+  });
+
+  it("mostra o perfil ao lado do nome", async () => {
+    renderizar("/");
+    await screen.findByRole("heading", { name: "Painel" });
+    expect(screen.getByText(/perfil ADMIN/)).toBeInTheDocument();
+  });
+
+  it("sem nome no whoami, usa rótulo neutro — nunca UUID parcial", async () => {
+    vi.spyOn(api, "whoami").mockResolvedValue({
+      identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: null },
+      access: { profile: "ADMIN" }
+    });
+    renderizar("/");
+    await screen.findByRole("heading", { name: "Painel" });
+
+    expect(screen.getByText("Administrador")).toBeInTheDocument();
+    expect(document.body.textContent ?? "").not.toContain(fixtures.ADMIN_PUBLIC_ID.slice(0, 8));
+  });
+
+  it("nome só de espaços também cai no rótulo neutro", async () => {
+    vi.spyOn(api, "whoami").mockResolvedValue({
+      identity: { publicId: fixtures.ADMIN_PUBLIC_ID, fullName: "   " },
+      access: { profile: "ADMIN" }
+    });
+    renderizar("/");
+    await screen.findByRole("heading", { name: "Painel" });
+    expect(screen.getByText("Administrador")).toBeInTheDocument();
   });
 });

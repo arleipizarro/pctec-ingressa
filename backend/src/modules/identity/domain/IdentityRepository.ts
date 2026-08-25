@@ -49,4 +49,20 @@ export interface IdentityRepository {
    * afetada, a implementação deve lançar `IdentityVersionConflictError`.
    */
   update(identity: Identity, expectedVersion: number): Promise<void>;
+
+  /**
+   * Remove FISICAMENTE a linha, com trava otimista.
+   *
+   * Existe para um caso estreito: Identity PENDING que nunca foi usada
+   * (sem credencial, vínculo, membership, acesso ou sessão) e que só
+   * polui a operação — tipicamente resíduo de teste. Exclusão lógica não
+   * serve aqui: a linha continuaria na base e na tela.
+   *
+   * O `WHERE version = ?` é a trava real: se alguém tocou na identidade
+   * entre a checagem das pré-condições e o DELETE, nada casa e a
+   * operação falha em vez de apagar um estado que ninguém revisou.
+   *
+   * Opcional no contrato para não obrigar todo test double existente.
+   */
+  deleteByPublicId?(publicId: PublicId, expectedVersion: number): Promise<number>;
 }

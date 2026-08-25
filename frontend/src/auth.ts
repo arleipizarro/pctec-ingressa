@@ -4,7 +4,17 @@ import { api, ApiError } from "./api.js";
 export interface Sessao {
   readonly identityPublicId: string;
   readonly accessProfile: string;
+  /** Nome de quem está logado, para o cabeçalho. Nunca vem do cliente. */
+  readonly nomeExibido: string;
 }
+
+/**
+ * Rótulo neutro quando o servidor não devolveu nome.
+ *
+ * Nunca cair para o publicId: um UUID truncado no cabeçalho não responde
+ * "sou eu nesta sessão?" e ainda expõe identificador interno em tela.
+ */
+export const NOME_NEUTRO = "Administrador";
 
 /**
  * A sessão é do SERVIDOR. O frontend não guarda token e não decide
@@ -28,7 +38,12 @@ export function useSessao(): {
     setCarregando(true);
     try {
       const resposta = await api.whoami();
-      setSessao({ identityPublicId: resposta.identity.publicId, accessProfile: resposta.access.profile });
+      const nome = (resposta.identity.fullName ?? "").trim();
+      setSessao({
+        identityPublicId: resposta.identity.publicId,
+        accessProfile: resposta.access.profile,
+        nomeExibido: nome.length > 0 ? nome : NOME_NEUTRO
+      });
     } catch (erro) {
       // 401/403 significam "não autenticado como admin" — nunca é caso
       // de tela de erro: é caso de mandar para o login.

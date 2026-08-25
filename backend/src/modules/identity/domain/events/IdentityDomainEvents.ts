@@ -218,3 +218,30 @@ export function createIdentityDeletedEvent(
 ): IdentityDeletedEvent {
   return { ...buildEnvelope("identity.deleted", envelope), payload };
 }
+
+/**
+ * Evento `identity.discarded` — descarte FÍSICO de uma Identity PENDING
+ * que nunca foi usada.
+ *
+ * Distinto de `identity.deleted`, que é exclusão LÓGICA e preserva a
+ * linha: aqui a linha deixa de existir, e este evento passa a ser o
+ * único registro de que ela existiu. Por isso o payload carrega o
+ * `reasonCode` — sem ele, a trilha diria "algo foi apagado" sem dizer
+ * por quê, justamente no caso em que não há mais nada para consultar.
+ *
+ * Nunca carrega nome, e-mail ou CPF: descartar dado de teste não é
+ * motivo para copiá-lo para a trilha.
+ */
+export interface IdentityDiscardedPayload {
+  readonly publicId: string;
+  readonly reasonCode: string;
+}
+
+export type IdentityDiscardedEvent = DomainEvent<"identity.discarded", IdentityDiscardedPayload>;
+
+export function createIdentityDiscardedEvent(
+  envelope: EventEnvelopeInput,
+  payload: IdentityDiscardedPayload
+): IdentityDiscardedEvent {
+  return { ...buildEnvelope("identity.discarded", envelope), payload };
+}

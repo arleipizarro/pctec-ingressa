@@ -17,6 +17,12 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["src/**/*.integration.test.ts"],
+    // Suítes de integração compartilham UM banco. Rodá-las em paralelo
+    // torna o resultado dependente de quem chegou primeiro: uma suíte
+    // que exige schema vazio passa ou falha conforme outra tenha ou não
+    // inserido sua fixture naquele instante. Sequencial é mais lento e
+    // determinístico — e determinismo é o ponto de um teste.
+    fileParallelism: false,
     exclude: ["node_modules/**", "dist/**"],
     environment: "node",
     passWithNoTests: true

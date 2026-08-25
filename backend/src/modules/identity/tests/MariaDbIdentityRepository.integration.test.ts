@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
+import { podeExecutarDdl } from "../../../shared/types/integration-preconditions.js";
 import { loadEnv } from "../../../app/config/env.js";
 import { createPool } from "../../../shared/database/Pool.js";
 import { loadMigrationDefinitions } from "../../../shared/database/loadMigrationDefinitions.js";
@@ -26,7 +27,20 @@ import type { Pool } from "mysql2/promise";
  * antes de testar o repository, e reverte com os arquivos `.down.sql` ao
  * final (best-effort).
  */
-const shouldRun = shouldRunIntegrationTests();
+const CONFIG_DA_SONDA = {
+  host: process.env["DB_HOST"] ?? "127.0.0.1",
+  port: Number(process.env["DB_PORT"] ?? 3306),
+  user: process.env["DB_USER"] ?? "",
+  password: process.env["DB_PASSWORD"] ?? "",
+  database: process.env["DB_NAME"] ?? ""
+};
+
+/**
+ * Esta suíte aplica migrations por conta própria, então precisa de DDL.
+ * O principal de runtime não tem — e isso é uma propriedade do ambiente,
+ * não um defeito do código.
+ */
+const shouldRun = shouldRunIntegrationTests() && (await podeExecutarDdl(CONFIG_DA_SONDA));
 
 describe.skipIf(!shouldRun)("MariaDbIdentityRepository (integração — requer MariaDB real)", () => {
   let pool: Pool;
