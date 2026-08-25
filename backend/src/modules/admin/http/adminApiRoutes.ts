@@ -74,6 +74,10 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
     res.status(200).json(await deps.readRepository.resumo());
   }));
 
+  router.get("/applications", envolver(async (_req, res) => {
+    res.status(200).json({ items: await deps.readRepository.listarAplicacoes() });
+  }));
+
   router.get("/identities", envolver(async (req, res) => {
     res.status(200).json(await deps.readRepository.listarIdentidades(req.query));
   }));

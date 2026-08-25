@@ -62,6 +62,7 @@ export const api = {
     requisitar<unknown>("/sessions", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => requisitar<unknown>("/sessions/current", { method: "DELETE" }),
   summary: () => requisitar<Resumo>("/admin/summary"),
+  applications: () => requisitar<{ items: readonly Aplicacao[] }>("/admin/applications"),
   identities: (params: URLSearchParams) => requisitar<Pagina<Identidade>>(`/admin/identities?${params.toString()}`),
   identity: (publicId: string) => requisitar<IdentidadeDetalhe>(`/admin/identities/${publicId}`),
   organizations: (params: URLSearchParams) => requisitar<Pagina<Organizacao>>(`/admin/organizations?${params.toString()}`),
@@ -176,6 +177,13 @@ export interface ItemDeLote {
   readonly reason_code: string | null;
   readonly target_public_id: string | null;
   readonly after_snapshot: { fields: Record<string, unknown>; redactedFields: readonly string[] } | null;
+}
+
+export interface Aplicacao {
+  readonly public_id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly status: string;
 }
 
 export interface Resumo {

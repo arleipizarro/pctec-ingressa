@@ -291,6 +291,20 @@ export class MariaDbAdminReadRepository {
     };
   }
 
+  /**
+   * Aplicações cadastradas — alimenta o seletor de "conceder acesso".
+   *
+   * Lista pequena e fechada (é configuração de plataforma, não dado de
+   * volume), então não pagina. Sem ela o formulário teria que adivinhar
+   * os códigos ou trazê-los fixos no frontend, que é onde eles
+   * envelheceriam sem ninguém notar.
+   */
+  public async listarAplicacoes(): Promise<readonly Record<string, unknown>[]> {
+    return this.select<Record<string, unknown>>(
+      `SELECT public_id, code, name, status FROM applications ORDER BY code`
+    );
+  }
+
   public async listarLotes(filtros: {
     readonly limit?: unknown;
     readonly offset?: unknown;
