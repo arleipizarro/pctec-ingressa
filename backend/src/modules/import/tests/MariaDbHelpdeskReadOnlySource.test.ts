@@ -48,7 +48,14 @@ describe("conector read-only do Helpdesk", () => {
   it("não expõe método de escrita nem execução de SQL arbitrário", () => {
     const source = new MariaDbHelpdeskReadOnlySource(new ConexaoEspia());
     const metodos = Object.getOwnPropertyNames(Object.getPrototypeOf(source));
-    expect(metodos.sort()).toEqual(["constructor", "readClientById", "readUsersByIds", "select"].sort());
+    // Lista fechada: o assistente (v0.10.x) acrescentou `readClients` e
+    // `readUsersByClientId`, ambos SELECT. Qualquer método novo que
+    // apareça aqui sem passar por esta linha quebra o teste — que é o
+    // ponto, porque é assim que um `execute` público entraria sem
+    // ninguém decidir que devia entrar.
+    expect(metodos.sort()).toEqual(
+      ["constructor", "readClientById", "readClients", "readUsersByClientId", "readUsersByIds", "select"].sort()
+    );
     expect((source as unknown as Record<string, unknown>)["execute"]).toBeUndefined();
   });
 

@@ -41,18 +41,38 @@ const TOKENS_DA_FATIA = ["Pilot", "Helpdesk"];
  */
 const EXTRAS_DA_FATIA = ["MariaDbIngressaTargetStateReader.test.ts"];
 
+/**
+ * Arquivos de APOIO que não terminam em `.test.ts` e mesmo assim
+ * carregam fixtures.
+ *
+ * `wizardTestSupport.ts` é o construtor de estado do assistente
+ * (v0.10.x): é literalmente o arquivo com mais literais de e-mail da
+ * fatia, e ficaria fora da varredura por não ser um arquivo de teste.
+ * Deixá-lo de fora repetiria o erro que esta trava veio corrigir — um
+ * filtro que não cobre onde a fixture de fato mora.
+ */
+const APOIOS_DA_FATIA = ["wizardTestSupport.ts"];
+
 /** Cobertura esperada hoje — renomear ou remover arquivo quebra aqui. */
 const ARQUIVOS_ESPERADOS = [
+  "GetHelpdeskCatalogService.test.ts",
+  "HelpdeskCatalogQueries.test.ts",
+  "HelpdeskImportPlanner.test.ts",
+  "HelpdeskImportSelection.test.ts",
+  "HelpdeskImportWizard.integration.test.ts",
   "HelpdeskPilotAuthorizationAudit.test.ts",
   "HelpdeskPilotDryRun.integration.test.ts",
   "HelpdeskPilotPlanner.test.ts",
   "HelpdeskPilotSource.integration.test.ts",
   "HelpdeskPilotV1BatchObsolescence.test.ts",
   "HelpdeskSourceQueries.test.ts",
+  "HelpdeskWizardAuthorizationAudit.test.ts",
   "MariaDbHelpdeskReadOnlySource.test.ts",
   "MariaDbIngressaTargetStateReader.test.ts",
   "MariaDbPilotApplyWriter.test.ts",
-  "RunHelpdeskPilotImportService.test.ts"
+  "RunHelpdeskImportWizardService.test.ts",
+  "RunHelpdeskPilotImportService.test.ts",
+  "wizardTestSupport.ts"
 ];
 
 /**
@@ -79,9 +99,12 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 
 function arquivosDaFatia(): readonly string[] {
   return readdirSync(DIRETORIO_DE_TESTES)
-    .filter((nome) => nome.endsWith(".test.ts"))
+    .filter((nome) => nome.endsWith(".test.ts") || APOIOS_DA_FATIA.includes(nome))
     .filter(
-      (nome) => TOKENS_DA_FATIA.some((token) => nome.includes(token)) || EXTRAS_DA_FATIA.includes(nome)
+      (nome) =>
+        TOKENS_DA_FATIA.some((token) => nome.includes(token)) ||
+        EXTRAS_DA_FATIA.includes(nome) ||
+        APOIOS_DA_FATIA.includes(nome)
     )
     .filter((nome) => nome !== ARQUIVO_DESTA_TRAVA)
     .sort();
@@ -133,7 +156,7 @@ function emailsProibidos(arquivo: string): readonly Ocorrencia[] {
   return achados;
 }
 
-describe("fixtures do piloto — sem dado pessoal real", () => {
+describe("fixtures do piloto e do assistente — sem dado pessoal real", () => {
   const arquivos = arquivosDaFatia();
 
   it("cobre todos os arquivos de teste da fatia, menos ela mesma", () => {

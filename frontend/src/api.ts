@@ -92,8 +92,166 @@ export const api = {
     scope: string;
   }) => requisitar<unknown>("/admin/memberships", { method: "POST", body: JSON.stringify(payload) }),
   endMembership: (publicId: string, reason: string) =>
-    requisitar<unknown>(`/admin/memberships/${publicId}/end`, { method: "POST", body: JSON.stringify({ reason }) })
+    requisitar<unknown>(`/admin/memberships/${publicId}/end`, { method: "POST", body: JSON.stringify({ reason }) }),
+
+  // --- Assistente de importação do Helpdesk (v0.10.x) ---------------
+  //
+  // O cliente envia SELEÇÃO. Nunca ação, escopo de membership, perfil
+  // de acesso ou publicId de destino calculado aqui: o plano é
+  // recalculado no backend a cada chamada, e o que este arquivo mandar
+  // além da seleção é descartado na fronteira.
+  helpdeskCompanies: (params: URLSearchParams) =>
+    requisitar<PaginaCatalogo<EmpresaDeOrigem>>(`/admin/helpdesk-import/companies?${params.toString()}`),
+  helpdeskCompanyUsers: (sourceClientId: number) =>
+    requisitar<UsuariosDeOrigem>(`/admin/helpdesk-import/companies/${sourceClientId}/users`),
+  helpdeskPreview: (selecao: SelecaoDeImportacao) =>
+    requisitar<PreviaDaImportacao>("/admin/helpdesk-import/preview", {
+      method: "POST",
+      body: JSON.stringify(selecao)
+    }),
+  helpdeskDryRun: (selecao: SelecaoDeImportacao) =>
+    requisitar<ResultadoDaImportacao>("/admin/helpdesk-import/dry-run", {
+      method: "POST",
+      body: JSON.stringify(selecao)
+    }),
+  helpdeskApply: (selecao: SelecaoDeImportacao, dryRunBatchPublicId: string, confirmation: string) =>
+    requisitar<ResultadoDaImportacao>("/admin/helpdesk-import/apply", {
+      method: "POST",
+      body: JSON.stringify({ ...selecao, dryRunBatchPublicId, confirmation })
+    })
 };
+
+export interface SelecaoDeImportacao {
+  readonly sourceClientId: number;
+  readonly selectedSourceUserIds: readonly number[];
+  readonly targetOrganizationPublicId?: string | undefined;
+  readonly parentBusinessGroupPublicId?: string | undefined;
+}
+
+export interface PaginaCatalogo<T> {
+  readonly items: readonly T[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+export interface OrganizacaoVinculada {
+  readonly organizationPublicId: string;
+  readonly legalName: string;
+  readonly type: string;
+  readonly status: string;
+}
+
+export interface EmpresaDeOrigem {
+  readonly sourceClientId: number;
+  readonly name: string;
+  readonly active: boolean;
+  readonly linkedOrganization: OrganizacaoVinculada | null;
+}
+
+export interface UsuarioDeOrigem {
+  readonly sourceUserId: number;
+  readonly name: string;
+  readonly email: string;
+  readonly role: string;
+  readonly active: boolean;
+  readonly sourceClientId: number | null;
+  readonly eligible: boolean;
+  readonly ineligibilityReasons: readonly string[];
+  readonly linkedIdentity: { readonly identityPublicId: string; readonly fullName: string; readonly status: string } | null;
+  readonly suggestedSelected: boolean;
+}
+
+export interface UsuariosDeOrigem {
+  readonly sourceClientId: number;
+  readonly items: readonly UsuarioDeOrigem[];
+  readonly total: number;
+  readonly eligibleTotal: number;
+  readonly alreadyImportedTotal: number;
+}
+
+/** Snapshot já REDIGIDO pelo backend — a UI nunca decide o que esconder. */
+export interface SnapshotRedigido {
+  readonly fields: Record<string, unknown>;
+  readonly redactedFields: readonly string[];
+}
+
+export interface ItemProposto {
+  readonly entityKind: string;
+  readonly action: string;
+  readonly reasonCode: string;
+  readonly before: SnapshotRedigido | null;
+  readonly after: SnapshotRedigido | null;
+}
+
+export interface UsuarioProposto {
+  readonly sourceLegacyId: number;
+  readonly name: string;
+  readonly email: string;
+  readonly linkKind: string;
+  readonly writes: boolean;
+  readonly existingIdentityPublicId: string | null;
+  readonly items: readonly ItemProposto[];
+}
+
+export interface PreviaDaImportacao {
+  readonly mappingRulesVersion: string;
+  readonly applyConfirmationWord: string;
+  readonly source: { readonly sourceClientId: number; readonly name: string; readonly active: boolean };
+  readonly organization: {
+    readonly resolution: string;
+    readonly publicId: string | null;
+    readonly legalName: string;
+    readonly type: string;
+    readonly status: string | null;
+    readonly assertionConflict: string | null;
+    readonly blockingReasonCode: string | null;
+    readonly actions: readonly ItemProposto[];
+  };
+  readonly businessGroup: {
+    readonly publicId: string;
+    readonly legalName: string | null;
+    readonly eligible: boolean;
+    readonly ineligibleReason: string | null;
+    readonly existingRelationshipPublicId: string | null;
+  } | null;
+  readonly countsByAction: Record<string, number>;
+  readonly writes: boolean;
+  readonly users: readonly UsuarioProposto[];
+}
+
+export interface ResultadoUsuario {
+  readonly sourceLegacyId: number;
+  readonly sourceName: string;
+  readonly sourceEmail: string;
+  readonly linkKind: string;
+  readonly actionsByEntityKind: Record<string, string>;
+  readonly reasonCodes: readonly string[];
+  readonly writtenTargets: Record<string, string>;
+  readonly identityStatus: string | null;
+  readonly activatedNow: boolean;
+}
+
+export interface ResultadoDaImportacao {
+  readonly batchPublicId: string;
+  readonly mode: string;
+  readonly status: string;
+  readonly sourceClientId: number;
+  readonly sourceClientName: string;
+  readonly organizationResolution: string;
+  readonly organizationPublicId: string | null;
+  readonly organizationLegalName: string | null;
+  readonly parentBusinessGroupPublicId: string | null;
+  readonly scopeFingerprint: string;
+  readonly mappingRulesVersion: string;
+  readonly countsByAction: Record<string, number>;
+  readonly organizationActions: Record<string, string>;
+  readonly organizationTargets: Record<string, string>;
+  readonly blockingReasonCode: string | null;
+  readonly users: readonly ResultadoUsuario[];
+  readonly recordedItems: number;
+  readonly resumedUsers: readonly number[];
+}
 
 export interface Pagina<T> {
   readonly items: readonly T[];

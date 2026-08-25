@@ -6,7 +6,25 @@
  * ninguém; o teste-guarda `semPiiNasFixtures.test.ts` falha se alguém
  * colar um endereço real numa fixture.
  */
-import type { IdentidadeDetalhe, OrganizacaoDetalhe, Pagina, Identidade, Lote, ItemDeLote, Resumo, Organizacao } from "../api.js";
+import type {
+  EmpresaDeOrigem,
+  Identidade,
+  IdentidadeDetalhe,
+  ItemDeLote,
+  ItemProposto,
+  Lote,
+  Organizacao,
+  OrganizacaoDetalhe,
+  Pagina,
+  PaginaCatalogo,
+  PreviaDaImportacao,
+  Resumo,
+  ResultadoDaImportacao,
+  ResultadoUsuario,
+  UsuarioDeOrigem,
+  UsuarioProposto,
+  UsuariosDeOrigem
+} from "../api.js";
 
 export const ADMIN_PUBLIC_ID = "11111111-1111-4111-8111-111111111111";
 export const IDENTIDADE_PUBLIC_ID = "22222222-2222-4222-8222-222222222222";
@@ -144,3 +162,265 @@ export const ITEM_DE_LOTE: ItemDeLote = {
 };
 
 export const PAGINA_ITENS: Pagina<ItemDeLote> = { items: [ITEM_DE_LOTE], total: 1, limit: 25, offset: 0 };
+
+// ---------------------------------------------------------------------
+// Assistente de importação do Helpdesk (v0.10.x)
+//
+// Ids de origem na faixa 9999xx e domínio `@example.invalid`: nenhum
+// identificador operacional real do Helpdesk entra aqui — o guarda
+// `semPiiNasFixtures.test.ts` reprova se entrar.
+// ---------------------------------------------------------------------
+
+export const CLIENTE_DE_ORIGEM = 999901;
+export const LOTE_DRY_RUN_PUBLIC_ID = "abcdabcd-1111-4111-8111-abcdabcdabcd";
+export const LOTE_APPLY_PUBLIC_ID = "abcdabcd-2222-4222-8222-abcdabcdabcd";
+export const NOVA_ORG_PUBLIC_ID = "abcdabcd-3333-4333-8333-abcdabcdabcd";
+export const NOVA_IDENTIDADE_PUBLIC_ID = "abcdabcd-4444-4444-8444-abcdabcdabcd";
+export const NOVA_MEMBERSHIP_PUBLIC_ID = "abcdabcd-5555-4555-8555-abcdabcdabcd";
+export const NOVO_ACESSO_PUBLIC_ID = "abcdabcd-6666-4666-8666-abcdabcdabcd";
+
+export const EMPRESA_DE_ORIGEM: EmpresaDeOrigem = {
+  sourceClientId: CLIENTE_DE_ORIGEM,
+  name: "EMPRESA SINTETICA 999901 LTDA",
+  active: true,
+  linkedOrganization: null
+};
+
+export const EMPRESA_JA_IMPORTADA: EmpresaDeOrigem = {
+  sourceClientId: 999903,
+  name: "EMPRESA SINTETICA 999903 LTDA",
+  active: true,
+  linkedOrganization: {
+    organizationPublicId: ORG_PUBLIC_ID,
+    legalName: "EMPRESA SINTETICA LTDA",
+    type: "COMPANY",
+    status: "ACTIVE"
+  }
+};
+
+export const PAGINA_EMPRESAS: PaginaCatalogo<EmpresaDeOrigem> = {
+  items: [EMPRESA_DE_ORIGEM, EMPRESA_JA_IMPORTADA],
+  total: 2,
+  limit: 25,
+  offset: 0
+};
+
+export const USUARIO_ELEGIVEL: UsuarioDeOrigem = {
+  sourceUserId: 999911,
+  name: "Externo Sintetico Um",
+  email: "externo.um.999901@example.invalid",
+  role: "cliente",
+  active: true,
+  sourceClientId: CLIENTE_DE_ORIGEM,
+  eligible: true,
+  ineligibilityReasons: [],
+  linkedIdentity: null,
+  suggestedSelected: true
+};
+
+export const USUARIO_ELEGIVEL_DOIS: UsuarioDeOrigem = {
+  ...USUARIO_ELEGIVEL,
+  sourceUserId: 999912,
+  name: "Externo Sintetico Dois",
+  email: "externo.dois.999901@example.invalid"
+};
+
+/** Interno da mesma empresa — aparece na lista, marcado como inelegível. */
+export const USUARIO_INTERNO: UsuarioDeOrigem = {
+  sourceUserId: 999913,
+  name: "Atendente Sintetico",
+  email: "atendente.999901@example.invalid",
+  role: "atendente",
+  active: true,
+  sourceClientId: CLIENTE_DE_ORIGEM,
+  eligible: false,
+  ineligibilityReasons: ["SOURCE_USER_NOT_EXTERNAL_ROLE"],
+  linkedIdentity: null,
+  suggestedSelected: false
+};
+
+export const USUARIOS_DE_ORIGEM: UsuariosDeOrigem = {
+  sourceClientId: CLIENTE_DE_ORIGEM,
+  items: [USUARIO_ELEGIVEL, USUARIO_ELEGIVEL_DOIS, USUARIO_INTERNO],
+  total: 3,
+  eligibleTotal: 2,
+  alreadyImportedTotal: 0
+};
+
+function itemProposto(entityKind: string, action: string, reasonCode: string, fields: Record<string, unknown>): ItemProposto {
+  return {
+    entityKind,
+    action,
+    reasonCode,
+    before: null,
+    after: { fields, redactedFields: [] }
+  };
+}
+
+function usuarioProposto(sourceLegacyId: number, name: string, email: string, action: string, reasonCode: string): UsuarioProposto {
+  return {
+    sourceLegacyId,
+    name,
+    email,
+    linkKind: "COMPANY",
+    writes: action === "CREATE",
+    existingIdentityPublicId: null,
+    items: [
+      itemProposto("IDENTITY", action, reasonCode, { full_name: name, email }),
+      itemProposto("IDENTITY_EXTERNAL_REFERENCE", action, reasonCode, { legacy_id: sourceLegacyId }),
+      itemProposto("MEMBERSHIP", action, reasonCode, { profile: "CUSTOMER", scope: "ORGANIZATION_ONLY" }),
+      itemProposto("APPLICATION_ACCESS", action, reasonCode, { application_code: "PCTEC_HELPDESK", access_profile: "USER" })
+    ]
+  };
+}
+
+export const PREVIA: PreviaDaImportacao = {
+  mappingRulesVersion: "helpdesk-wizard-v1",
+  applyConfirmationWord: "APLICAR",
+  source: { sourceClientId: CLIENTE_DE_ORIGEM, name: EMPRESA_DE_ORIGEM.name, active: true },
+  organization: {
+    resolution: "ABSENT",
+    publicId: null,
+    legalName: EMPRESA_DE_ORIGEM.name,
+    type: "COMPANY",
+    status: null,
+    assertionConflict: null,
+    blockingReasonCode: null,
+    actions: [
+      itemProposto("ORGANIZATION", "CREATE", "CREATED_FROM_SOURCE", { legal_name: EMPRESA_DE_ORIGEM.name }),
+      itemProposto("ORGANIZATION_EXTERNAL_REFERENCE", "CREATE", "CREATED_FROM_SOURCE", { legacy_id: CLIENTE_DE_ORIGEM })
+    ]
+  },
+  businessGroup: null,
+  countsByAction: { CREATE: 10, SKIP: 0, CONFLICT: 0, QUARANTINE: 0 },
+  writes: true,
+  users: [
+    usuarioProposto(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "CREATE", "CREATED_FROM_SOURCE"),
+    usuarioProposto(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "CREATE", "CREATED_FROM_SOURCE")
+  ]
+};
+
+/** Prévia com um usuário em CONFLICT e outro em QUARANTINE. */
+export const PREVIA_COM_PROBLEMAS: PreviaDaImportacao = {
+  ...PREVIA,
+  countsByAction: { CREATE: 2, SKIP: 0, CONFLICT: 4, QUARANTINE: 4 },
+  users: [
+    usuarioProposto(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "CONFLICT", "EMAIL_MATCHES_EXISTING_IDENTITY"),
+    usuarioProposto(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "QUARANTINE", "SOURCE_EMAIL_INVALID")
+  ]
+};
+
+/** Prévia com a organização bloqueada — o lote inteiro fica em espera. */
+export const PREVIA_ORGANIZACAO_BLOQUEADA: PreviaDaImportacao = {
+  ...PREVIA,
+  organization: {
+    ...PREVIA.organization,
+    resolution: "EXTERNAL_REFERENCE",
+    blockingReasonCode: "ORGANIZATION_ASSERTION_CONFLICT",
+    assertionConflict: "referência externa ativa já aponta para outra organização",
+    actions: [
+      itemProposto("ORGANIZATION", "CONFLICT", "ORGANIZATION_ASSERTION_CONFLICT", { legal_name: EMPRESA_DE_ORIGEM.name }),
+      itemProposto("ORGANIZATION_EXTERNAL_REFERENCE", "CONFLICT", "ORGANIZATION_ASSERTION_CONFLICT", {
+        legacy_id: CLIENTE_DE_ORIGEM
+      })
+    ]
+  },
+  countsByAction: { CREATE: 0, SKIP: 0, CONFLICT: 2, QUARANTINE: 8 },
+  writes: false
+};
+
+/** Prévia de reexecução: tudo já existe, nada a escrever. */
+export const PREVIA_SEM_ESCRITA: PreviaDaImportacao = {
+  ...PREVIA,
+  countsByAction: { CREATE: 0, SKIP: 10, CONFLICT: 0, QUARANTINE: 0 },
+  writes: false,
+  users: [
+    usuarioProposto(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "SKIP", "EXTERNAL_REFERENCE_ALREADY_ACTIVE"),
+    usuarioProposto(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "SKIP", "EXTERNAL_REFERENCE_ALREADY_ACTIVE")
+  ]
+};
+
+function resultadoUsuario(sourceLegacyId: number, sourceName: string, sourceEmail: string, acao: string): ResultadoUsuario {
+  const escreveu = acao === "CREATE";
+  return {
+    sourceLegacyId,
+    sourceName,
+    sourceEmail,
+    linkKind: "COMPANY",
+    actionsByEntityKind: {
+      IDENTITY: acao,
+      IDENTITY_EXTERNAL_REFERENCE: acao,
+      MEMBERSHIP: acao,
+      APPLICATION_ACCESS: acao
+    },
+    reasonCodes: [escreveu ? "CREATED_FROM_SOURCE" : "EMAIL_MATCHES_EXISTING_IDENTITY"],
+    writtenTargets: escreveu
+      ? {
+          IDENTITY: NOVA_IDENTIDADE_PUBLIC_ID,
+          MEMBERSHIP: NOVA_MEMBERSHIP_PUBLIC_ID,
+          APPLICATION_ACCESS: NOVO_ACESSO_PUBLIC_ID
+        }
+      : {},
+    identityStatus: escreveu ? "ACTIVE" : null,
+    activatedNow: escreveu
+  };
+}
+
+export const LOTE_DRY_RUN: ResultadoDaImportacao = {
+  batchPublicId: LOTE_DRY_RUN_PUBLIC_ID,
+  mode: "DRY_RUN",
+  status: "COMPLETED",
+  sourceClientId: CLIENTE_DE_ORIGEM,
+  sourceClientName: EMPRESA_DE_ORIGEM.name,
+  organizationResolution: "ABSENT",
+  organizationPublicId: null,
+  organizationLegalName: EMPRESA_DE_ORIGEM.name,
+  parentBusinessGroupPublicId: null,
+  scopeFingerprint: "a".repeat(64),
+  mappingRulesVersion: "helpdesk-wizard-v1",
+  countsByAction: { CREATE: 10, SKIP: 0, CONFLICT: 0, QUARANTINE: 0 },
+  organizationActions: { ORGANIZATION: "CREATE", ORGANIZATION_EXTERNAL_REFERENCE: "CREATE" },
+  organizationTargets: {},
+  blockingReasonCode: null,
+  users: [
+    resultadoUsuario(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "CREATE"),
+    resultadoUsuario(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "CREATE")
+  ],
+  recordedItems: 10,
+  resumedUsers: []
+};
+
+export const LOTE_DRY_RUN_COM_PROBLEMAS: ResultadoDaImportacao = {
+  ...LOTE_DRY_RUN,
+  countsByAction: { CREATE: 2, SKIP: 0, CONFLICT: 4, QUARANTINE: 4 },
+  users: [
+    resultadoUsuario(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "CONFLICT"),
+    resultadoUsuario(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "QUARANTINE")
+  ]
+};
+
+export const LOTE_DRY_RUN_BLOQUEADO: ResultadoDaImportacao = {
+  ...LOTE_DRY_RUN,
+  blockingReasonCode: "ORGANIZATION_ASSERTION_CONFLICT",
+  countsByAction: { CREATE: 0, SKIP: 0, CONFLICT: 2, QUARANTINE: 8 },
+  organizationActions: { ORGANIZATION: "CONFLICT", ORGANIZATION_EXTERNAL_REFERENCE: "CONFLICT" }
+};
+
+export const LOTE_DRY_RUN_SEM_ESCRITA: ResultadoDaImportacao = {
+  ...LOTE_DRY_RUN,
+  countsByAction: { CREATE: 0, SKIP: 10, CONFLICT: 0, QUARANTINE: 0 },
+  organizationActions: { ORGANIZATION: "SKIP", ORGANIZATION_EXTERNAL_REFERENCE: "SKIP" },
+  users: [
+    resultadoUsuario(999911, USUARIO_ELEGIVEL.name, USUARIO_ELEGIVEL.email, "SKIP"),
+    resultadoUsuario(999912, USUARIO_ELEGIVEL_DOIS.name, USUARIO_ELEGIVEL_DOIS.email, "SKIP")
+  ]
+};
+
+export const LOTE_APLICADO: ResultadoDaImportacao = {
+  ...LOTE_DRY_RUN,
+  batchPublicId: LOTE_APPLY_PUBLIC_ID,
+  mode: "APPLY",
+  organizationResolution: "ABSENT",
+  organizationPublicId: NOVA_ORG_PUBLIC_ID,
+  organizationTargets: { ORGANIZATION: NOVA_ORG_PUBLIC_ID }
+};
