@@ -18,7 +18,7 @@ import { GrantApplicationAccessService } from "../../../application/application/
 import { MariaDbApplicationRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationRepository.js";
 import { MariaDbApplicationAccessRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
 import { ActivateFederatedIdentityService } from "../../../helpdesk/application/ActivateFederatedIdentityService.js";
-import { ExistingConnectionUnitOfWork } from "../../application/ExistingConnectionUnitOfWork.js";
+import { ExistingConnectionUnitOfWork } from "../../../../shared/database/ExistingConnectionUnitOfWork.js";
 import type {
   WizardApplyWriter,
   WizardOrganizationWriteResult,

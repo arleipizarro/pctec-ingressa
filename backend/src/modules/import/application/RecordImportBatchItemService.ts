@@ -5,7 +5,7 @@ import type { ImportBatchItemRepository } from "../domain/ImportBatchItemReposit
 import { ImportBatchItem } from "../domain/ImportBatchItem.js";
 import { ImportItemSnapshot } from "../domain/ImportItemSnapshot.js";
 import { ImportBatchNotFoundError } from "../domain/errors/ImportErrors.js";
-import { ExistingConnectionUnitOfWork } from "./ExistingConnectionUnitOfWork.js";
+import { ExistingConnectionUnitOfWork } from "../../../shared/database/ExistingConnectionUnitOfWork.js";
 
 export interface RecordImportItemInput {
   readonly entityKind: string;

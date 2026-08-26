@@ -7,17 +7,22 @@ import { FakeAuditEventRepository, FakeInvitationRepository, FakeUnitOfWork } fr
 const ADMIN = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const FEDERADA = "11111111-1111-4111-8111-111111111111";
 const COM_SENHA = "22222222-2222-4222-8222-222222222222";
-const NAO_FEDERADA = "33333333-3333-4333-8333-333333333333";
+const LOCAL = "33333333-3333-4333-8333-333333333333";
+const FEDERACAO_REVOGADA = "77777777-7777-4777-8777-777777777777";
 const SEM_ACESSO = "44444444-4444-4444-8444-444444444444";
 const BLOQUEADA = "55555555-5555-4555-8555-555555555555";
 const DESCONHECIDA = "66666666-6666-4666-8666-666666666666";
 
 const CANDIDATOS: readonly InvitationCandidate[] = [
-  { identityPublicId: FEDERADA, fullName: "Pessoa Federada", email: "federada@example.invalid", status: "ACTIVE", loginEnabled: false, federated: true, hasCredential: false, hasApplicationAccess: true },
-  { identityPublicId: COM_SENHA, fullName: "Pessoa Com Senha", email: "comsenha@example.invalid", status: "ACTIVE", loginEnabled: true, federated: true, hasCredential: true, hasApplicationAccess: true },
-  { identityPublicId: NAO_FEDERADA, fullName: "Pessoa Local", email: "local@example.invalid", status: "ACTIVE", loginEnabled: false, federated: false, hasCredential: false, hasApplicationAccess: true },
-  { identityPublicId: SEM_ACESSO, fullName: "Pessoa Sem Acesso", email: "semacesso@example.invalid", status: "ACTIVE", loginEnabled: false, federated: true, hasCredential: false, hasApplicationAccess: false },
-  { identityPublicId: BLOQUEADA, fullName: "Pessoa Bloqueada", email: "bloqueada@example.invalid", status: "BLOCKED", loginEnabled: false, federated: true, hasCredential: false, hasApplicationAccess: true }
+  { identityPublicId: FEDERADA, fullName: "Pessoa Federada", email: "federada@example.invalid", status: "ACTIVE", loginEnabled: false, hasExternalReference: true, hasActiveExternalReference: true, hasCredential: false, hasApplicationAccess: true },
+  { identityPublicId: COM_SENHA, fullName: "Pessoa Com Senha", email: "comsenha@example.invalid", status: "ACTIVE", loginEnabled: true, hasExternalReference: true, hasActiveExternalReference: true, hasCredential: true, hasApplicationAccess: true },
+  // Conta criada AQUI pelo ADMIN: nunca teve referência externa. É
+  // elegível — é exatamente o caso que o provisionamento produz.
+  { identityPublicId: LOCAL, fullName: "Pessoa Local", email: "local@example.invalid", status: "ACTIVE", loginEnabled: false, hasExternalReference: false, hasActiveExternalReference: false, hasCredential: false, hasApplicationAccess: true },
+  // Teve vínculo federado e o perdeu: continua barrada.
+  { identityPublicId: FEDERACAO_REVOGADA, fullName: "Pessoa Ex-Federada", email: "exfederada@example.invalid", status: "ACTIVE", loginEnabled: false, hasExternalReference: true, hasActiveExternalReference: false, hasCredential: false, hasApplicationAccess: true },
+  { identityPublicId: SEM_ACESSO, fullName: "Pessoa Sem Acesso", email: "semacesso@example.invalid", status: "ACTIVE", loginEnabled: false, hasExternalReference: true, hasActiveExternalReference: true, hasCredential: false, hasApplicationAccess: false },
+  { identityPublicId: BLOQUEADA, fullName: "Pessoa Bloqueada", email: "bloqueada@example.invalid", status: "BLOCKED", loginEnabled: false, hasExternalReference: true, hasActiveExternalReference: true, hasCredential: false, hasApplicationAccess: true }
 ];
 
 let contador = 0;
@@ -77,7 +82,7 @@ describe("emissão administrativa de convites", () => {
 
   it.each([
     [COM_SENHA, "CREDENTIAL_ALREADY_EXISTS"],
-    [NAO_FEDERADA, "IDENTITY_NOT_FEDERATED"],
+    [FEDERACAO_REVOGADA, "IDENTITY_FEDERATION_INACTIVE"],
     [SEM_ACESSO, "NO_APPLICATION_ACCESS"],
     [BLOQUEADA, "IDENTITY_NOT_ACTIVE"],
     [DESCONHECIDA, "IDENTITY_NOT_FOUND"]
@@ -89,6 +94,17 @@ describe("emissão administrativa de convites", () => {
     expect(resultado.results[0]?.reasonCode).toBe(motivo);
     expect(resultado.results[0]?.manualLink).toBeNull();
     expect(convites.porTokenHash.size).toBe(0);
+  });
+
+  it("convida a identidade LOCAL, que nunca teve referência externa", async () => {
+    const { service, convites } = montar();
+    const resultado = await service.execute({ identityPublicIds: [LOCAL], invitedByPublicId: ADMIN });
+
+    // A regra antiga respondia SKIPPED/IDENTITY_NOT_FEDERATED aqui, o que
+    // tornava impossível convidar alguém provisionado pela tela.
+    expect(resultado.results[0]?.outcome).toBe("CREATED");
+    expect(resultado.results[0]?.reasonCode).toBeNull();
+    expect(convites.porTokenHash.size).toBe(1);
   });
 
   it("uma identidade inelegível NÃO derruba o lote", async () => {

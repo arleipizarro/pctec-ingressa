@@ -9,10 +9,11 @@ function comoBooleano(valor: unknown): boolean {
 }
 
 /**
- * Projeção de elegibilidade — uma consulta, quatro perguntas.
+ * Projeção de elegibilidade — uma consulta, cinco perguntas.
  *
- * As condições de elegibilidade ("é federada?", "já tem credencial?",
- * "tem algum acesso de aplicação?") são resolvidas como `EXISTS` no
+ * As condições de elegibilidade ("tem alguma referência externa?",
+ * "alguma delas está ACTIVE?", "já tem credencial?", "tem algum acesso
+ * de aplicação?") são resolvidas como `EXISTS` no
  * banco, não como N consultas por identidade em laço: a tela de
  * convites opera sobre seleção múltipla, e um laço aqui viraria dezenas
  * de round-trips por clique.
@@ -36,8 +37,11 @@ export class MariaDbInvitationEligibilityReadRepository implements InvitationEli
               i.login_enabled,
               EXISTS (SELECT 1
                         FROM identity_external_references r
+                       WHERE r.identity_public_id = i.public_id)        AS has_external_reference,
+              EXISTS (SELECT 1
+                        FROM identity_external_references r
                        WHERE r.identity_public_id = i.public_id
-                         AND r.status = 'ACTIVE')                       AS federated,
+                         AND r.status = 'ACTIVE')                       AS has_active_external_reference,
               EXISTS (SELECT 1
                         FROM credentials c
                        WHERE c.identity_public_id = i.public_id
@@ -59,7 +63,8 @@ export class MariaDbInvitationEligibilityReadRepository implements InvitationEli
       email: String(row["email"]),
       status: String(row["status"]),
       loginEnabled: comoBooleano(row["login_enabled"]),
-      federated: comoBooleano(row["federated"]),
+      hasExternalReference: comoBooleano(row["has_external_reference"]),
+      hasActiveExternalReference: comoBooleano(row["has_active_external_reference"]),
       hasCredential: comoBooleano(row["has_credential"]),
       hasApplicationAccess: comoBooleano(row["has_application_access"])
     }));

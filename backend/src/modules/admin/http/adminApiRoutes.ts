@@ -13,6 +13,9 @@ import type { RevokeAllSessionsService } from "../../security/application/Revoke
 import type { RevokeInvitationService } from "../../invitation/application/RevokeInvitationService.js";
 import type { RenameOrganizationService } from "../../organization/application/RenameOrganizationService.js";
 import type { CreateOrganizationRelationshipService } from "../../organization/application/CreateOrganizationRelationshipService.js";
+import type { ProvisionOrganizationService } from "../../organization/application/ProvisionOrganizationService.js";
+import type { ProvisionOrganizationUserService } from "../application/ProvisionOrganizationUserService.js";
+import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
 
 export interface AdminApiDeps {
   readonly readRepository: MariaDbAdminReadRepository;
@@ -27,6 +30,14 @@ export interface AdminApiDeps {
   readonly revokeInvitationService: RevokeInvitationService;
   readonly renameOrganizationService: RenameOrganizationService;
   readonly createOrganizationRelationshipService: CreateOrganizationRelationshipService;
+  readonly provisionOrganizationService: ProvisionOrganizationService;
+  readonly provisionOrganizationUserService: ProvisionOrganizationUserService;
+  /**
+   * O MESMO serviço oficial usado pela tela de convites. O
+   * provisionamento não tem caminho de convite próprio — se tivesse,
+   * seriam duas implementações da mesma regra de elegibilidade.
+   */
+  readonly createIdentityInvitationService: CreateIdentityInvitationService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -395,6 +406,132 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       correlationId: req.correlationId
     });
     res.status(201).json(resultado);
+  }));
+
+  /**
+   * Criação de organização — COMPANY ou BUSINESS_GROUP, com associação
+   * inicial OPCIONAL a um grupo.
+   *
+   * Nenhum campo além de tipo, razão social e nome fantasia: o domínio
+   * não exige mais nada para criar (`documentNumber` é opcional em
+   * `Organization.create`). Pedir CNPJ aqui seria inventar obrigação que
+   * o modelo não tem — e o documento tem regra de unicidade própria, que
+   * merece a tela dela quando for a hora.
+   *
+   * Nenhuma referência externa é criada, e nada é inferido do Helpdesk
+   * ou do Portal: esta organização nasce no Ingressa.
+   */
+  router.post("/organizations", envolver(async (req, res) => {
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const type = typeof corpo["type"] === "string" ? (corpo["type"] as string).trim() : "";
+    const legalName = typeof corpo["legalName"] === "string" ? (corpo["legalName"] as string).trim() : "";
+    if (legalName.length === 0) {
+      erro(res, 422, "ORGANIZATION_LEGAL_NAME_REQUIRED", "Informe a razão social.");
+      return;
+    }
+    const parent = typeof corpo["parentBusinessGroupPublicId"] === "string"
+      ? (corpo["parentBusinessGroupPublicId"] as string).trim()
+      : "";
+    if (parent.length > 0 && !UUID.test(parent)) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "parentBusinessGroupPublicId inválido.");
+      return;
+    }
+
+    const resultado = await deps.provisionOrganizationService.execute({
+      type,
+      legalName,
+      ...(typeof corpo["tradeName"] === "string" && (corpo["tradeName"] as string).trim().length > 0
+        ? { tradeName: (corpo["tradeName"] as string).trim() }
+        : {}),
+      ...(parent.length > 0 ? { parentBusinessGroupPublicId: parent } : {}),
+      actorPublicId: atorAutenticado(req),
+      correlationId: req.correlationId
+    });
+    res.status(201).json(resultado);
+  }));
+
+  /**
+   * Provisionamento de usuário DENTRO de uma organização.
+   *
+   * Duas etapas deliberadamente separadas:
+   *
+   * 1. `provisionOrganizationUserService` — Identity + ativação +
+   *    membership + acessos, tudo numa transação. Falhou, nada foi
+   *    criado.
+   * 2. o convite, DEPOIS do commit, pelo serviço oficial.
+   *
+   * A separação não é descuido: o convite entrega um link, e entregar
+   * dentro da transação mandaria um link que um rollback tornaria
+   * inválido. Por isso a resposta distingue "usuário criado" de "convite
+   * gerado" — são dois fatos, e o segundo pode falhar sem desfazer o
+   * primeiro. Quando falha, o usuário está correto e completo, e o ADMIN
+   * reemite pela ação "Criar convite" que já existe.
+   */
+  router.post("/organizations/:publicId/users", envolver(async (req, res) => {
+    const organizationPublicId = publicIdDaRota(req, "publicId");
+    if (organizationPublicId === undefined) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const texto = (campo: string): string =>
+      typeof corpo[campo] === "string" ? (corpo[campo] as string).trim() : "";
+
+    const applicationCodes = Array.isArray(corpo["applicationCodes"])
+      ? (corpo["applicationCodes"] as unknown[]).filter((c): c is string => typeof c === "string")
+      : [];
+
+    const ator = atorAutenticado(req);
+    const provisionado = await deps.provisionOrganizationUserService.execute({
+      organizationPublicId,
+      fullName: texto("fullName"),
+      email: texto("email"),
+      membershipProfile: texto("membershipProfile"),
+      membershipScope: texto("membershipScope"),
+      applicationCodes,
+      actorPublicId: ator,
+      correlationId: req.correlationId
+    });
+
+    // `sendInvitation` ausente significa NÃO convidar — o pedido prevê
+    // criar agora e convidar depois. Só um `true` explícito convida.
+    const convidar = corpo["sendInvitation"] === true;
+    let invitation: Record<string, unknown> | null = null;
+    if (convidar) {
+      try {
+        const emissao = await deps.createIdentityInvitationService.execute({
+          identityPublicIds: [provisionado.identityPublicId],
+          invitedByPublicId: ator,
+          correlationId: req.correlationId
+        });
+        const item = emissao.results[0];
+        invitation = {
+          outcome: item?.outcome ?? "FAILED",
+          reasonCode: item?.reasonCode ?? null,
+          deliveryMode: emissao.deliveryMode,
+          expiresAt: item?.expiresAt ?? null,
+          delivered: item?.delivered ?? false,
+          // Link do modo manual: volta UMA vez, nesta resposta. Não é
+          // persistido nem reexibível.
+          manualLink: item?.manualLink ?? null
+        };
+      } catch {
+        // O usuário JÁ está criado e correto. Derrubar a resposta aqui
+        // faria a tela reportar falha total de algo que funcionou pela
+        // metade certa — e o ADMIN tentaria criar tudo de novo, batendo
+        // em e-mail duplicado.
+        invitation = {
+          outcome: "FAILED",
+          reasonCode: "INVITATION_DELIVERY_FAILED",
+          deliveryMode: null,
+          expiresAt: null,
+          delivered: false,
+          manualLink: null
+        };
+      }
+    }
+
+    res.status(201).json({ ...provisionado, invitationRequested: convidar, invitation });
   }));
 
   router.post("/memberships", envolver(async (req, res) => {

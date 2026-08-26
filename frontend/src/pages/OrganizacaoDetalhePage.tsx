@@ -4,8 +4,10 @@ import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
 import { FormularioAssociarGrupo, FormularioEditarOrganizacao } from "../components/formulariosOrganizacao.js";
+import { FormularioNovoUsuario, ResultadoDoProvisionamento } from "../components/formulariosProvisionamento.js";
+import type { UsuarioProvisionado } from "../api.js";
 
-type AcaoPendente = { tipo: "editar" } | { tipo: "associar" } | null;
+type AcaoPendente = { tipo: "editar" } | { tipo: "associar" } | { tipo: "novoUsuario" } | null;
 
 export function OrganizacaoDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
@@ -17,9 +19,21 @@ export function OrganizacaoDetalhePage(): JSX.Element {
     []
   );
 
+  // Aplicações para o formulário de provisionamento. Carregadas junto da
+  // tela pelo mesmo motivo dos grupos: o modal abre pronto.
+  const { dados: aplicacoes } = usarRecurso(() => api.applications(), []);
+
   const [acao, setAcaoPendente] = useState<AcaoPendente>(null);
   const [enviando, setEnviando] = useState(false);
   const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  /**
+   * Resultado do provisionamento, exibido num painel próprio.
+   *
+   * Não cabe em `mensagem`: além de "deu certo", ele carrega o link do
+   * convite, que aparece UMA vez. Uma faixa de sucesso que some ao
+   * recarregar a lista levaria o link junto.
+   */
+  const [provisionado, setProvisionado] = useState<UsuarioProvisionado | null>(null);
 
   /**
    * Executa uma mutação e reconcilia a tela.
@@ -45,6 +59,36 @@ export function OrganizacaoDetalhePage(): JSX.Element {
     }
   }
 
+  /**
+   * O provisionamento tem caminho próprio, e não passa por `executar()`.
+   *
+   * `executar()` fecha o modal e recarrega a tela no sucesso — e é
+   * exatamente o que NÃO pode acontecer aqui: o resultado precisa
+   * sobreviver na tela para o ADMIN copiar o link do convite. Aqui o
+   * modal fecha, o painel de resultado abre, e o recarregamento só
+   * acontece quando ele é fechado.
+   */
+  async function provisionarUsuario(payload: {
+    fullName: string;
+    email: string;
+    membershipProfile: string;
+    membershipScope: string;
+    applicationCodes: readonly string[];
+    sendInvitation: boolean;
+  }): Promise<void> {
+    setEnviando(true);
+    setMensagem(null);
+    try {
+      const resultado = await api.createOrganizationUser(publicId, payload);
+      setAcaoPendente(null);
+      setProvisionado(resultado);
+    } catch (falha) {
+      setMensagem({ tipo: "erro", texto: falha instanceof ApiError ? falha.message : "Falha ao criar o usuário." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
   return (
     <>
       <p className="subtitulo"><Link to="/admin/organizacoes">← Organizações</Link></p>
@@ -65,6 +109,14 @@ export function OrganizacaoDetalhePage(): JSX.Element {
 
             <div className="secao barra">
               <button type="button" onClick={() => setAcaoPendente({ tipo: "editar" })}>Editar organização</button>
+              {/* Provisionar em organização INACTIVE terminaria em
+                  MEMBERSHIP_ORGANIZATION_NOT_ACTIVE no servidor — não
+                  ofereço o caminho que já se sabe que falha. */}
+              {dados.status === "ACTIVE" && (
+                <button type="button" onClick={() => setAcaoPendente({ tipo: "novoUsuario" })}>
+                  Novo usuário
+                </button>
+              )}
               {/* Associação inicial: só COMPANY, e só enquanto não tem
                   grupo. Trocar ou encerrar não é possível nesta fatia. */}
               {dados.type === "COMPANY" && dados.parents.length === 0 && (
@@ -189,6 +241,29 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     "Empresa associada ao grupo."
                   )
                 }
+              />
+            )}
+
+            {acao?.tipo === "novoUsuario" && (
+              <FormularioNovoUsuario
+                organizacao={dados}
+                aplicacoes={aplicacoes?.items ?? []}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(payload) => { void provisionarUsuario(payload); }}
+              />
+            )}
+
+            {provisionado !== null && (
+              <ResultadoDoProvisionamento
+                resultado={provisionado}
+                onFechar={() => {
+                  // Recarrega SÓ agora: o painel some junto com o link do
+                  // convite, e essa é a hora em que o ADMIN terminou de
+                  // usá-lo. A lista de membros passa a incluir a pessoa.
+                  setProvisionado(null);
+                  recarregar();
+                }}
               />
             )}
           </>
