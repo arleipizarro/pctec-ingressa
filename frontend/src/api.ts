@@ -134,6 +134,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ expectedVersion })
     }),
+  /** Transição inversa do bloqueio — não recria sessão, convite ou acesso. */
+  unblockIdentity: (publicId: string, expectedVersion: number) =>
+    requisitar<{ status: string; loginEnabled: boolean }>(`/admin/identities/${publicId}/unblock`, {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion })
+    }),
   revokeInvitation: (invitationPublicId: string) =>
     requisitar<unknown>(`/admin/invitations/${invitationPublicId}/revoke`, { method: "POST", body: "{}" }),
 

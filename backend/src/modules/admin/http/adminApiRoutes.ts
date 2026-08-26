@@ -8,6 +8,7 @@ import type { CreateMembershipService } from "../../organization/application/Cre
 import type { EndMembershipService } from "../../organization/application/EndMembershipService.js";
 import type { ActivateFederatedIdentityService } from "../../helpdesk/application/ActivateFederatedIdentityService.js";
 import type { BlockIdentityService } from "../../identity/application/BlockIdentityService.js";
+import type { UnblockIdentityService } from "../../identity/application/UnblockIdentityService.js";
 import type { RevokeAllSessionsService } from "../../security/application/RevokeAllSessionsService.js";
 import type { RevokeInvitationService } from "../../invitation/application/RevokeInvitationService.js";
 
@@ -19,6 +20,7 @@ export interface AdminApiDeps {
   readonly endMembershipService: EndMembershipService;
   readonly activateFederatedIdentityService: ActivateFederatedIdentityService;
   readonly blockIdentityService: BlockIdentityService;
+  readonly unblockIdentityService: UnblockIdentityService;
   readonly revokeAllSessionsService: RevokeAllSessionsService;
   readonly revokeInvitationService: RevokeInvitationService;
 }
@@ -275,6 +277,32 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       actorPublicId: atorAutenticado(req),
       expectedVersion,
       ...(reasonCode === undefined ? {} : { reasonCode }),
+      correlationId: req.correlationId
+    });
+    res.status(200).json(resultado);
+  }));
+
+  /**
+   * Desbloqueio — transição inversa do bloqueio, e só isso: nenhuma
+   * sessão, convite, membership ou acesso é recriado.
+   */
+  router.post("/identities/:publicId/unblock", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "IDENTITY_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const expectedVersion = Number(corpo["expectedVersion"]);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      erro(res, 422, "IDENTITY_VERSION_INVALID", "expectedVersion é obrigatório.");
+      return;
+    }
+
+    const resultado = await deps.unblockIdentityService.execute({
+      identityPublicId: publicId,
+      actorPublicId: atorAutenticado(req),
+      expectedVersion,
       correlationId: req.correlationId
     });
     res.status(200).json(resultado);
