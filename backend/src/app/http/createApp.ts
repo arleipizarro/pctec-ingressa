@@ -84,6 +84,8 @@ import { BlockIdentityService } from "../../modules/identity/application/BlockId
 import { UnblockIdentityService } from "../../modules/identity/application/UnblockIdentityService.js";
 import { RevokeAllSessionsService } from "../../modules/security/application/RevokeAllSessionsService.js";
 import { RevokeInvitationService } from "../../modules/invitation/application/RevokeInvitationService.js";
+import { RenameOrganizationService } from "../../modules/organization/application/RenameOrganizationService.js";
+import { CreateOrganizationRelationshipService } from "../../modules/organization/application/CreateOrganizationRelationshipService.js";
 import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
 
 /**
@@ -682,6 +684,17 @@ export function createApp(options: CreateAppOptions = {}): Express {
         revokeAllSessionsService: new RevokeAllSessionsService(
           new MariaDbUnitOfWork(sharedPool!),
           (c) => new MariaDbSessionRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        renameOrganizationService: new RenameOrganizationService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbOrganizationRepository(c),
+          (c) => new MariaDbAuditEventRepository(c)
+        ),
+        createOrganizationRelationshipService: new CreateOrganizationRelationshipService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbOrganizationRepository(c),
+          (c) => new MariaDbOrganizationRelationshipRepository(c),
           (c) => new MariaDbAuditEventRepository(c)
         ),
         revokeInvitationService: new RevokeInvitationService(

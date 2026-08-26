@@ -24,4 +24,16 @@ export interface OrganizationRepository {
   existsByDocumentNumberAndType(documentNumber: DocumentNumber, type: OrganizationType): Promise<boolean>;
 
   insert(organization: Organization): Promise<void>;
+
+  /**
+   * Persiste a correção de nomes com trava otimista:
+   * `WHERE version = expectedVersion` (a versão ANTES da mutação em
+   * memória), enquanto `SET version` recebe o valor absoluto final —
+   * mesmo padrão já usado em `MariaDbIdentityRepository.update()`.
+   * Nenhuma linha afetada significa que alguém escreveu no meio, e a
+   * implementação lança `OrganizationVersionConflictError`.
+   *
+   * Só nomes: `type`, `document_number` e `status` nunca entram no `SET`.
+   */
+  update(organization: Organization, expectedVersion: number): Promise<void>;
 }
