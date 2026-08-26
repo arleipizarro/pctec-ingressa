@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BlockIdentityService } from "../BlockIdentityService.js";
+import { UnblockIdentityService } from "../UnblockIdentityService.js";
 import { RevokeAllSessionsService } from "../../../security/application/RevokeAllSessionsService.js";
 import { Identity } from "../../domain/Identity.js";
 import { Session } from "../../../security/domain/session/Session.js";
@@ -189,5 +190,74 @@ describe("encerrar todas as sessões", () => {
 
     expect(c.auditoria.tipos()).toEqual(["session.revoked"]);
     expect(c.auditoria.eventos[0]?.actorPublicId).toBe(ADMIN);
+  });
+});
+
+/**
+ * Desbloqueio — transição inversa, e SÓ ela.
+ *
+ * O que estes testes protegem: desbloquear não ressuscita sessão, não
+ * recria convite e não liga `login_enabled` por conta própria.
+ */
+describe("desbloqueio de Identity", () => {
+  function montarDesbloqueio(identidadeAlvo: Identity | undefined) {
+    const uow = new FakeUnitOfWork();
+    const identityRepository = new FakeIdentityRepository(identidadeAlvo);
+    const auditoria = new FakeAuditEventRepository();
+    return {
+      identityRepository, auditoria,
+      service: new UnblockIdentityService(uow, () => identityRepository, () => auditoria)
+    };
+  }
+
+  const PEDIDO_DESBLOQUEIO = { identityPublicId: IDENTIDADE, actorPublicId: ADMIN, expectedVersion: 3 };
+
+  it("devolve a Identity ao estado definido pelo domínio", async () => {
+    const c = montarDesbloqueio(identidade("BLOCKED"));
+    await expect(c.service.execute(PEDIDO_DESBLOQUEIO)).resolves.toMatchObject({ status: "ACTIVE" });
+  });
+
+  it("mantém login_enabled exatamente como estava — inclusive desabilitado", async () => {
+    // Federada importada do Helpdesk: bloqueada e desbloqueada, segue
+    // sem senha própria. Ligar o login aqui daria capacidade de
+    // autenticar a quem nunca definiu uma.
+    const c = montarDesbloqueio(identidade("BLOCKED", false));
+    await expect(c.service.execute(PEDIDO_DESBLOQUEIO)).resolves.toMatchObject({ loginEnabled: false });
+  });
+
+  it("mantém login_enabled habilitado quando já era", async () => {
+    const c = montarDesbloqueio(identidade("BLOCKED", true));
+    await expect(c.service.execute(PEDIDO_DESBLOQUEIO)).resolves.toMatchObject({ loginEnabled: true });
+  });
+
+  it("NÃO recria sessões: só a Identity é escrita", async () => {
+    const c = montarDesbloqueio(identidade("BLOCKED"));
+    await c.service.execute(PEDIDO_DESBLOQUEIO);
+
+    expect(c.identityRepository.atualizacoes).toEqual([{ status: "ACTIVE", expectedVersion: 3 }]);
+  });
+
+  it("audita com o ADMIN da sessão como ator", async () => {
+    const c = montarDesbloqueio(identidade("BLOCKED"));
+    await c.service.execute(PEDIDO_DESBLOQUEIO);
+
+    expect(c.auditoria.tipos()).toEqual(["identity.unblocked"]);
+    expect(c.auditoria.eventos[0]?.actorPublicId).toBe(ADMIN);
+  });
+
+  it("desbloquear quem NÃO está bloqueada é conflito explícito", async () => {
+    const c = montarDesbloqueio(identidade("ACTIVE"));
+    await expect(c.service.execute(PEDIDO_DESBLOQUEIO)).rejects.toBeInstanceOf(InvalidIdentityStatusTransitionError);
+  });
+
+  it("versão desatualizada vira conflito", async () => {
+    const c = montarDesbloqueio(identidade("BLOCKED"));
+    await expect(c.service.execute({ ...PEDIDO_DESBLOQUEIO, expectedVersion: 1 }))
+      .rejects.toBeInstanceOf(IdentityVersionConflictError);
+  });
+
+  it("identidade inexistente é recusada", async () => {
+    const c = montarDesbloqueio(undefined);
+    await expect(c.service.execute(PEDIDO_DESBLOQUEIO)).rejects.toBeInstanceOf(IdentityNotFoundError);
   });
 });

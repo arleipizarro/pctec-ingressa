@@ -15,6 +15,7 @@ type AcaoPendente =
   | { tipo: "revogarConvite"; publicId: string }
   | { tipo: "encerrarSessoes"; quantidade: number }
   | { tipo: "bloquear"; version: number }
+  | { tipo: "desbloquear"; version: number }
   | null;
 
 /** Situação do convite para a tela — `EXPIRED` é derivado, não persistido. */
@@ -36,7 +37,8 @@ const TITULOS: Readonly<Record<string, string>> = {
   convidar: "Criar convite de acesso",
   revogarConvite: "Revogar convite",
   encerrarSessoes: "Encerrar todas as sessões",
-  bloquear: "Bloquear usuário"
+  bloquear: "Bloquear usuário",
+  desbloquear: "Desbloquear usuário"
 };
 
 export function UsuarioDetalhePage(): JSX.Element {
@@ -159,6 +161,12 @@ export function UsuarioDetalhePage(): JSX.Element {
         const { revoked } = await api.revokeAllSessions(publicId);
         setMensagem({ tipo: "ok", texto: `${revoked} sessão(ões) encerrada(s).` });
         recarregarSessoes();
+      } else if (acao.tipo === "desbloquear") {
+        const resultado = await api.unblockIdentity(publicId, acao.version);
+        setMensagem({
+          tipo: "ok",
+          texto: `Usuário desbloqueado (${resultado.status}). Login segue ${resultado.loginEnabled ? "habilitado" : "desabilitado"}.`
+        });
       } else if (acao.tipo === "bloquear") {
         const resultado = await api.blockIdentity(publicId, acao.version);
         setMensagem({
@@ -217,6 +225,15 @@ export function UsuarioDetalhePage(): JSX.Element {
                 <button type="button" className="perigo"
                   onClick={() => setAcaoPendente({ tipo: "bloquear", version: dados.version })}>
                   Bloquear usuário
+                </button>
+              )}
+              {/* Só BLOCKED transita de volta para ACTIVE por este
+                  caminho — oferecer o botão nos demais estados levaria a
+                  um conflito do domínio. */}
+              {dados.status === "BLOCKED" && (
+                <button type="button" className="primario"
+                  onClick={() => setAcaoPendente({ tipo: "desbloquear", version: dados.version })}>
+                  Desbloquear usuário
                 </button>
               )}
             </div>
@@ -429,7 +446,9 @@ export function UsuarioDetalhePage(): JSX.Element {
                             ? "O link deixa de valer imediatamente. Você pode emitir um novo convite depois."
                             : acao.tipo === "encerrarSessoes"
                               ? `${acao.quantidade} sessão(ões) será(ão) encerrada(s). A pessoa precisará entrar de novo; o acesso dela não muda.`
-                              : "A pessoa deixa de autenticar e todas as sessões ativas são encerradas na mesma operação. Memberships, acessos e referências são preservados. Não há desbloqueio por esta tela."
+                              : acao.tipo === "bloquear"
+                                ? "A pessoa deixa de autenticar e todas as sessões ativas são encerradas na mesma operação. Memberships, acessos e referências são preservados."
+                                : "A identidade volta ao estado ACTIVE. Sessões encerradas NÃO voltam, e nenhum convite, membership ou acesso é recriado. O login permanece como está."
                 }
                 confirmando={enviando}
                 onConfirmar={confirmar}

@@ -251,3 +251,83 @@ describe("bloqueio", () => {
     expect(aviso.textContent ?? "").not.toContain("APPLICATION_ACCESS_DENIED");
   });
 });
+
+
+describe("desbloqueio", () => {
+  it("não é oferecido para Identity ACTIVE", async () => {
+    renderizar();
+    await screen.findByRole("button", { name: "Bloquear usuário" });
+
+    expect(screen.queryByRole("button", { name: "Desbloquear usuário" })).not.toBeInTheDocument();
+  });
+
+  it("aparece apenas para Identity BLOCKED, e o bloquear some", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    renderizar();
+
+    expect(await screen.findByRole("button", { name: "Desbloquear usuário" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bloquear usuário" })).not.toBeInTheDocument();
+  });
+
+  it("a confirmação diz o que NÃO volta, e envia a versão exibida", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    const desbloquear = vi.spyOn(api, "unblockIdentity").mockResolvedValue({ status: "ACTIVE", loginEnabled: false });
+    renderizar();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Desbloquear usuário" }));
+    const dialogo = await screen.findByRole("dialog");
+    expect(within(dialogo).getByText(/Sessões encerradas NÃO voltam/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/nenhum convite, membership ou acesso é recriado/i)).toBeInTheDocument();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
+
+    await waitFor(() => expect(desbloquear).toHaveBeenCalledWith(fixtures.IDENTIDADE_PUBLIC_ID, 3));
+  });
+
+  it("a mensagem informa que o login permanece como estava", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    vi.spyOn(api, "unblockIdentity").mockResolvedValue({ status: "ACTIVE", loginEnabled: false });
+    renderizar();
+
+    await confirmarDialogo("Desbloquear usuário");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Login segue desabilitado/i);
+  });
+
+  it("409 vira mensagem de recarregar", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    vi.spyOn(api, "unblockIdentity").mockRejectedValue(
+      new ApiError(409, "IDENTITY_VERSION_CONFLICT", "O registro mudou desde que a tela carregou. Recarregue e tente de novo.")
+    );
+    renderizar();
+
+    await confirmarDialogo("Desbloquear usuário");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/recarregue e tente de novo/i);
+  });
+
+  it("403 vira mensagem de permissão, sem detalhe interno", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    vi.spyOn(api, "unblockIdentity").mockRejectedValue(
+      new ApiError(403, "APPLICATION_ACCESS_DENIED", "Você não tem permissão para esta operação.")
+    );
+    renderizar();
+
+    await confirmarDialogo("Desbloquear usuário");
+
+    const aviso = await screen.findByRole("alert");
+    expect(aviso).toHaveTextContent(/não tem permissão/i);
+    expect(aviso.textContent ?? "").not.toContain("APPLICATION_ACCESS_DENIED");
+  });
+
+  it("422 do domínio chega legível", async () => {
+    vi.spyOn(api, "identity").mockResolvedValue(identidade({ status: "BLOCKED" }));
+    vi.spyOn(api, "unblockIdentity").mockRejectedValue(
+      new ApiError(422, "IDENTITY_STATUS_TRANSITION_INVALID", "Dados inválidos. Revise os campos.")
+    );
+    renderizar();
+
+    await confirmarDialogo("Desbloquear usuário");
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/dados inválidos/i);
+  });
+});
