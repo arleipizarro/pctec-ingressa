@@ -117,6 +117,7 @@ export const PAGINA_ORGANIZACOES: Pagina<Organizacao> = { items: [ORGANIZACAO], 
 
 export const ORGANIZACAO_DETALHE: OrganizacaoDetalhe = {
   ...ORGANIZACAO,
+  version: 2,
   parents: [{ ...ORGANIZACAO, public_id: "88888888-8888-4888-8888-888888888888", type: "BUSINESS_GROUP", legal_name: "GRUPO SINTETICO", trade_name: "GRUPO" }],
   children: [],
   externalReferences: [],

@@ -6,8 +6,14 @@ import { DocumentNumber } from "./value-objects/DocumentNumber.js";
 import {
   type EventEnvelopeInput,
   type OrganizationCreatedEvent,
-  createOrganizationCreatedEvent
+  type OrganizationRenamedEvent,
+  createOrganizationCreatedEvent,
+  createOrganizationRenamedEvent
 } from "./events/OrganizationDomainEvents.js";
+import { OrganizationVersionConflictError } from "./errors/OrganizationErrors.js";
+
+/** Eventos que este agregado emite. */
+export type OrganizationDomainEvent = OrganizationCreatedEvent | OrganizationRenamedEvent;
 
 export type OrganizationStatusValue = "ACTIVE" | "INACTIVE";
 
@@ -71,15 +77,15 @@ export class Organization {
   private internalId: number | undefined;
   private readonly publicId: PublicId;
   private readonly type: OrganizationType;
-  private readonly legalName: LegalName;
-  private readonly tradeName: TradeName | undefined;
+  private legalName: LegalName;
+  private tradeName: TradeName | undefined;
   private readonly documentNumber: DocumentNumber | undefined;
   private readonly status: OrganizationStatusValue;
-  private readonly version: number;
+  private version: number;
   private readonly createdAt: Date;
-  private readonly updatedAt: Date;
+  private updatedAt: Date;
 
-  private readonly domainEvents: OrganizationCreatedEvent[] = [];
+  private readonly domainEvents: OrganizationDomainEvent[] = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -178,8 +184,92 @@ export class Organization {
     this.domainEvents.push(event);
   }
 
+  /**
+   * Corrige os nomes da organização — razão social e nome fantasia.
+   *
+   * **Só nomes.** `publicId`, `type`, `documentNumber` e `status` não são
+   * tocados: o tipo define a posição na hierarquia e o documento é a
+   * chave de conciliação com os sistemas de origem — mudá-los aqui seria
+   * outra operação, com outras consequências.
+   *
+   * `tradeName` distingue três intenções, e a distinção é o ponto:
+   * `undefined` significa "manter como está", `null` significa "limpar",
+   * e um valor significa "usar este". Sem essa separação, quem só
+   * corrigisse a razão social apagaria o nome fantasia sem querer.
+   *
+   * **Idempotente por conteúdo:** se nada mudou, não incrementa
+   * `version` e não emite evento. Uma correção que não corrige nada não
+   * é um fato de auditoria, e gastar uma versão faria a próxima escrita
+   * de outra pessoa falhar por conflito sem motivo.
+   *
+   * `expectedVersion` é comparado aqui e de novo no `WHERE version = ?`
+   * do UPDATE: o primeiro dá erro legível, o segundo é a trava real sob
+   * concorrência.
+   */
+  public rename(input: {
+    readonly legalName: string;
+    readonly tradeName?: string | null | undefined;
+    readonly actorPublicId: string;
+    readonly expectedVersion: number;
+    readonly correlationId: string;
+    readonly causationId?: string | undefined;
+    readonly now?: Date | undefined;
+  }): void {
+    if (this.version !== input.expectedVersion) {
+      throw new OrganizationVersionConflictError(input.expectedVersion, this.version);
+    }
+
+    const novaRazaoSocial = LegalName.create(input.legalName);
+    const razaoSocialAnterior = this.legalName.toString();
+    const fantasiaAnterior = this.tradeName?.toString() ?? null;
+
+    // `undefined` = manter; `null`/vazio = limpar; texto = usar.
+    const novaFantasia =
+      input.tradeName === undefined
+        ? this.tradeName
+        : TradeName.createOptional(input.tradeName);
+    const fantasiaNova = novaFantasia?.toString() ?? null;
+
+    const camposAlterados: string[] = [];
+    if (novaRazaoSocial.toString() !== razaoSocialAnterior) {
+      camposAlterados.push("legalName");
+    }
+    if (fantasiaNova !== fantasiaAnterior) {
+      camposAlterados.push("tradeName");
+    }
+    if (camposAlterados.length === 0) {
+      return;
+    }
+
+    const agora = input.now ?? new Date();
+    this.legalName = novaRazaoSocial;
+    this.tradeName = novaFantasia;
+    this.updatedAt = agora;
+    this.version += 1;
+
+    this.domainEvents.push(
+      createOrganizationRenamedEvent(
+        {
+          aggregatePublicId: this.publicId.toString(),
+          actorPublicId: input.actorPublicId,
+          correlationId: input.correlationId,
+          ...(input.causationId === undefined ? {} : { causationId: input.causationId }),
+          occurredAt: agora
+        },
+        {
+          publicId: this.publicId.toString(),
+          changedFields: camposAlterados,
+          previousLegalName: razaoSocialAnterior,
+          legalName: novaRazaoSocial.toString(),
+          previousTradeName: fantasiaAnterior,
+          tradeName: fantasiaNova
+        }
+      )
+    );
+  }
+
   /** Retorna e limpa os eventos de domínio produzidos desde a última leitura. */
-  public pullDomainEvents(): OrganizationCreatedEvent[] {
+  public pullDomainEvents(): OrganizationDomainEvent[] {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;

@@ -22,6 +22,11 @@ class InMemoryOrganizationRepository implements OrganizationRepository {
   public async insert(organization: Organization): Promise<void> {
     this.stored.set(organization.getPublicId().toString(), organization);
   }
+
+  /** Duplo: a trava otimista real está no SQL; aqui a escrita é no-op. */
+  public async update(_organization: Organization, _expectedVersion: number): Promise<void> {
+    // sem estado a atualizar neste duplo
+  }
 }
 
 const ACTOR_PUBLIC_ID = "66231e51-66fb-466d-af4f-ac7b925ca9ec";

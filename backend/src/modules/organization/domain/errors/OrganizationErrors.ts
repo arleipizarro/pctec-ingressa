@@ -33,3 +33,19 @@ export class OrganizationDocumentAlreadyExistsError extends DomainError {
     super("Já existe uma Organization com este documentNumber para este type.");
   }
 }
+
+/**
+ * Trava otimista da organização.
+ *
+ * Lançada quando a versão que a TELA exibia já não é a do banco — outra
+ * pessoa corrigiu os nomes no meio. Sobrescrever silenciosamente
+ * apagaria a decisão dela.
+ */
+export class OrganizationVersionConflictError extends DomainError {
+  public readonly code = "ORGANIZATION_VERSION_CONFLICT";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(expected: number, atual: number) {
+    super(`Versão esperada (${expected}) não corresponde à versão atual (${atual}) da organização.`);
+  }
+}

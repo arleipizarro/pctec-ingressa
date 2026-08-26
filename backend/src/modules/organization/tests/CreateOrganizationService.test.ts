@@ -35,6 +35,11 @@ class InMemoryOrganizationRepository implements OrganizationRepository {
     this.stored.set(organization.getPublicId().toString(), organization);
     organization.assignInternalIdFromPersistence(this.stored.size);
   }
+
+  /** Duplo: a trava otimista real está no SQL; aqui a escrita é no-op. */
+  public async update(_organization: Organization, _expectedVersion: number): Promise<void> {
+    // sem estado a atualizar neste duplo
+  }
 }
 
 class InMemoryAuditEventRepository implements AuditEventRepository {

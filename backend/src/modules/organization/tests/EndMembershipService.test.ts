@@ -125,6 +125,10 @@ class InMemoryOrganizationRepository implements OrganizationRepository {
   public async insert(organization: Organization): Promise<void> {
     this.stored.set(organization.getPublicId().toString(), organization);
   }
+  /** Duplo: a trava otimista real está no SQL; aqui só registra a escrita. */
+  public async update(organization: Organization, _expectedVersion: number): Promise<void> {
+    this.stored.set(organization.getPublicId().toString(), organization);
+  }
 }
 
 class InMemoryOrganizationRelationshipRepository implements OrganizationRelationshipRepository {

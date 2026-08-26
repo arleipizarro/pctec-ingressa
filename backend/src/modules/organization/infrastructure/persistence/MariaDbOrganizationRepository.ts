@@ -1,5 +1,6 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { OrganizationRepository } from "../../domain/OrganizationRepository.js";
+import { OrganizationVersionConflictError } from "../../domain/errors/OrganizationErrors.js";
 import { Organization, type OrganizationPersistedState } from "../../domain/Organization.js";
 import type { PublicId } from "../../domain/value-objects/PublicId.js";
 import type { OrganizationType } from "../../domain/value-objects/OrganizationType.js";
@@ -112,5 +113,33 @@ export class MariaDbOrganizationRepository implements OrganizationRepository {
     );
     const insertResult = result as { insertId: number };
     organization.assignInternalIdFromPersistence(insertResult.insertId);
+  }
+
+  /**
+   * `SET` deliberadamente restrito a nomes e metadados de escrita. Um
+   * `UPDATE` que também tocasse `type` ou `document_number` transformaria
+   * uma correção de cadastro numa mudança de identidade da organização.
+   */
+  public async update(organization: Organization, expectedVersion: number): Promise<void> {
+    const [resultado] = await this.connection.execute(
+      `UPDATE organizations
+          SET legal_name = ?,
+              trade_name = ?,
+              version = ?,
+              updated_at = ?
+        WHERE public_id = ?
+          AND version = ?`,
+      [
+        organization.getLegalName().toString(),
+        organization.getTradeName()?.toString() ?? null,
+        organization.getVersion(),
+        organization.getUpdatedAt(),
+        organization.getPublicId().toString(),
+        expectedVersion
+      ]
+    );
+    if ((resultado as { affectedRows: number }).affectedRows === 0) {
+      throw new OrganizationVersionConflictError(expectedVersion, organization.getVersion());
+    }
   }
 }

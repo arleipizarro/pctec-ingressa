@@ -1,11 +1,49 @@
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api.js";
+import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
+import { FormularioAssociarGrupo, FormularioEditarOrganizacao } from "../components/formulariosOrganizacao.js";
+
+type AcaoPendente = { tipo: "editar" } | { tipo: "associar" } | null;
 
 export function OrganizacaoDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
-  const { dados, carregando, erro } = usarRecurso(() => api.organization(publicId), [publicId]);
+  const { dados, carregando, erro, recarregar } = usarRecurso(() => api.organization(publicId), [publicId]);
+  // Grupos para o seletor: carregados junto da tela para que o
+  // formulário abra pronto, sem um segundo "carregando" dentro do modal.
+  const { dados: grupos } = usarRecurso(
+    () => api.organizations(new URLSearchParams({ type: "BUSINESS_GROUP", status: "ACTIVE", limit: "200" })),
+    []
+  );
+
+  const [acao, setAcaoPendente] = useState<AcaoPendente>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+
+  /**
+   * Executa uma mutação e reconcilia a tela.
+   *
+   * O `recarregar()` no sucesso não é cosmético: sem ele a tela
+   * continuaria mostrando a `version` anterior, e o próximo salvamento
+   * enviaria uma versão velha que o backend recusaria com 409.
+   */
+  async function executar(operacao: () => Promise<unknown>, sucesso: string): Promise<void> {
+    setEnviando(true);
+    setMensagem(null);
+    try {
+      await operacao();
+      setMensagem({ tipo: "ok", texto: sucesso });
+      setAcaoPendente(null);
+      recarregar();
+    } catch (falha) {
+      // 403, 409 e 422 já chegam como frase em português vinda de
+      // `api.ts`; o formulário fica aberto para a pessoa corrigir.
+      setMensagem({ tipo: "erro", texto: falha instanceof ApiError ? falha.message : "Falha ao executar a ação." });
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   return (
     <>
@@ -16,13 +54,35 @@ export function OrganizacaoDetalhePage(): JSX.Element {
             <h2>{dados.legal_name}</h2>
             <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
 
+            {mensagem !== null && (
+              <div className={`aviso ${mensagem.tipo === "ok" ? "aviso-ok" : "aviso-erro"}`} role="alert">{mensagem.texto}</div>
+            )}
+
             <dl className="chave-valor">
               <dt>publicId</dt><dd><code>{dados.public_id}</code></dd>
               <dt>Nome fantasia</dt><dd>{dados.trade_name ?? "—"}</dd>
             </dl>
 
+            <div className="secao barra">
+              <button type="button" onClick={() => setAcaoPendente({ tipo: "editar" })}>Editar organização</button>
+              {/* Associação inicial: só COMPANY, e só enquanto não tem
+                  grupo. Trocar ou encerrar não é possível nesta fatia. */}
+              {dados.type === "COMPANY" && dados.parents.length === 0 && (
+                <button type="button" onClick={() => setAcaoPendente({ tipo: "associar" })}>
+                  Associar a um grupo
+                </button>
+              )}
+            </div>
+
             <div className="secao">
               <h3>Hierarquia</h3>
+              {dados.type === "COMPANY" && dados.parents.length > 0 && (
+                <p className="subtitulo">
+                  Grupo atual: <strong>{dados.parents[0]?.trade_name ?? dados.parents[0]?.legal_name}</strong>. Trocar ou
+                  encerrar o vínculo ainda não é possível por esta tela — o relacionamento não tem ciclo de vida no
+                  modelo atual, e alterá-lo exigiria apagar o histórico.
+                </p>
+              )}
               {dados.parents.length === 0 && dados.children.length === 0 ? (
                 <div className="vazio">Sem relacionamentos cadastrados.</div>
               ) : (
@@ -104,6 +164,33 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                 </div>
               )}
             </div>
+            {acao?.tipo === "editar" && (
+              <FormularioEditarOrganizacao
+                organizacao={dados}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(legalName, tradeName) =>
+                  void executar(
+                    () => api.renameOrganization(publicId, { legalName, tradeName, expectedVersion: dados.version }),
+                    "Organização atualizada."
+                  )
+                }
+              />
+            )}
+
+            {acao?.tipo === "associar" && (
+              <FormularioAssociarGrupo
+                grupos={grupos?.items ?? []}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(parentPublicId) =>
+                  void executar(
+                    () => api.associateParent(publicId, parentPublicId),
+                    "Empresa associada ao grupo."
+                  )
+                }
+              />
+            )}
           </>
         )}
       </Estado>

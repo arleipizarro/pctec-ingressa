@@ -11,6 +11,8 @@ import type { BlockIdentityService } from "../../identity/application/BlockIdent
 import type { UnblockIdentityService } from "../../identity/application/UnblockIdentityService.js";
 import type { RevokeAllSessionsService } from "../../security/application/RevokeAllSessionsService.js";
 import type { RevokeInvitationService } from "../../invitation/application/RevokeInvitationService.js";
+import type { RenameOrganizationService } from "../../organization/application/RenameOrganizationService.js";
+import type { CreateOrganizationRelationshipService } from "../../organization/application/CreateOrganizationRelationshipService.js";
 
 export interface AdminApiDeps {
   readonly readRepository: MariaDbAdminReadRepository;
@@ -23,6 +25,8 @@ export interface AdminApiDeps {
   readonly unblockIdentityService: UnblockIdentityService;
   readonly revokeAllSessionsService: RevokeAllSessionsService;
   readonly revokeInvitationService: RevokeInvitationService;
+  readonly renameOrganizationService: RenameOrganizationService;
+  readonly createOrganizationRelationshipService: CreateOrganizationRelationshipService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -320,6 +324,77 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       correlationId: req.correlationId
     });
     res.status(200).json(resultado);
+  }));
+
+  // ------------------------------------------------------------------
+  // Organizações
+  // ------------------------------------------------------------------
+
+  /**
+   * Correção de nomes. `expectedVersion` vem do corpo por ser a versão
+   * que a TELA exibia — trava otimista real contra 409. O ator sai da
+   * sessão administrativa, nunca do corpo.
+   *
+   * `tradeName` ausente significa "manter"; string vazia significa
+   * "limpar". Mandar sempre apagaria o nome fantasia de quem só corrigiu
+   * a razão social.
+   */
+  router.post("/organizations/:publicId/names", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const legalName = typeof corpo["legalName"] === "string" ? (corpo["legalName"] as string) : "";
+    const expectedVersion = Number(corpo["expectedVersion"]);
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      erro(res, 422, "ORGANIZATION_VERSION_INVALID", "expectedVersion é obrigatório.");
+      return;
+    }
+
+    const resultado = await deps.renameOrganizationService.execute({
+      organizationPublicId: publicId,
+      legalName,
+      ...("tradeName" in corpo ? { tradeName: corpo["tradeName"] as string | null } : {}),
+      actorPublicId: atorAutenticado(req),
+      expectedVersion,
+      correlationId: req.correlationId
+    });
+    res.status(200).json(resultado);
+  }));
+
+  /**
+   * Associação inicial de uma COMPANY a um BUSINESS_GROUP.
+   *
+   * Só INSERT: uma COMPANY que já tem grupo é recusada pelo próprio
+   * serviço (`OrganizationRelationshipChildAlreadyLinkedError`). Trocar
+   * ou encerrar o vínculo não é possível nesta fatia — a tabela
+   * `organization_relationships` não tem coluna de ciclo de vida, e a
+   * única forma seria apagar a linha, perdendo o histórico. Ver PR.
+   */
+  router.post("/organizations/:publicId/parent", envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const parent = typeof corpo["parentOrganizationPublicId"] === "string"
+      ? (corpo["parentOrganizationPublicId"] as string)
+      : "";
+    if (!UUID.test(parent)) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "parentOrganizationPublicId inválido.");
+      return;
+    }
+
+    const resultado = await deps.createOrganizationRelationshipService.execute({
+      parentOrganizationPublicId: parent,
+      childOrganizationPublicId: publicId,
+      actorPublicId: atorAutenticado(req),
+      correlationId: req.correlationId
+    });
+    res.status(201).json(resultado);
   }));
 
   router.post("/memberships", envolver(async (req, res) => {
