@@ -1,6 +1,5 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { api } from "../api.js";
-import type { Sessao } from "../auth.js";
+import { encerrarSessao, type Sessao } from "../auth.js";
 
 const ITENS = [
   { para: "/admin", rotulo: "Painel", fim: true },
@@ -14,15 +13,14 @@ const ITENS = [
 export function Layout({ sessao, onSair }: { sessao: Sessao; onSair: () => void }): JSX.Element {
   const navegar = useNavigate();
 
+  // Falha no logout do servidor não prende a pessoa na tela: a sessão
+  // local cai de qualquer forma e ela volta ao login, avisada. Toda a
+  // regra vive em `encerrarSessao`, que nunca rejeita — as duas telas
+  // com botão "Sair" compartilham o mesmo comportamento.
   async function sair(): Promise<void> {
-    try {
-      await api.logout();
-    } finally {
-      // Falha no logout do servidor não pode prender a pessoa na tela:
-      // a sessão local cai de qualquer forma e ela volta ao login.
-      onSair();
-      navegar("/login");
-    }
+    await encerrarSessao(onSair, (estado) =>
+      navegar("/login", estado === undefined ? undefined : { state: estado })
+    );
   }
 
   return (

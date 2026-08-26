@@ -12,6 +12,54 @@ export interface Sessao {
   readonly perfilNoIngressa: string | null;
 }
 
+/**
+ * Motivo passado ao `/login` quando o logout do servidor falhou.
+ *
+ * O cookie de sessão é HttpOnly: se o servidor não confirmou a
+ * revogação, o SPA **não tem como** apagá-lo, e a sessão do servidor
+ * pode seguir válida até expirar. A pessoa precisa saber disso — some da
+ * tela como se tivesse saído seria a versão confortável e errada.
+ */
+export const LOGOUT_INCOMPLETO = "LOGOUT_INCOMPLETO" as const;
+
+export interface EstadoDoLogin {
+  readonly motivo?: typeof LOGOUT_INCOMPLETO;
+}
+
+/**
+ * Encerra a sessão da UI e volta ao login — com ou sem sucesso no
+ * servidor.
+ *
+ * **Por que existe, em vez de um `try/finally` em cada tela.** As duas
+ * telas com botão "Sair" tinham o MESMO `try { await api.logout() }
+ * finally { ... }`. `finally` executa a limpeza e **relança** — então
+ * um logout que falha (500, rede caída) devolvia uma promise rejeitada
+ * ao `onClick`, que ninguém trata: rejeição não capturada, ruído no
+ * console do navegador e gate de teste vermelho. A limpeza rodava, o
+ * que mascarava o problema: a tela parecia funcionar.
+ *
+ * Aqui a falha é CAPTURADA, a sessão local cai de qualquer forma e a
+ * pessoa volta ao login — a intenção original, agora sem relançar. A
+ * diferença é o `motivo`, que faz a tela de login dizer o que de fato
+ * aconteceu.
+ *
+ * Nunca rejeita. É o contrato do qual as duas telas dependem.
+ */
+export async function encerrarSessao(
+  encerrarLocal: () => void,
+  irParaLogin: (estado?: EstadoDoLogin) => void
+): Promise<void> {
+  let falhouNoServidor = false;
+  try {
+    await api.logout();
+  } catch {
+    // O motivo exato não muda o que a UI faz: sair localmente e avisar.
+    falhouNoServidor = true;
+  }
+  encerrarLocal();
+  irParaLogin(falhouNoServidor ? { motivo: LOGOUT_INCOMPLETO } : undefined);
+}
+
 /** Código da própria plataforma como Application do catálogo. */
 export const CODIGO_INGRESSA = "PCTEC_INGRESSA";
 

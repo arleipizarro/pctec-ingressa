@@ -772,7 +772,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
           applicationAccessRepositoryFactory: (c) => new MariaDbApplicationAccessRepository(c),
           auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c)
         })
-      }
+      },
+      allowedOrigins
     )
   );
   // GET /api/v1/portal/context — G3 (v0.6.x). Mesma ordem obrigatória:
