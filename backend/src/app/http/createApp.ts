@@ -36,6 +36,7 @@ import { composeHelpdeskImport } from "../../modules/import/infrastructure/Helpd
 import { createRequireSafeOrigin } from "../../modules/security/http/requireSafeOrigin.js";
 import { MariaDbUnitOfWork } from "../../shared/database/UnitOfWork.js";
 import { MariaDbAdminReadRepository } from "../../modules/admin/infrastructure/persistence/MariaDbAdminReadRepository.js";
+import { MariaDbAuditEventReadRepository } from "../../modules/audit/infrastructure/MariaDbAuditEventReadRepository.js";
 import { RevokeApplicationAccessService } from "../../modules/application/application/RevokeApplicationAccessService.js";
 import { CreateMembershipService } from "../../modules/organization/application/CreateMembershipService.js";
 import { EndMembershipService } from "../../modules/organization/application/EndMembershipService.js";
@@ -650,6 +651,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createAdminApiRoutes(
       options.adminApi ?? {
         readRepository: new MariaDbAdminReadRepository(sharedPool!),
+        // Projeção de leitura da auditoria — contrato separado do
+        // repositório de ESCRITA, que segue append-only e sem consulta.
+        auditEventReadRepository: new MariaDbAuditEventReadRepository(sharedPool!),
         grantApplicationAccessService: new GrantApplicationAccessService(
           new MariaDbUnitOfWork(sharedPool!),
           (c) => new MariaDbApplicationRepository(c),
