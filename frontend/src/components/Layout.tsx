@@ -7,7 +7,8 @@ const ITENS = [
   { para: "/admin/usuarios", rotulo: "Usuários", fim: false },
   { para: "/admin/organizacoes", rotulo: "Organizações", fim: false },
   { para: "/admin/convites", rotulo: "Convites", fim: false },
-  { para: "/admin/importacoes", rotulo: "Importações", fim: false }
+  { para: "/admin/importacoes", rotulo: "Importações", fim: false },
+  { para: "/admin/auditoria", rotulo: "Auditoria", fim: false }
 ];
 
 export function Layout({ sessao, onSair }: { sessao: Sessao; onSair: () => void }): JSX.Element {

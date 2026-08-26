@@ -1,4 +1,5 @@
 import { DomainError } from "../../../shared/errors/DomainError.js";
+import { REDACTED_MARKER, isForbiddenSnapshotField } from "../../../shared/security/redactionPolicy.js";
 
 export type SnapshotValue = string | number | boolean | null;
 
@@ -15,99 +16,15 @@ export class ForbiddenSnapshotFieldError extends DomainError {
 }
 
 /**
- * Campos que NUNCA podem ser gravados num snapshot, qualquer que seja a
- * whitelist do chamador. É a última linha de defesa, não a primeira: o
- * caminho normal é o chamador montar o objeto campo a campo.
+ * A política de redação mora em `shared/security/redactionPolicy.ts`
+ * desde a tela de auditoria (v0.11.x): a mesma pergunta — "este nome de
+ * campo pode ser exibido?" — passou a ser feita também pelo contexto
+ * `audit`, e duas cópias divergiriam no primeiro nome acrescentado de um
+ * lado só.
  *
- * A lista cobre os nomes reais das colunas sensíveis observadas na
- * auditoria do Helpdesk (`users.password`, `users.reset_token`,
- * `users.reset_expires`, `usuarios.password`,
- * `usuarios.senha_temporaria`) e os nomes genéricos equivalentes.
+ * Reexportados aqui para não quebrar quem já importava deste módulo.
  */
-const DENYLIST_EXATA: ReadonlySet<string> = new Set([
-  "password",
-  "senha",
-  "senha_temporaria",
-  "password_hash",
-  "passwordhash",
-  "hash",
-  "salt",
-  "token",
-  "reset_token",
-  "resettoken",
-  "reset_expires",
-  "refresh_token",
-  "access_token",
-  "secret",
-  "credential",
-  "credentials",
-  "api_key",
-  "apikey",
-  "private_key",
-  "authorization"
-]);
-
-/**
- * Fragmentos que reprovam por conterem — pega variações não previstas
- * (`user_password`, `helpdeskToken`, `senhaProvisoria`).
- *
- * `hash`, `salt` e `authorization` estavam SÓ na lista exata, o que
- * deixava passar exatamente as variações que esta lista existe para
- * pegar: `bcrypt_hash`, `md5_hash`, `user_hash`, `auth_salt`,
- * `authorization_header`. Note que `password_hash` era barrado por
- * acidente, pelo fragmento `password` — tirar `password` da lista teria
- * liberado toda a família `_hash` de uma vez.
- *
- * O custo é assumido: `salt` também barra um campo hipotético `salto` e
- * `hash` barraria `hashtag`. Nenhum dos dois existe no domínio de
- * cadastro que este importador lê, e a regra da casa é clara — falso
- * positivo se resolve renomeando o campo do snapshot; falso negativo
- * grava segredo em tabela de auditoria, de onde não sai mais.
- */
-const DENYLIST_FRAGMENTO: readonly string[] = [
-  "password",
-  "passwd",
-  "senha",
-  "secret",
-  "token",
-  "credential",
-  "apikey",
-  "api_key",
-  "privatekey",
-  "private_key",
-  "hash",
-  "salt",
-  "authorization"
-];
-
-/**
- * Valor devolvido no lugar de um campo que a política atual reprova.
- * Constante — a saída redigida precisa ser determinística.
- */
-export const REDACTED_MARKER = "[REDIGIDO]";
-
-function normalizar(field: string): string {
-  return field.trim().toLowerCase().replace(/[\s-]+/g, "_");
-}
-
-/**
- * `true` quando o nome do campo é proibido em snapshot.
- *
- * Deliberadamente conservador: prefere reprovar um campo inocente a
- * deixar passar um sensível. Um falso positivo é resolvido renomeando o
- * campo do snapshot; um falso negativo grava segredo em tabela de
- * auditoria, de onde não sai mais.
- */
-export function isForbiddenSnapshotField(field: string): boolean {
-  const normalizado = normalizar(field);
-  if (DENYLIST_EXATA.has(normalizado)) {
-    return true;
-  }
-  const semUnderscore = normalizado.replace(/_/g, "");
-  return DENYLIST_FRAGMENTO.some(
-    (fragmento) => normalizado.includes(fragmento) || semUnderscore.includes(fragmento.replace(/_/g, ""))
-  );
-}
+export { REDACTED_MARKER, isForbiddenSnapshotField } from "../../../shared/security/redactionPolicy.js";
 
 /**
  * Snapshot sanitizado de um item de importação.

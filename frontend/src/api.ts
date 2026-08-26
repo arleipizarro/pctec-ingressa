@@ -170,6 +170,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ parentOrganizationPublicId })
     }),
+  /**
+   * Trilha de auditoria. O payload já chega REDIGIDO pelo servidor — a
+   * UI nunca decide o que esconder.
+   */
+  auditEvents: (params: URLSearchParams) =>
+    requisitar<Pagina<EventoDeAuditoria>>(`/admin/audit-events?${params.toString()}`),
+  /** Tipos presentes na base, para o filtro não inventar opções. */
+  auditEventTypes: () => requisitar<{ items: readonly string[] }>("/admin/audit-events/event-types"),
   importBatches: (params: URLSearchParams) => requisitar<Pagina<Lote>>(`/admin/import-batches?${params.toString()}`),
   importBatchItems: (publicId: string, params: URLSearchParams) =>
     requisitar<Pagina<ItemDeLote>>(`/admin/import-batches/${publicId}/items?${params.toString()}`),
@@ -537,6 +545,30 @@ export interface ItemDeLote {
   readonly reason_code: string | null;
   readonly target_public_id: string | null;
   readonly after_snapshot: { fields: Record<string, unknown>; redactedFields: readonly string[] } | null;
+}
+
+/**
+ * Evento de auditoria, como a tela o recebe.
+ *
+ * `payload` é sempre o objeto redigido: `fields` com os valores que
+ * passaram na política e `redactedFields` com os NOMES do que foi
+ * escondido — quem audita vê que havia ali um campo sensível, sem
+ * receber o valor. Token, hash, cookie, senha, credencial e id interno
+ * não têm caminho até aqui.
+ */
+export interface EventoDeAuditoria {
+  readonly event_public_id: string;
+  readonly event_type: string;
+  readonly event_version: number;
+  readonly aggregate_public_id: string;
+  readonly actor_public_id: string;
+  /** `null` para marcadores reservados (SYSTEM, BOOTSTRAP). */
+  readonly actor_full_name: string | null;
+  readonly correlation_id: string;
+  readonly causation_id: string | null;
+  readonly occurred_at: string;
+  readonly persisted_at: string;
+  readonly payload: SnapshotRedigido;
 }
 
 export interface Aplicacao {

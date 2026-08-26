@@ -78,6 +78,35 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
     createMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP })) },
     endMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP, status: "INACTIVE" })) },
     activateFederatedIdentityService: { execute: vi.fn(async () => ({ identityPublicId: IDENTITY, status: "ACTIVE", alreadyActive: false })) },
+    provisionOrganizationService: {
+      execute: vi.fn(async () => ({ publicId: ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null }))
+    },
+    provisionOrganizationUserService: {
+      execute: vi.fn(async () => ({
+        identityPublicId: IDENTITY,
+        fullName: "Piloto Um",
+        email: "piloto.um@example.invalid",
+        status: "ACTIVE",
+        loginEnabled: false,
+        membership: { publicId: MEMBERSHIP, organizationPublicId: ORG, profile: "CUSTOMER", scope: "ORGANIZATION_ONLY", status: "ACTIVE" },
+        applicationAccesses: [{ applicationCode: "PCTEC_PORTAL", accessProfile: "USER" }]
+      }))
+    },
+    createIdentityInvitationService: {
+      execute: vi.fn(async () => ({
+        deliveryMode: "MANUAL_DEV",
+        results: [{
+          identityPublicId: IDENTITY, fullName: "Piloto Um", outcome: "CREATED", reasonCode: null,
+          invitationPublicId: "aaaa1111-1111-4111-8111-111111111111",
+          expiresAt: "2026-09-02T12:00:00.000Z", deliveryMode: "MANUAL_DEV", delivered: false,
+          manualLink: "https://ingressa.example.invalid/convite#token-sintetico"
+        }]
+      }))
+    },
+    auditEventReadRepository: {
+      listar: vi.fn(async (f: Record<string, unknown>) => ({ items: [], total: 0, limit: 25, offset: 0, filtros: f })),
+      listarTiposDeEvento: vi.fn(async () => ["identity.created"])
+    },
     ...overrides
   } as unknown as AdminApiDeps;
 }
@@ -277,5 +306,136 @@ describe("API administrativa — mutações", () => {
     for (const caminho of [`/api/v1/admin/identities/${IDENTITY}`, `/api/v1/admin/memberships/${MEMBERSHIP}`, `/api/v1/admin/application-accesses/${ACCESS}`]) {
       expect((await chamar(baseUrl, caminho, { method: "DELETE" })).status).toBe(404);
     }
+  });
+});
+
+describe("API administrativa — provisionamento", () => {
+  it("cria organização com 201 e devolve o publicId", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "EMPRESA NOVA LTDA" })
+    });
+    expect(r.status).toBe(201);
+    expect(r.body["publicId"]).toBe(ORG);
+  });
+
+  it("razão social vazia é 422, e o serviço nem é chamado", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "   " })
+    });
+    expect(r.status).toBe(422);
+    expect(deps.provisionOrganizationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("o ator vem da sessão, nunca do corpo", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      // Tentativa explícita de forjar o ator pelo corpo.
+      body: JSON.stringify({ type: "COMPANY", legalName: "X LTDA", actorPublicId: IDENTITY })
+    });
+    const chamada = (deps.provisionOrganizationService.execute as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(chamada.actorPublicId).toBe(ADMIN);
+  });
+
+  it("provisiona usuário e devolve o convite como fato SEPARADO", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um", email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER", membershipScope: "ORGANIZATION_ONLY",
+        applicationCodes: ["PCTEC_PORTAL"], sendInvitation: true
+      })
+    });
+
+    expect(r.status).toBe(201);
+    expect(r.body["identityPublicId"]).toBe(IDENTITY);
+    expect(r.body["invitationRequested"]).toBe(true);
+    expect((r.body["invitation"] as Record<string, unknown>)["outcome"]).toBe("CREATED");
+  });
+
+  it("sem sendInvitation, nenhum convite é emitido", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um", email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER", membershipScope: "ORGANIZATION_ONLY",
+        applicationCodes: ["PCTEC_PORTAL"]
+      })
+    });
+
+    expect(r.body["invitationRequested"]).toBe(false);
+    expect(r.body["invitation"]).toBeNull();
+    expect(deps.createIdentityInvitationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("falha do convite NÃO derruba o provisionamento", async () => {
+    const deps = fakeDeps({
+      createIdentityInvitationService: {
+        execute: vi.fn(async () => { throw new Error("SMTP fora do ar"); })
+      } as never
+    });
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um", email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER", membershipScope: "ORGANIZATION_ONLY",
+        applicationCodes: ["PCTEC_PORTAL"], sendInvitation: true
+      })
+    });
+
+    // O usuário existe. Responder erro aqui faria o ADMIN tentar criar
+    // tudo de novo e bater em e-mail duplicado.
+    expect(r.status).toBe(201);
+    expect(r.body["identityPublicId"]).toBe(IDENTITY);
+    expect((r.body["invitation"] as Record<string, unknown>)["outcome"]).toBe("FAILED");
+  });
+});
+
+describe("API administrativa — auditoria", () => {
+  it("lista com 200 e repassa os filtros para a projeção", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(
+      baseUrl,
+      "/api/v1/admin/audit-events?from=2026-08-01&eventType=identity.created&limit=10"
+    );
+
+    expect(r.status).toBe(200);
+    const filtros = (deps.auditEventReadRepository.listar as ReturnType<typeof vi.fn>).mock.calls[0]![0];
+    expect(filtros).toMatchObject({ from: "2026-08-01", eventType: "identity.created", limit: "10" });
+  });
+
+  it.each(["from", "to"])("data inválida em %s é 422, e nada é consultado", async (campo) => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/audit-events?${campo}=trinta-de-fevereiro`);
+
+    // Ignorar em silêncio devolveria a base inteira parecendo ser o
+    // recorte pedido.
+    expect(r.status).toBe(422);
+    expect((r.body["error"] as { code: string }).code).toBe("AUDIT_PERIOD_INVALID");
+    expect(deps.auditEventReadRepository.listar).not.toHaveBeenCalled();
+  });
+
+  it("os tipos de evento vêm da base", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/audit-events/event-types");
+    expect(r.status).toBe(200);
+    expect(r.body["items"]).toEqual(["identity.created"]);
+  });
+
+  it("auditoria exige sessão ADMIN", async () => {
+    const { baseUrl } = await subir({ semAdmin: true });
+    expect((await chamar(baseUrl, "/api/v1/admin/audit-events")).status).toBe(403);
   });
 });

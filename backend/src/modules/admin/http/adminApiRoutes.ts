@@ -16,6 +16,8 @@ import type { CreateOrganizationRelationshipService } from "../../organization/a
 import type { ProvisionOrganizationService } from "../../organization/application/ProvisionOrganizationService.js";
 import type { ProvisionOrganizationUserService } from "../application/ProvisionOrganizationUserService.js";
 import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
+import type { AuditEventReadRepository } from "../../audit/application/AuditEventReadRepository.js";
+import { normalizarInstante } from "../../audit/infrastructure/MariaDbAuditEventReadRepository.js";
 
 export interface AdminApiDeps {
   readonly readRepository: MariaDbAdminReadRepository;
@@ -38,6 +40,7 @@ export interface AdminApiDeps {
    * seriam duas implementações da mesma regra de elegibilidade.
    */
   readonly createIdentityInvitationService: CreateIdentityInvitationService;
+  readonly auditEventReadRepository: AuditEventReadRepository;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -569,6 +572,54 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
       actorPublicId: atorAutenticado(req)
     });
     res.status(200).json(resultado);
+  }));
+
+  // ------------------------------------------------------------------
+  // Auditoria
+  // ------------------------------------------------------------------
+
+  /**
+   * Tipos de evento presentes na base — alimenta o filtro.
+   *
+   * Rota literal ANTES de qualquer paramétrica sob o mesmo prefixo:
+   * `event-types` não é um publicId.
+   *
+   * Vem do banco, não de uma lista fixa no código: uma constante
+   * envelheceria em silêncio a cada evento de domínio novo, e o filtro
+   * passaria a esconder justamente o que acabou de ser instrumentado.
+   */
+  router.get("/audit-events/event-types", envolver(async (_req, res) => {
+    res.status(200).json({ items: await deps.auditEventReadRepository.listarTiposDeEvento() });
+  }));
+
+  /**
+   * Trilha de auditoria — leitura paginada, mais recente primeiro.
+   *
+   * Filtros de formato inválido são IGNORADOS pela projeção, não
+   * interpolados. As datas são a exceção que merece 422: um período
+   * digitado errado e silenciosamente ignorado devolveria a base inteira
+   * parecendo ser "o que houve na semana passada" — e quem audita
+   * tiraria conclusão de um recorte que não pediu.
+   *
+   * O payload sai sempre redigido pela política compartilhada; token,
+   * hash, cookie, senha, credencial e id interno não têm caminho até
+   * aqui. Convite não é exceção: `identity-invitation.*` grava
+   * `invitationPublicId` e validade, nunca o token.
+   */
+  router.get("/audit-events", envolver(async (req, res) => {
+    const query = req.query as Record<string, unknown>;
+    for (const campo of ["from", "to"] as const) {
+      const bruto = query[campo];
+      if (
+        typeof bruto === "string" &&
+        bruto.trim().length > 0 &&
+        normalizarInstante(bruto, campo === "to") === undefined
+      ) {
+        erro(res, 422, "AUDIT_PERIOD_INVALID", `Data inválida em "${campo}".`);
+        return;
+      }
+    }
+    res.status(200).json(await deps.auditEventReadRepository.listar(query));
   }));
 
   return router;
