@@ -78,6 +78,15 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
     createMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP })) },
     endMembershipService: { execute: vi.fn(async () => ({ publicId: MEMBERSHIP, status: "INACTIVE" })) },
     activateFederatedIdentityService: { execute: vi.fn(async () => ({ identityPublicId: IDENTITY, status: "ACTIVE", alreadyActive: false })) },
+    // Associação inicial de COMPANY a BUSINESS_GROUP — rota anterior a
+    // esta branch, incluída na guarda de origem a pedido da revisão.
+    createOrganizationRelationshipService: {
+      execute: vi.fn(async () => ({
+        publicId: "bbbb2222-2222-4222-8222-222222222222",
+        parentOrganizationPublicId: IDENTITY,
+        childOrganizationPublicId: ORG
+      }))
+    },
     provisionOrganizationService: {
       execute: vi.fn(async () => ({ publicId: ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null }))
     },
@@ -111,9 +120,13 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
   } as unknown as AdminApiDeps;
 }
 
+/** Origem confiável desta suíte — nunca lida do ambiente, para o teste não depender do .env. */
+const ORIGEM_CONFIAVEL = "https://ingressa.example.invalid";
+
 async function subir(opcoes: { sessaoInvalida?: boolean; semAdmin?: boolean; deps?: AdminApiDeps } = {}) {
   const deps = opcoes.deps ?? fakeDeps();
   const app = createApp({
+    allowedOrigins: [ORIGEM_CONFIAVEL],
     validateSessionService: {
       execute: async () => {
         if (opcoes.sessaoInvalida === true) throw new SessionValidationFailedError("SESSION_NOT_FOUND");
@@ -134,9 +147,17 @@ async function subir(opcoes: { sessaoInvalida?: boolean; semAdmin?: boolean; dep
   return { baseUrl: `http://127.0.0.1:${(server.address() as { port: number }).port}`, deps };
 }
 
-async function chamar(baseUrl: string, caminho: string, init: RequestInit & { comSessao?: boolean } = {}) {
+async function chamar(
+  baseUrl: string,
+  caminho: string,
+  init: RequestInit & { comSessao?: boolean; origem?: string | null; referer?: string } = {}
+) {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (init.comSessao !== false) headers["cookie"] = `${SESSION_COOKIE_NAME}=token-de-teste`;
+  // Um navegador real sempre manda `Origin` numa mutação same-origin.
+  // `origem: null` reproduz a requisição forjada que não manda nenhum.
+  if (init.origem !== null) headers["origin"] = init.origem ?? ORIGEM_CONFIAVEL;
+  if (init.referer !== undefined) headers["referer"] = init.referer;
   const r = await fetch(`${baseUrl}${caminho}`, { ...init, headers: { ...headers, ...(init.headers as object) } });
   return { status: r.status, body: (await r.json().catch(() => ({}))) as Record<string, unknown> };
 }
@@ -437,5 +458,147 @@ describe("API administrativa — auditoria", () => {
   it("auditoria exige sessão ADMIN", async () => {
     const { baseUrl } = await subir({ semAdmin: true });
     expect((await chamar(baseUrl, "/api/v1/admin/audit-events")).status).toBe(403);
+  });
+});
+
+/**
+ * Rotas mutáveis desta entrega que passaram a exigir origem confiável.
+ *
+ * A lista é o contrato: acrescentar uma rota mutável aqui sem pendurar
+ * `origemSegura` nela faz estes testes falharem, em vez de deixar uma
+ * porta aberta em silêncio.
+ */
+const MUTACOES_PROTEGIDAS: readonly { caminho: string; corpo: unknown }[] = [
+  { caminho: "/api/v1/admin/organizations", corpo: { type: "COMPANY", legalName: "EMPRESA NOVA LTDA" } },
+  {
+    caminho: `/api/v1/admin/organizations/${ORG}/users`,
+    corpo: {
+      fullName: "Piloto Um", email: "piloto.um@example.invalid",
+      membershipProfile: "CUSTOMER", membershipScope: "ORGANIZATION_ONLY",
+      applicationCodes: ["PCTEC_PORTAL"]
+    }
+  },
+  { caminho: `/api/v1/admin/organizations/${ORG}/parent`, corpo: { parentOrganizationPublicId: IDENTITY } }
+];
+
+describe("API administrativa — proteção de origem (CSRF)", () => {
+  it.each(MUTACOES_PROTEGIDAS.map((m) => [m.caminho, m] as const))(
+    "%s aceita a origem confiável e chega ao handler",
+    async (_caminho, mutacao) => {
+      const { baseUrl } = await subir();
+      const r = await chamar(baseUrl, mutacao.caminho, {
+        method: "POST",
+        body: JSON.stringify(mutacao.corpo),
+        origem: ORIGEM_CONFIAVEL
+      });
+
+      // O handler respondeu de verdade — nunca 403 de origem.
+      expect(r.status).toBe(201);
+    }
+  );
+
+  it.each(MUTACOES_PROTEGIDAS.map((m) => [m.caminho, m] as const))(
+    "%s recusa requisição SEM origem",
+    async (_caminho, mutacao) => {
+      const { baseUrl } = await subir();
+      const r = await chamar(baseUrl, mutacao.caminho, {
+        method: "POST",
+        body: JSON.stringify(mutacao.corpo),
+        origem: null
+      });
+
+      // Ausência de Origin e de Referer nunca é tratada como segura.
+      expect(r.status).toBe(403);
+      expect((r.body["error"] as { code: string }).code).toBe("CSRF_ORIGIN_REJECTED");
+    }
+  );
+
+  it.each(MUTACOES_PROTEGIDAS.map((m) => [m.caminho, m] as const))(
+    "%s recusa origem maliciosa",
+    async (_caminho, mutacao) => {
+      const { baseUrl } = await subir();
+      const r = await chamar(baseUrl, mutacao.caminho, {
+        method: "POST",
+        body: JSON.stringify(mutacao.corpo),
+        origem: "https://atacante.example.invalid"
+      });
+
+      expect(r.status).toBe(403);
+      expect((r.body["error"] as { code: string }).code).toBe("CSRF_ORIGIN_REJECTED");
+    }
+  );
+
+  it("origem maliciosa é barrada ANTES de o serviço ser chamado", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "EMPRESA NOVA LTDA" }),
+      origem: "https://atacante.example.invalid"
+    });
+
+    // 403 depois de escrever no banco não protegeria nada.
+    expect(deps.provisionOrganizationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("Referer confiável basta quando o Origin não vem", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "EMPRESA NOVA LTDA" }),
+      origem: null,
+      referer: `${ORIGEM_CONFIAVEL}/admin/organizacoes`
+    });
+
+    // Regra do ADR-030, não reimplementada aqui: Origin confiável, ou
+    // Referer confiável na ausência dele.
+    expect(r.status).toBe(201);
+  });
+
+  it("autenticação vem ANTES da origem: sem sessão é 401, não 403", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "X LTDA" }),
+      comSessao: false,
+      origem: "https://atacante.example.invalid"
+    });
+
+    expect(r.status).toBe(401);
+  });
+
+  it("sessão ADMIN continua obrigatória mesmo com origem confiável", async () => {
+    const { baseUrl } = await subir({ semAdmin: true });
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "X LTDA" }),
+      origem: ORIGEM_CONFIAVEL
+    });
+
+    // 403 de AUTORIZAÇÃO, não de origem — códigos distintos para causas
+    // distintas.
+    expect(r.status).toBe(403);
+    expect((r.body["error"] as { code: string }).code).not.toBe("CSRF_ORIGIN_REJECTED");
+  });
+
+  it.each([
+    "/api/v1/admin/audit-events",
+    "/api/v1/admin/audit-events/event-types"
+  ])("a auditoria é só leitura: %s responde 200 sem origem alguma", async (caminho) => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, caminho, { origem: null });
+
+    // GET não muda estado; exigir origem aqui só quebraria leitura
+    // legítima sem proteger nada.
+    expect(r.status).toBe(200);
+  });
+
+  it("a auditoria não aceita mutação: POST devolve 404, não 403", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/audit-events", { method: "POST", body: "{}" });
+
+    // É o motivo de a guarda não estar no router inteiro: 403 aqui
+    // diria "sua origem não é confiável" sobre uma rota que não existe.
+    expect(r.status).toBe(404);
   });
 });

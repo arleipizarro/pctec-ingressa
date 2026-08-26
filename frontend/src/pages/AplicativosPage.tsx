@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AplicativoCard, type OrganizacaoDoUsuario } from "../api.js";
 import type { Sessao } from "../auth.js";
-import { CODIGO_INGRESSA } from "../auth.js";
+import { CODIGO_INGRESSA, encerrarSessao } from "../auth.js";
 
 const CODIGO_PORTAL = "PCTEC_PORTAL";
 const CODIGO_HELPDESK = "PCTEC_HELPDESK";
@@ -99,16 +99,14 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
     void carregarOrganizacoes();
   }, [carregarOrganizacoes]);
 
+  // Mesma regra do painel administrativo, no mesmo lugar: falha do
+  // servidor não prende a pessoa na tela, e `encerrarSessao` nunca
+  // rejeita — o `onClick` não recebe promise pendurada.
   async function sair(): Promise<void> {
     setSaindo(true);
-    try {
-      await api.logout();
-    } finally {
-      // Falha no logout do servidor não pode prender a pessoa na tela:
-      // a sessão local cai de qualquer forma e ela volta ao login.
-      onSair();
-      navegar("/login");
-    }
+    await encerrarSessao(onSair, (estado) =>
+      navegar("/login", estado === undefined ? undefined : { state: estado })
+    );
   }
 
   return (

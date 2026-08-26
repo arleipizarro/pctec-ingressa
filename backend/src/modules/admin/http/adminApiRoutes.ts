@@ -16,6 +16,7 @@ import type { CreateOrganizationRelationshipService } from "../../organization/a
 import type { ProvisionOrganizationService } from "../../organization/application/ProvisionOrganizationService.js";
 import type { ProvisionOrganizationUserService } from "../application/ProvisionOrganizationUserService.js";
 import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
+import { createRequireSafeOrigin } from "../../security/http/requireSafeOrigin.js";
 import type { AuditEventReadRepository } from "../../audit/application/AuditEventReadRepository.js";
 import { normalizarInstante } from "../../audit/infrastructure/MariaDbAuditEventReadRepository.js";
 
@@ -86,8 +87,29 @@ function redigirSnapshot(bruto: unknown): { fields: Record<string, unknown>; red
   return ImportItemSnapshot.fromPersistedRecord(objeto).toRedactedJSON();
 }
 
-export function createAdminApiRoutes(deps: AdminApiDeps): Router {
+/**
+ * Guarda de origem aplicada ROTA A ROTA, e não ao router inteiro.
+ *
+ * Montá-la como middleware do router administrativo protegeria também as
+ * rotas que não existem: qualquer método mutável para um caminho
+ * inexistente passaria a responder 403 ("sua origem não é confiável") em
+ * vez do 404 correto ("essa rota não existe"). É o mesmo motivo pelo qual
+ * `createApp` monta o assistente de importação num prefixo próprio em vez
+ * de encaixar a guarda no meio da cadeia do `/api/v1/admin` genérico.
+ *
+ * O custo assumido é o de sempre: a rota mutável nova que alguém
+ * acrescentar aqui precisa lembrar de incluir `origemSegura`. O teste
+ * `it.each` sobre a lista de rotas mutáveis protegidas existe para que
+ * esquecer disso apareça como falha, e não como uma porta aberta em
+ * silêncio.
+ *
+ * Métodos seguros passam direto pelo próprio middleware (GET/HEAD/OPTIONS),
+ * então incluí-lo numa rota de leitura seria inócuo — e as rotas de
+ * auditoria seguem sem ele, porque são só leitura.
+ */
+export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonly string[]): Router {
   const router = Router();
+  const origemSegura = createRequireSafeOrigin(allowedOrigins);
   const envolver = (handler: (req: RequestWithAuthorization, res: Response) => Promise<void>) =>
     (req: RequestWithAuthorization, res: Response, next: NextFunction): void => {
       handler(req, res).catch(next);
@@ -387,7 +409,7 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
    * `organization_relationships` não tem coluna de ciclo de vida, e a
    * única forma seria apagar a linha, perdendo o histórico. Ver PR.
    */
-  router.post("/organizations/:publicId/parent", envolver(async (req, res) => {
+  router.post("/organizations/:publicId/parent", origemSegura, envolver(async (req, res) => {
     const publicId = publicIdDaRota(req, "publicId");
     if (publicId === undefined) {
       erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
@@ -424,7 +446,7 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
    * Nenhuma referência externa é criada, e nada é inferido do Helpdesk
    * ou do Portal: esta organização nasce no Ingressa.
    */
-  router.post("/organizations", envolver(async (req, res) => {
+  router.post("/organizations", origemSegura, envolver(async (req, res) => {
     const corpo = (req.body ?? {}) as Record<string, unknown>;
     const type = typeof corpo["type"] === "string" ? (corpo["type"] as string).trim() : "";
     const legalName = typeof corpo["legalName"] === "string" ? (corpo["legalName"] as string).trim() : "";
@@ -470,7 +492,7 @@ export function createAdminApiRoutes(deps: AdminApiDeps): Router {
    * primeiro. Quando falha, o usuário está correto e completo, e o ADMIN
    * reemite pela ação "Criar convite" que já existe.
    */
-  router.post("/organizations/:publicId/users", envolver(async (req, res) => {
+  router.post("/organizations/:publicId/users", origemSegura, envolver(async (req, res) => {
     const organizationPublicId = publicIdDaRota(req, "publicId");
     if (organizationPublicId === undefined) {
       erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");

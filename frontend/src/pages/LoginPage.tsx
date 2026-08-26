@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
+import { LOGOUT_INCOMPLETO, type EstadoDoLogin } from "../auth.js";
 
 /**
  * Prefixo do ÚNICO destino de retomada aceito.
@@ -24,6 +25,9 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const retomada = destinoDeRetomada(parametros.get("next"));
+  // Estado de navegação, não parâmetro de URL: ninguém precisa (nem
+  // deve) conseguir provocar este aviso digitando um link.
+  const logoutIncompleto = (useLocation().state as EstadoDoLogin | null)?.motivo === LOGOUT_INCOMPLETO;
 
   async function entrar(evento: FormEvent): Promise<void> {
     evento.preventDefault();
@@ -56,6 +60,13 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
         {retomada !== null && (
           <div className="aviso aviso-alerta" role="status">
             Entre para continuar até o aplicativo que você pediu.
+          </div>
+        )}
+        {logoutIncompleto && (
+          <div className="aviso aviso-alerta" role="alert">
+            Você saiu desta tela, mas o servidor não confirmou o encerramento da sessão. Ela pode continuar
+            válida até expirar. Se este computador não é seu, entre novamente e encerre as sessões pela tela
+            da sua conta.
           </div>
         )}
         {erro !== null && <div className="aviso aviso-erro" role="alert">{erro}</div>}
