@@ -1,13 +1,49 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../api.js";
+import { Link, useNavigate } from "react-router-dom";
+import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
+import { FormularioNovaOrganizacao } from "../components/formulariosProvisionamento.js";
 
 export function OrganizacoesPage(): JSX.Element {
   const [tipo, setTipo] = useState("");
   const [busca, setBusca] = useState("");
   const [offset, setOffset] = useState(0);
+  const [criando, setCriando] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [erroCriacao, setErroCriacao] = useState<string | null>(null);
+  const navegar = useNavigate();
+
+  // Grupos para o seletor de associação inicial, carregados junto da
+  // tela para o formulário abrir pronto.
+  const { dados: grupos } = usarRecurso(
+    () => api.organizations(new URLSearchParams({ type: "BUSINESS_GROUP", status: "ACTIVE", limit: "200" })),
+    []
+  );
+
+  /**
+   * Sucesso leva direto ao detalhe da organização criada: é lá que estão
+   * as ações seguintes (novo usuário, associação), e voltar para a lista
+   * obrigaria a procurar o registro recém-criado no meio das outras.
+   */
+  async function criar(payload: {
+    type: string;
+    legalName: string;
+    tradeName?: string | undefined;
+    parentBusinessGroupPublicId?: string | undefined;
+  }): Promise<void> {
+    setEnviando(true);
+    setErroCriacao(null);
+    try {
+      const criada = await api.createOrganization(payload);
+      setCriando(false);
+      navegar(`/admin/organizacoes/${criada.publicId}`);
+    } catch (falha) {
+      setErroCriacao(falha instanceof ApiError ? falha.message : "Falha ao criar a organização.");
+    } finally {
+      setEnviando(false);
+    }
+  }
 
   const { dados, carregando, erro } = usarRecurso(() => {
     const params = new URLSearchParams();
@@ -21,6 +57,25 @@ export function OrganizacoesPage(): JSX.Element {
     <>
       <h2>Organizações</h2>
       <p className="subtitulo">Grupos econômicos e empresas.</p>
+
+      {erroCriacao !== null && (
+        <div className="aviso aviso-erro" role="alert">{erroCriacao}</div>
+      )}
+
+      <div className="barra">
+        <button type="button" className="primario" onClick={() => { setErroCriacao(null); setCriando(true); }}>
+          Nova organização
+        </button>
+      </div>
+
+      {criando && (
+        <FormularioNovaOrganizacao
+          grupos={grupos?.items ?? []}
+          enviando={enviando}
+          onCancelar={() => setCriando(false)}
+          onConfirmar={(payload) => { void criar(payload); }}
+        />
+      )}
 
       <div className="barra">
         <input aria-label="Buscar organização" placeholder="Buscar por razão social…" value={busca}

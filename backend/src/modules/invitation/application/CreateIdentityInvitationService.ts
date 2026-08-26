@@ -20,7 +20,10 @@ export interface InvitationCandidate {
   readonly email: string;
   readonly status: string;
   readonly loginEnabled: boolean;
-  readonly federated: boolean;
+  /** Existe QUALQUER `IdentityExternalReference`, em qualquer status. */
+  readonly hasExternalReference: boolean;
+  /** Existe ao menos uma `IdentityExternalReference` com status `ACTIVE`. */
+  readonly hasActiveExternalReference: boolean;
   readonly hasCredential: boolean;
   readonly hasApplicationAccess: boolean;
 }
@@ -66,12 +69,26 @@ const SUPERSEDED = "SUPERSEDED";
  * administrativa, sempre com ADMIN autenticado como ator.
  *
  * **Elegibilidade (todas obrigatórias, verificadas por identidade):**
- * Identity `ACTIVE`; federada (tem referência externa `ACTIVE` — é o que
- * a torna "importada do Helpdesk", e não uma conta criada aqui); SEM
- * `Credential LOCAL_PASSWORD` (convite é primeiro acesso, nunca troca de
- * senha — para trocar existe outro caminho); e com pelo menos um
- * `ApplicationAccess` GRANTED (convidar quem não tem acesso a produto
- * nenhum entregaria uma senha que não abre nada).
+ * Identity `ACTIVE`; SEM `Credential LOCAL_PASSWORD` (convite é primeiro
+ * acesso, nunca troca de senha — para trocar existe outro caminho); com
+ * pelo menos um `ApplicationAccess` GRANTED (convidar quem não tem
+ * acesso a produto nenhum entregaria uma senha que não abre nada); e
+ * sem federação REVOGADA (ver abaixo).
+ *
+ * **Origem não é mais critério.** A regra anterior exigia federação
+ * ACTIVE, o que na prática significava "só convido quem o importador do
+ * Helpdesk trouxe". Isso barrava exatamente o caso que o provisionamento
+ * administrativo criou: uma pessoa cadastrada AQUI, que nunca teve nem
+ * deveria ter `IdentityExternalReference` — fabricar uma só para passar
+ * na regra seria registrar um vínculo legado que não existe.
+ *
+ * O que a regra protegia continua protegido, e agora de forma direta:
+ * uma identidade cuja federação foi REVOGADA (tem referência externa,
+ * mas nenhuma `ACTIVE`) segue recusada, com
+ * `IDENTITY_FEDERATION_INACTIVE`. Quem perdeu o vínculo com o sistema de
+ * origem não volta pela porta do convite. A distinção é entre "nunca
+ * teve vínculo" (conta local, legítima) e "tinha e perdeu" (recusada) —
+ * um booleano `federated` não conseguia expressar as duas.
  *
  * **Uma identidade inelegível NUNCA derruba o lote.** Ela volta como
  * `SKIPPED` com o `reasonCode`, e as demais seguem. Falhar tudo por
@@ -234,8 +251,11 @@ function motivoDeInelegibilidade(candidato: InvitationCandidate): string | null 
   if (candidato.status !== "ACTIVE") {
     return "IDENTITY_NOT_ACTIVE";
   }
-  if (!candidato.federated) {
-    return "IDENTITY_NOT_FEDERATED";
+  // Federação REVOGADA barra; ausência total de federação não. Conta
+  // criada localmente pelo ADMIN nunca teve referência externa — e não
+  // deve ganhar uma para caber numa regra.
+  if (candidato.hasExternalReference && !candidato.hasActiveExternalReference) {
+    return "IDENTITY_FEDERATION_INACTIVE";
   }
   if (candidato.hasCredential) {
     return "CREDENTIAL_ALREADY_EXISTS";

@@ -11,7 +11,7 @@ import { MariaDbOrganizationRepository } from "../../../organization/infrastruct
 import { GrantApplicationAccessService } from "../../../application/application/GrantApplicationAccessService.js";
 import { MariaDbApplicationRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationRepository.js";
 import { MariaDbApplicationAccessRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
-import { ExistingConnectionUnitOfWork } from "../../application/ExistingConnectionUnitOfWork.js";
+import { ExistingConnectionUnitOfWork } from "../../../../shared/database/ExistingConnectionUnitOfWork.js";
 import type { PilotApplyWriteResult, PilotApplyWriter } from "../../application/RunHelpdeskPilotImportService.js";
 import {
   PILOT_ACCESS_PROFILE,

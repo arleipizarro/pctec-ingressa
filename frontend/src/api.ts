@@ -123,6 +123,47 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  /**
+   * Criação de organização, com associação inicial OPCIONAL.
+   *
+   * `parentBusinessGroupPublicId` só entra no corpo quando escolhido — e
+   * só faz sentido para COMPANY. O servidor recusa a combinação
+   * BUSINESS_GROUP + grupo pai antes de escrever qualquer coisa.
+   */
+  createOrganization: (payload: {
+    type: string;
+    legalName: string;
+    tradeName?: string | undefined;
+    parentBusinessGroupPublicId?: string | undefined;
+  }) =>
+    requisitar<OrganizacaoCriada>("/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  /**
+   * Provisionamento de usuário dentro de uma organização.
+   *
+   * O perfil de acesso NÃO é enviado: o servidor concede sempre `USER`.
+   * Conceder ADMIN continua sendo ação separada, na tela da Identity.
+   *
+   * `sendInvitation` ausente ou `false` cria o usuário sem convite — o
+   * ADMIN pode emitir depois pela tela de convites.
+   */
+  createOrganizationUser: (
+    organizationPublicId: string,
+    payload: {
+      fullName: string;
+      email: string;
+      membershipProfile: string;
+      membershipScope: string;
+      applicationCodes: readonly string[];
+      sendInvitation: boolean;
+    }
+  ) =>
+    requisitar<UsuarioProvisionado>(`/admin/organizations/${organizationPublicId}/users`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   /** Associação inicial: só para COMPANY ainda sem grupo. */
   associateParent: (publicId: string, parentOrganizationPublicId: string) =>
     requisitar<unknown>(`/admin/organizations/${publicId}/parent`, {
@@ -420,6 +461,51 @@ export interface RenomeacaoDeOrganizacao {
   readonly version: number;
   readonly changed: boolean;
   readonly changedFields: readonly string[];
+}
+
+export interface OrganizacaoCriada {
+  readonly publicId: string;
+  readonly type: string;
+  readonly status: string;
+  readonly version: number;
+  /** `null` quando nenhuma associação inicial foi pedida. */
+  readonly relationshipPublicId: string | null;
+}
+
+/**
+ * Resultado do provisionamento.
+ *
+ * `invitation` é um fato SEPARADO de "usuário criado": pode ser `null`
+ * (não foi pedido), `CREATED`, `SKIPPED` (inelegível) ou `FAILED` (a
+ * emissão quebrou). Em nenhum desses casos o usuário deixa de existir —
+ * por isso a tela mostra as duas coisas em separado.
+ */
+export interface ConviteDoProvisionamento {
+  readonly outcome: "CREATED" | "SKIPPED" | "FAILED";
+  readonly reasonCode: string | null;
+  readonly deliveryMode: string | null;
+  readonly expiresAt: string | null;
+  readonly delivered: boolean;
+  /** Modo manual: volta UMA vez. Nunca é persistido nem reexibível. */
+  readonly manualLink: string | null;
+}
+
+export interface UsuarioProvisionado {
+  readonly identityPublicId: string;
+  readonly fullName: string;
+  readonly email: string;
+  readonly status: string;
+  readonly loginEnabled: boolean;
+  readonly membership: {
+    readonly publicId: string;
+    readonly organizationPublicId: string;
+    readonly profile: string;
+    readonly scope: string;
+    readonly status: string;
+  };
+  readonly applicationAccesses: readonly { readonly applicationCode: string; readonly accessProfile: string }[];
+  readonly invitationRequested: boolean;
+  readonly invitation: ConviteDoProvisionamento | null;
 }
 
 export interface OrganizacaoDetalhe extends Organizacao {

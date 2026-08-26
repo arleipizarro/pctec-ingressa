@@ -86,6 +86,10 @@ import { RevokeAllSessionsService } from "../../modules/security/application/Rev
 import { RevokeInvitationService } from "../../modules/invitation/application/RevokeInvitationService.js";
 import { RenameOrganizationService } from "../../modules/organization/application/RenameOrganizationService.js";
 import { CreateOrganizationRelationshipService } from "../../modules/organization/application/CreateOrganizationRelationshipService.js";
+import { CreateOrganizationService } from "../../modules/organization/application/CreateOrganizationService.js";
+import { ProvisionOrganizationService } from "../../modules/organization/application/ProvisionOrganizationService.js";
+import { ProvisionOrganizationUserService } from "../../modules/admin/application/ProvisionOrganizationUserService.js";
+import { CreateIdentityService } from "../../modules/identity/application/CreateIdentityService.js";
 import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
 
 /**
@@ -697,6 +701,60 @@ export function createApp(options: CreateAppOptions = {}): Express {
           (c) => new MariaDbOrganizationRelationshipRepository(c),
           (c) => new MariaDbAuditEventRepository(c)
         ),
+        // Provisionamento (v0.11.x). Os serviços compostos recebem
+        // FÁBRICAS de UnitOfWork, não instâncias: dentro da transação
+        // externa eles são reconstruídos sobre
+        // `ExistingConnectionUnitOfWork`, e é isso que faz as escritas
+        // caírem todas na MESMA transação em vez de uma por serviço.
+        provisionOrganizationService: new ProvisionOrganizationService(
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbOrganizationRepository(c),
+          (uow) =>
+            new CreateOrganizationService(
+              uow,
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          (uow) =>
+            new CreateOrganizationRelationshipService(
+              uow,
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbOrganizationRelationshipRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            )
+        ),
+        provisionOrganizationUserService: new ProvisionOrganizationUserService({
+          unitOfWork: new MariaDbUnitOfWork(sharedPool!),
+          organizationRepositoryFactory: (c) => new MariaDbOrganizationRepository(c),
+          identityRepositoryFactory: (c) => new MariaDbIdentityRepository(c),
+          applicationRepositoryFactory: (c) => new MariaDbApplicationRepository(c),
+          auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c),
+          createIdentityServiceFactory: (uow) =>
+            new CreateIdentityService(
+              uow,
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          createMembershipServiceFactory: (uow) =>
+            new CreateMembershipService(
+              uow,
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbMembershipRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          grantApplicationAccessServiceFactory: (uow) =>
+            new GrantApplicationAccessService(
+              uow,
+              (c) => new MariaDbApplicationRepository(c),
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbApplicationAccessRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            )
+        }),
+        // O MESMO serviço já montado para a tela de convites — uma
+        // implementação só da regra de elegibilidade.
+        createIdentityInvitationService,
         revokeInvitationService: new RevokeInvitationService(
           new MariaDbUnitOfWork(sharedPool!),
           (c) => new MariaDbInvitationRepository(c),

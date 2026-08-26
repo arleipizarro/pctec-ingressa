@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Queryable } from "../../../shared/database/Queryable.js";
 import type { UnitOfWork } from "../../../shared/database/UnitOfWork.js";
-import { ExistingConnectionUnitOfWork } from "../application/ExistingConnectionUnitOfWork.js";
+import { ExistingConnectionUnitOfWork } from "../../../shared/database/ExistingConnectionUnitOfWork.js";
 import {
   MariaDbPilotApplyWriter,
   PilotActionNotApplicableError
