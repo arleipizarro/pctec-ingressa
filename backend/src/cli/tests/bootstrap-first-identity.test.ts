@@ -101,14 +101,18 @@ describe("runBootstrapCli — e-mail nunca aparece completo em stdout/stderr (ha
 });
 
 describe("runBootstrapCli — gate de ambiente (19.)", () => {
-  it("recusa NODE_ENV=production, exit code 2, nunca coleta input nem chama o serviço", async () => {
+  it("recusa NODE_ENV=production SEM autorização temporária, exit 2, nunca coleta input nem chama o serviço", async () => {
+    // v1.0 (ADR-027): produção deixou de ser proibida em absoluto e
+    // passou a exigir cerimônia. Sem a autorização temporária, o
+    // resultado observável é o mesmo de antes — recusa com exit 2, antes
+    // de qualquer coleta de dado ou conexão de escrita.
     const { deps, errorLogs } = makeDeps({ nodeEnv: "production" });
     const collectInputSpy = vi.spyOn(deps, "collectInput" as never);
 
     const exitCode = await runBootstrapCli(deps);
 
     expect(exitCode).toBe(2);
-    expect(errorLogs.join("\n")).toContain("production");
+    expect(errorLogs.join("\n")).toContain("INGRESSA_ALLOW_PRODUCTION_BOOTSTRAP");
     expect(deps.service.execute).not.toHaveBeenCalled();
     expect(collectInputSpy).not.toHaveBeenCalled();
   });

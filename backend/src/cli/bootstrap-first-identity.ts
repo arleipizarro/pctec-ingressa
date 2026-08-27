@@ -1,6 +1,13 @@
 import { createInterface } from "node:readline/promises";
+import { hostname } from "node:os";
 import { stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
+
+import {
+  PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE,
+  normalizeConfirmation,
+  resolveBootstrapCeremony
+} from "./productionBootstrapGuard.js";
 
 import { loadEnv } from "../app/config/env.js";
 import { createPool } from "../shared/database/Pool.js";
@@ -47,16 +54,25 @@ export interface BootstrapCliServiceLike {
 
 export interface BootstrapCliDependencies {
   readonly nodeEnv: string;
+  /** `INGRESSA_ALLOW_PRODUCTION_BOOTSTRAP` — só relevante em produção (ADR-027). */
+  readonly authorization?: string | undefined;
+  /** `DB_NAME` efetivo — entra na frase de confirmação em produção. */
+  readonly databaseName?: string;
+  readonly hostname?: string;
+  /** `true` quando há TTY real. Produção exige. */
+  readonly interactive?: boolean;
   readonly collectInput: () => Promise<BootstrapCliInput>;
-  readonly confirm: () => Promise<string>;
+  readonly confirm: (confirmationPhrase: string) => Promise<string>;
   readonly service: BootstrapCliServiceLike;
   readonly log: (line: string) => void;
   readonly logError: (line: string) => void;
 }
 
-/** Ambientes explicitamente permitidos nesta fatia — produção fica de fora até decisão formal futura (ADR-027, seção "Controles de segurança"). */
-const ALLOWED_NODE_ENVS = new Set(["development", "test"]);
-
+/**
+ * Frase base. Em produção ela é ESTENDIDA por
+ * `resolveBootstrapCeremony` para incluir `PRODUCTION`, o database alvo
+ * e o hostname — ver ADR-027.
+ */
 const CONFIRMATION_PHRASE = "BOOTSTRAP";
 
 /** Mascara um CPF, mostrando só os 2 últimos dígitos — nunca o valor completo. */
@@ -91,12 +107,16 @@ export function maskEmail(email: string): string {
  * (`executeMigrateCommand`).
  */
 export async function runBootstrapCli(deps: BootstrapCliDependencies): Promise<number> {
-  if (!ALLOWED_NODE_ENVS.has(deps.nodeEnv)) {
-    deps.logError(
-      `Bootstrap recusado: NODE_ENV="${deps.nodeEnv}" não é permitido nesta fatia. ` +
-        `Apenas "development"/"test". Produção exige um processo formalmente aprovado no futuro (ver ADR-027).`
-    );
-    return 2;
+  const ceremony = resolveBootstrapCeremony(CONFIRMATION_PHRASE, {
+    nodeEnv: deps.nodeEnv,
+    authorization: deps.authorization,
+    databaseName: deps.databaseName ?? "",
+    hostname: deps.hostname ?? "",
+    interactive: deps.interactive ?? false
+  });
+  if (!ceremony.allowed) {
+    deps.logError(ceremony.message);
+    return ceremony.exitCode;
   }
 
   let input: BootstrapCliInput;
@@ -107,6 +127,9 @@ export async function runBootstrapCli(deps: BootstrapCliDependencies): Promise<n
     return 1;
   }
 
+  for (const linha of ceremony.preamble) {
+    deps.log(linha);
+  }
   deps.log("Você está prestes a criar a PRIMEIRA Identity fundacional da plataforma.");
   deps.log(`Nome: ${input.fullName}`);
   deps.log(`E-mail: ${maskEmail(input.email)}`);
@@ -116,8 +139,8 @@ export async function runBootstrapCli(deps: BootstrapCliDependencies): Promise<n
   deps.log("Isto NÃO cria um administrador funcional (ver ADR-027) — só a Identity fundacional.");
   deps.log("Esta operação não pode ser desfeita por este CLI.");
 
-  const confirmation = await deps.confirm();
-  if (confirmation.trim() !== CONFIRMATION_PHRASE) {
+  const confirmation = await deps.confirm(ceremony.confirmationPhrase);
+  if (normalizeConfirmation(confirmation) !== ceremony.confirmationPhrase) {
     deps.log("Cancelado. Nenhuma conexão de escrita foi aberta, nenhuma Identity foi criada.");
     return 1;
   }
@@ -169,10 +192,10 @@ async function collectInputInteractive(): Promise<BootstrapCliInput> {
   }
 }
 
-async function confirmInteractive(): Promise<string> {
+async function confirmInteractive(confirmationPhrase: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
   try {
-    return await rl.question(`Digite ${CONFIRMATION_PHRASE} para confirmar (qualquer outra coisa cancela): `);
+    return await rl.question(`Digite ${confirmationPhrase} para confirmar (qualquer outra coisa cancela): `);
   } finally {
     rl.close();
   }
@@ -196,6 +219,12 @@ if (isMainModule) {
 
   runBootstrapCli({
     nodeEnv: env.NODE_ENV,
+    // Autorização temporária: lida do ambiente DESTE processo, nunca do
+    // .env — ver ADR-027.
+    authorization: process.env[PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE],
+    databaseName: env.DB_NAME,
+    hostname: hostname(),
+    interactive: stdin.isTTY === true,
     collectInput: collectInputInteractive,
     confirm: confirmInteractive,
     service,

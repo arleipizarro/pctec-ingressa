@@ -1,6 +1,13 @@
 import { createInterface } from "node:readline/promises";
+import { hostname } from "node:os";
 import { stdin, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
+
+import {
+  PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE,
+  normalizeConfirmation,
+  resolveBootstrapCeremony
+} from "./productionBootstrapGuard.js";
 
 import { loadEnv } from "../app/config/env.js";
 import { createPool } from "../shared/database/Pool.js";
@@ -57,17 +64,21 @@ export interface AdminAccessCliServiceLike {
 
 export interface AdminAccessCliDependencies {
   readonly nodeEnv: string;
+  /** `INGRESSA_ALLOW_PRODUCTION_BOOTSTRAP` — só relevante em produção (ADR-027). */
+  readonly authorization?: string | undefined;
+  /** `DB_NAME` efetivo — entra na frase de confirmação em produção. */
+  readonly databaseName?: string;
+  readonly hostname?: string;
+  /** `true` quando há TTY real. Produção exige. */
+  readonly interactive?: boolean;
   readonly collectInput: () => Promise<AdminAccessCliInput>;
   /** Busca a Identity para exibição prévia — leitura, fora da transação do serviço. Lança se não encontrada. */
   readonly findIdentity: (identityPublicId: string) => Promise<IdentitySummary>;
-  readonly confirm: () => Promise<string>;
+  readonly confirm: (confirmationPhrase: string) => Promise<string>;
   readonly service: AdminAccessCliServiceLike;
   readonly log: (line: string) => void;
   readonly logError: (line: string) => void;
 }
-
-/** Mesmo conjunto de ambientes permitidos do bootstrap de Identity (ADR-027) — produção fica de fora até decisão formal futura. */
-const ALLOWED_NODE_ENVS = new Set(["development", "test"]);
 
 const CONFIRMATION_PHRASE = "GRANT_ADMIN";
 
@@ -88,12 +99,16 @@ export function maskEmail(email: string): string {
  * de `bootstrap-first-identity.ts`/`migrate.ts`.
  */
 export async function runAdminAccessBootstrapCli(deps: AdminAccessCliDependencies): Promise<number> {
-  if (!ALLOWED_NODE_ENVS.has(deps.nodeEnv)) {
-    deps.logError(
-      `Concessão administrativa recusada: NODE_ENV="${deps.nodeEnv}" não é permitido nesta fatia. ` +
-        `Apenas "development"/"test". Produção exige um processo formalmente aprovado no futuro.`
-    );
-    return 2;
+  const ceremony = resolveBootstrapCeremony(CONFIRMATION_PHRASE, {
+    nodeEnv: deps.nodeEnv,
+    authorization: deps.authorization,
+    databaseName: deps.databaseName ?? "",
+    hostname: deps.hostname ?? "",
+    interactive: deps.interactive ?? false
+  });
+  if (!ceremony.allowed) {
+    deps.logError(ceremony.message);
+    return ceremony.exitCode;
   }
 
   let input: AdminAccessCliInput;
@@ -121,8 +136,8 @@ export async function runAdminAccessBootstrapCli(deps: AdminAccessCliDependencie
   deps.log("Isto NÃO habilita login nem cria nenhuma Credential — apenas autorização de acesso global.");
   deps.log("Esta operação não pode ser desfeita por este CLI.");
 
-  const confirmation = await deps.confirm();
-  if (confirmation.trim() !== CONFIRMATION_PHRASE) {
+  const confirmation = await deps.confirm(ceremony.confirmationPhrase);
+  if (normalizeConfirmation(confirmation) !== ceremony.confirmationPhrase) {
     deps.log("Cancelado. Nenhuma conexão de escrita foi aberta, nenhum acesso foi concedido.");
     return 1;
   }
@@ -168,10 +183,10 @@ async function collectInputInteractive(): Promise<AdminAccessCliInput> {
   }
 }
 
-async function confirmInteractive(): Promise<string> {
+async function confirmInteractive(confirmationPhrase: string): Promise<string> {
   const rl = createInterface({ input: stdin, output: stdout });
   try {
-    return await rl.question(`Digite ${CONFIRMATION_PHRASE} para confirmar (qualquer outra coisa cancela): `);
+    return await rl.question(`Digite ${confirmationPhrase} para confirmar (qualquer outra coisa cancela): `);
   } finally {
     rl.close();
   }
@@ -198,6 +213,12 @@ if (isMainModule) {
 
   runAdminAccessBootstrapCli({
     nodeEnv: env.NODE_ENV,
+    // Autorização temporária: lida do ambiente DESTE processo, nunca do
+    // .env — ver ADR-027.
+    authorization: process.env[PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE],
+    databaseName: env.DB_NAME,
+    hostname: hostname(),
+    interactive: stdin.isTTY === true,
     collectInput: collectInputInteractive,
     findIdentity: async (identityPublicId) => {
       const publicId = IdentityPublicId.fromString(identityPublicId);
