@@ -387,3 +387,106 @@ describe("novo usuário — cobertura do Portal", () => {
     expect(within(dialogo).getByRole("button", { name: "Criar usuário" })).toBeEnabled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cadastro ambíguo — mais de um vínculo ativo
+// ---------------------------------------------------------------------------
+
+/**
+ * Terceiro estado, e o único em que a tela não pode oferecer o vínculo.
+ *
+ * Tratar ambiguidade como "sem vínculo" mostraria o botão que agrava o
+ * problema; tratá-la como "vinculada" exibiria um `legacyId` que ninguém
+ * escolheu. As duas leituras estão erradas, e a tela precisa dizer a
+ * terceira coisa.
+ */
+describe("cadastro ambíguo", () => {
+  it("empresa com dois vínculos: nem “vinculada” nem “sem vínculo”, e sem botão de vincular", async () => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_AMBIGUA })
+    );
+    renderizar();
+
+    const estado = await screen.findByTestId("portal-estado-empresa");
+    expect(estado).toHaveTextContent(/2 vínculos ativos/i);
+    expect(estado).not.toHaveTextContent(/ainda não está vinculada/i);
+    expect(screen.queryByRole("button", { name: "Vincular ao Portal" })).not.toBeInTheDocument();
+    expect(screen.getByText(/equipe de plataforma/i)).toBeInTheDocument();
+  });
+
+  it("os dois vínculos são listados — nenhum é apresentado como “o” vínculo", async () => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_AMBIGUA })
+    );
+    renderizar();
+
+    await screen.findByTestId("portal-estado-empresa");
+    expect(screen.getByText("71")).toBeInTheDocument();
+    expect(screen.getByText("99")).toBeInTheDocument();
+  });
+
+  it("grupo com empresa ambígua mostra o conflito e o link para ela", async () => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ type: "BUSINESS_GROUP", portal: fixtures.PORTAL_GRUPO_AMBIGUO })
+    );
+    renderizar();
+
+    const aviso = await screen.findByTestId("portal-grupo-ambiguo");
+    expect(aviso).toHaveTextContent(/mais de um vínculo ativo/i);
+    expect(screen.getByRole("link", { name: "EMPRESA AMBIGUA LTDA" })).toHaveAttribute(
+      "href",
+      `/admin/organizacoes/${fixtures.EMPRESA_PENDENTE_PUBLIC_ID}`
+    );
+    // Não é caso de "faltam empresas": ninguém deve sair vinculando.
+    expect(screen.queryByText(/Cobertura completa/i)).not.toBeInTheDocument();
+  });
+
+  it("novo usuário com PCTEC_PORTAL é bloqueado, e a orientação NÃO é “conclua o vínculo”", async () => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_AMBIGUA })
+    );
+    const criar = vi.spyOn(api, "createOrganizationUser");
+    renderizar();
+    const dialogo = await abrirNovoUsuario();
+    await preencher(dialogo, ["PCTEC_PORTAL"]);
+
+    const bloqueio = within(dialogo).getByTestId("portal-bloqueio");
+    expect(bloqueio).toHaveTextContent(/2 vínculos ativos/i);
+    expect(bloqueio).toHaveTextContent(/equipe de plataforma/i);
+    expect(bloqueio).not.toHaveTextContent(/Integração com o Portal/i);
+    expect(within(dialogo).getByRole("button", { name: "Criar usuário" })).toBeDisabled();
+    expect(criar).not.toHaveBeenCalled();
+  });
+
+  it("ambiguidade não afeta outras aplicações", async () => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_AMBIGUA })
+    );
+    renderizar();
+    const dialogo = await abrirNovoUsuario();
+    await preencher(dialogo, ["APP_SINTETICA"]);
+
+    expect(within(dialogo).queryByTestId("portal-bloqueio")).not.toBeInTheDocument();
+    expect(within(dialogo).getByRole("button", { name: "Criar usuário" })).toBeEnabled();
+  });
+
+  it("409 PORTAL_REFERENCE_AMBIGUOUS na criação do vínculo vira frase compreensível", async () => {
+    // Chega quando o cadastro fica ambíguo entre o carregamento da tela e
+    // o clique — a autoridade é o servidor, não o que a tela tinha em mãos.
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
+    );
+    vi.spyOn(api, "linkPortalReference").mockRejectedValue(
+      new ApiError(409, "PORTAL_REFERENCE_AMBIGUOUS", "mensagem genérica do status")
+    );
+    renderizar();
+    await userEvent.click(await screen.findByRole("button", { name: "Vincular ao Portal" }));
+    const dialogo = await screen.findByRole("dialog", { name: "Vincular ao Portal" });
+
+    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
+
+    expect(await screen.findByText(/mais de um vínculo ativo com o Portal/i)).toBeInTheDocument();
+    expect(screen.queryByText("mensagem genérica do status")).not.toBeInTheDocument();
+  });
+});

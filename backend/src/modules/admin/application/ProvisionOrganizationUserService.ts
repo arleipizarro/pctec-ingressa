@@ -19,6 +19,7 @@ import type { CreateMembershipService } from "../../organization/application/Cre
 import type { GrantApplicationAccessService } from "../../application/application/GrantApplicationAccessService.js";
 import { PCTEC_PORTAL_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
 import type { GetPortalOrganizationCoverageService } from "../../organization/application/GetPortalOrganizationCoverageService.js";
+import { PortalReferenceAmbiguousError } from "../../organization/domain/errors/PortalOrganizationReferenceErrors.js";
 import {
   PortalGroupReferenceIncompleteError,
   PortalOrganizationReferenceRequiredError,
@@ -318,11 +319,16 @@ export class ProvisionOrganizationUserService {
    * Recusa o provisionamento quando `PCTEC_PORTAL` foi pedido e a
    * organização não tem cobertura suficiente.
    *
-   * COMPANY precisa da própria referência ACTIVE; BUSINESS_GROUP precisa
-   * de TODAS as filhas ativas vinculadas — e de ao menos uma filha
-   * ativa. Um grupo nunca recebe referência própria, então "vincular o
-   * grupo" não é um caminho de saída: a instrução é vincular cada
-   * empresa.
+   * COMPANY precisa de EXATAMENTE uma referência ACTIVE; BUSINESS_GROUP
+   * precisa de TODAS as filhas ativas vinculadas — e de ao menos uma
+   * filha ativa. Um grupo nunca recebe referência própria, então
+   * "vincular o grupo" não é um caminho de saída: a instrução é vincular
+   * cada empresa.
+   *
+   * **Mais de uma referência ACTIVE recusa com erro próprio**
+   * (`PORTAL_REFERENCE_AMBIGUOUS`). Provisionar aí entregaria um usuário
+   * cujo escopo comercial depende de qual das referências o `LIMIT 1` do
+   * Portal escolher — e ninguém escolheu nenhuma.
    *
    * Organização inexistente NÃO é decidida aqui. A cobertura devolve
    * `undefined` e o fluxo segue como sempre seguiu, para que quem apagou
@@ -340,6 +346,18 @@ export class ProvisionOrganizationUserService {
     const cobertura = await this.deps.portalOrganizationCoverageService.execute(organizationPublicId);
     if (cobertura === undefined || cobertura.covered) {
       return;
+    }
+    // Ambiguidade vem ANTES das demais recusas, e com erro próprio:
+    // "vincule a empresa" seria a instrução errada para quem já tem duas
+    // referências ACTIVE — vincular de novo pioraria o estado. O cadastro
+    // precisa ser corrigido pelo CLI, com registro.
+    if (cobertura.ambiguous) {
+      throw new PortalReferenceAmbiguousError(
+        cobertura.organizationPublicId,
+        cobertura.group === null
+          ? cobertura.activeReferenceCount
+          : cobertura.group.ambiguousCompaniesCount
+      );
     }
     if (cobertura.group === null) {
       throw new PortalOrganizationReferenceRequiredError(cobertura.organizationPublicId);

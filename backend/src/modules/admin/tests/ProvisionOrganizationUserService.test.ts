@@ -40,6 +40,7 @@ import type {
   GetPortalOrganizationCoverageService,
   PortalOrganizationCoverage
 } from "../../organization/application/GetPortalOrganizationCoverageService.js";
+import { PortalReferenceAmbiguousError } from "../../organization/domain/errors/PortalOrganizationReferenceErrors.js";
 
 const ADMIN = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 
@@ -235,7 +236,10 @@ function coberturaDeEmpresa(overrides: Partial<PortalOrganizationCoverage> = {})
     systemCode: "PCTEC_PORTAL",
     entityType: "clientes",
     covered: true,
+    ambiguous: false,
+    activeReferenceCount: 1,
     reference: { publicId: randomUUID(), legacyId: 71, status: "ACTIVE" },
+    ambiguousReferences: [],
     group: null,
     ...overrides
   };
@@ -249,13 +253,18 @@ function coberturaDeGrupo(overrides: Partial<PortalOrganizationCoverage> = {}): 
     systemCode: "PCTEC_PORTAL",
     entityType: "clientes",
     covered: true,
+    ambiguous: false,
+    activeReferenceCount: 0,
     reference: null,
+    ambiguousReferences: [],
     group: {
       totalActiveCompanies: 2,
       linkedCompanies: 2,
       missingCompaniesCount: 0,
       missingCompanies: [],
-      missingCompaniesTruncated: false
+      missingCompaniesTruncated: false,
+      ambiguousCompaniesCount: 0,
+      ambiguousCompanies: []
     },
     ...overrides
   };
@@ -599,7 +608,9 @@ describe("ProvisionOrganizationUserService — cobertura do Portal", () => {
           linkedCompanies: 2,
           missingCompaniesCount: 1,
           missingCompanies: [{ publicId: FALTANTE, legalName: "EMPRESA TRES LTDA", tradeName: "Três" }],
-          missingCompaniesTruncated: false
+          missingCompaniesTruncated: false,
+          ambiguousCompaniesCount: 0,
+          ambiguousCompanies: []
         }
       })
     );
@@ -631,7 +642,9 @@ describe("ProvisionOrganizationUserService — cobertura do Portal", () => {
           linkedCompanies: 0,
           missingCompaniesCount: 0,
           missingCompanies: [],
-          missingCompaniesTruncated: false
+          missingCompaniesTruncated: false,
+          ambiguousCompaniesCount: 0,
+          ambiguousCompanies: []
         }
       })
     );
@@ -656,5 +669,74 @@ describe("ProvisionOrganizationUserService — cobertura do Portal", () => {
     await expect(
       service.execute({ ...PEDIDO_VALIDO, organizationPublicId: randomUUID() })
     ).rejects.toMatchObject({ code: "ORGANIZATION_NOT_FOUND" });
+  });
+});
+
+/**
+ * Estado ambíguo — mais de uma referência ACTIVE.
+ *
+ * Recusado com erro PRÓPRIO, e não com "vincule a empresa": mandar
+ * vincular quem já tem duas referências pioraria o cadastro. E, como
+ * toda recusa de cobertura, acontece antes de a transação abrir.
+ */
+describe("ProvisionOrganizationUserService — ambiguidade de referência", () => {
+  it("COMPANY com duas referências ACTIVE: recusa sem abrir transação", async () => {
+    const { service, identidades, unitOfWork } = montar(
+      coberturaDeEmpresa({
+        covered: false,
+        ambiguous: true,
+        activeReferenceCount: 2,
+        reference: null,
+        ambiguousReferences: [
+          { publicId: randomUUID(), legacyId: 71, status: "ACTIVE" },
+          { publicId: randomUUID(), legacyId: 99, status: "ACTIVE" }
+        ]
+      })
+    );
+
+    const falha = await service.execute(PEDIDO_VALIDO).catch((erro: unknown) => erro);
+
+    expect(falha).toBeInstanceOf(PortalReferenceAmbiguousError);
+    expect((falha as { code: string }).code).toBe("PORTAL_REFERENCE_AMBIGUOUS");
+    expect(unitOfWork.transacoesAbertas).toBe(0);
+    expect(identidades.stored.size).toBe(0);
+  });
+
+  it("GRUPO com uma empresa ambígua: recusa pelo mesmo código, sem transação", async () => {
+    const { service, identidades, unitOfWork } = montar(
+      coberturaDeGrupo({
+        covered: false,
+        ambiguous: true,
+        group: {
+          totalActiveCompanies: 2,
+          linkedCompanies: 1,
+          missingCompaniesCount: 0,
+          missingCompanies: [],
+          missingCompaniesTruncated: false,
+          ambiguousCompaniesCount: 1,
+          ambiguousCompanies: [{ publicId: randomUUID(), legalName: "EMPRESA AMBIGUA LTDA", tradeName: null }]
+        }
+      })
+    );
+
+    const falha = await service
+      .execute({ ...PEDIDO_VALIDO, organizationPublicId: GRUPO, membershipScope: "ORGANIZATION_AND_DESCENDANTS" })
+      .catch((erro: unknown) => erro);
+
+    expect(falha).toBeInstanceOf(PortalReferenceAmbiguousError);
+    expect(unitOfWork.transacoesAbertas).toBe(0);
+    expect(identidades.stored.size).toBe(0);
+  });
+
+  it("sem PCTEC_PORTAL, ambiguidade não afeta nada — a cobertura nem é consultada", async () => {
+    const { service, identidades, consultasDeCobertura } = montar(
+      coberturaDeEmpresa({ covered: false, ambiguous: true, activeReferenceCount: 2, reference: null })
+    );
+
+    const resultado = await service.execute({ ...PEDIDO_VALIDO, applicationCodes: ["PCTEC_HELPDESK"] });
+
+    expect(resultado.status).toBe("ACTIVE");
+    expect(identidades.stored.size).toBe(1);
+    expect(consultasDeCobertura).toEqual([]);
   });
 });

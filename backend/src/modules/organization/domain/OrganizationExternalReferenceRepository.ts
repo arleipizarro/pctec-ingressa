@@ -53,6 +53,28 @@ export interface OrganizationExternalReferenceRepository {
   ): Promise<OrganizationExternalReference | undefined>;
 
   /**
+   * TODAS as referências ACTIVE de uma Organization num
+   * `(systemCode, entityType)` — sem `LIMIT`, sem escolher.
+   *
+   * `findActiveByOrganizationSystemCodeAndEntityType` responde "uma
+   * delas" e é honesto onde a ambiguidade já foi descartada antes. Onde
+   * ela ainda pode existir — a leitura administrativa, o gate de
+   * provisionamento, a criação do vínculo —, devolver "uma delas"
+   * ESCONDE o problema: a tela mostraria um `legacyId` arbitrário como
+   * se fosse o vínculo da empresa, e o próximo `LIMIT 1` do Portal
+   * poderia escolher o outro. Quem precisa decidir olha a lista inteira.
+   *
+   * Obrigatório no contrato, e não opcional: uma implementação que não
+   * saiba responder isto não deve compilar. Um `?` aqui viraria, na
+   * prática, "volta a usar LIMIT 1 quando não der".
+   */
+  findAllActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<readonly OrganizationExternalReference[]>;
+
+  /**
    * Conta as referências ACTIVE de uma Organization num
    * `(systemCode, entityType)`.
    *

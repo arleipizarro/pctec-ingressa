@@ -142,14 +142,37 @@ export const PORTAL_EMPRESA_VINCULADA: IntegracaoComOPortal = {
   systemCode: "PCTEC_PORTAL",
   entityType: "clientes",
   covered: true,
+  ambiguous: false,
+  activeReferenceCount: 1,
   reference: { publicId: "99999999-9999-4999-8999-999999999999", legacyId: 71, status: "ACTIVE" },
+  ambiguousReferences: [],
   group: null
 };
 
 export const PORTAL_EMPRESA_SEM_VINCULO: IntegracaoComOPortal = {
   ...PORTAL_EMPRESA_VINCULADA,
   covered: false,
+  activeReferenceCount: 0,
   reference: null
+};
+
+/**
+ * Cadastro ambíguo — duas referências ACTIVE para a MESMA empresa.
+ *
+ * Alcançável pelo CLI genérico e não impedido pela UNIQUE KEY da
+ * migration 0013. Nem "vinculada" nem "sem vínculo": um terceiro estado,
+ * e o único em que a tela não pode oferecer o botão de vincular.
+ */
+export const PORTAL_EMPRESA_AMBIGUA: IntegracaoComOPortal = {
+  ...PORTAL_EMPRESA_VINCULADA,
+  covered: false,
+  ambiguous: true,
+  activeReferenceCount: 2,
+  reference: null,
+  ambiguousReferences: [
+    { publicId: "99999999-9999-4999-8999-999999999999", legacyId: 71, status: "ACTIVE" },
+    { publicId: "aaaa9999-9999-4999-8999-999999999999", legacyId: 99, status: "ACTIVE" }
+  ]
 };
 
 export const EMPRESA_PENDENTE_PUBLIC_ID = "77777777-7777-4777-8777-777777777777";
@@ -161,7 +184,10 @@ export const PORTAL_GRUPO_PARCIAL: IntegracaoComOPortal = {
   systemCode: "PCTEC_PORTAL",
   entityType: "clientes",
   covered: false,
+  ambiguous: false,
+  activeReferenceCount: 0,
   reference: null,
+  ambiguousReferences: [],
   group: {
     totalActiveCompanies: 2,
     linkedCompanies: 1,
@@ -169,7 +195,26 @@ export const PORTAL_GRUPO_PARCIAL: IntegracaoComOPortal = {
     missingCompanies: [
       { publicId: EMPRESA_PENDENTE_PUBLIC_ID, legalName: "EMPRESA PENDENTE LTDA", tradeName: "Pendente" }
     ],
-    missingCompaniesTruncated: false
+    missingCompaniesTruncated: false,
+    ambiguousCompaniesCount: 0,
+    ambiguousCompanies: []
+  }
+};
+
+/** Grupo cuja cobertura trava por uma empresa AMBÍGUA, não por uma faltando. */
+export const PORTAL_GRUPO_AMBIGUO: IntegracaoComOPortal = {
+  ...PORTAL_GRUPO_PARCIAL,
+  ambiguous: true,
+  group: {
+    totalActiveCompanies: 2,
+    linkedCompanies: 1,
+    missingCompaniesCount: 0,
+    missingCompanies: [],
+    missingCompaniesTruncated: false,
+    ambiguousCompaniesCount: 1,
+    ambiguousCompanies: [
+      { publicId: EMPRESA_PENDENTE_PUBLIC_ID, legalName: "EMPRESA AMBIGUA LTDA", tradeName: "Ambigua" }
+    ]
   }
 };
 
@@ -181,7 +226,9 @@ export const PORTAL_GRUPO_COMPLETO: IntegracaoComOPortal = {
     linkedCompanies: 2,
     missingCompaniesCount: 0,
     missingCompanies: [],
-    missingCompaniesTruncated: false
+    missingCompaniesTruncated: false,
+    ambiguousCompaniesCount: 0,
+    ambiguousCompanies: []
   }
 };
 

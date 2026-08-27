@@ -100,3 +100,43 @@ export class PortalReferenceOrganizationNotFoundError extends DomainError {
     );
   }
 }
+
+/**
+ * A organização tem MAIS DE UMA referência `PCTEC_PORTAL`/`clientes`
+ * ACTIVE.
+ *
+ * O estado não deveria existir, e mesmo assim é alcançável: o CLI
+ * genérico continua podendo criar qualquer par (sistema, entidade,
+ * legacyId), e a UNIQUE KEY da migration 0013 cobre
+ * `(system_code, entity_type, legacy_id)` — nada nela impede duas
+ * referências da MESMA organização apontando para `legacyId`
+ * diferentes.
+ *
+ * **A resposta certa é recusar, não escolher.** `LIMIT 1` devolveria uma
+ * delas e a ambiguidade sumiria da tela: o ADMIN leria um `legacyId`
+ * como se fosse "o" vínculo da empresa, enquanto o Portal poderia
+ * resolver pelo outro. Um usuário provisionado nesse estado enxergaria
+ * o faturamento de um cliente legado que ninguém escolheu.
+ *
+ * Corrigir exige decidir qual referência vale e encerrar a outra — o que
+ * hoje só o CLI faz, com registro. Por isso este erro é CONFLICT: não é
+ * o pedido que está errado, é o cadastro.
+ */
+export class PortalReferenceAmbiguousError extends DomainError {
+  public readonly code = "PORTAL_REFERENCE_AMBIGUOUS";
+  public readonly classification = "CONFLICT" as const;
+
+  public override readonly details: readonly unknown[];
+
+  constructor(organizationPublicId: string, activeReferenceCount: number) {
+    super(
+      `Esta organização tem ${activeReferenceCount} referências ACTIVE de ` +
+        `${PORTAL_REFERENCE_SYSTEM_CODE}/${PORTAL_REFERENCE_ENTITY_TYPE}. Enquanto houver mais de uma, ` +
+        "nenhuma pode ser tratada como o vínculo da empresa."
+    );
+    // Contagem e identificador organizacional. Nenhum `legacyId` aqui:
+    // qual deles citar já seria a escolha que este erro existe para não
+    // fazer. A leitura administrativa lista todas, sem eleger nenhuma.
+    this.details = [{ organizationPublicId, activeReferenceCount }];
+  }
+}

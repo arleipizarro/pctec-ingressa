@@ -115,6 +115,32 @@ export class MariaDbOrganizationExternalReferenceRepository implements Organizat
   }
 
   /**
+   * Todas as referências ACTIVE da Organization naquele sistema/entidade.
+   *
+   * Sem `LIMIT` e sem ordenação implícita de conveniência: quem chama
+   * precisa VER que há mais de uma, não receber uma escolhida por acaso.
+   * `created_at` só ordena para que a leitura seja estável entre
+   * chamadas — nunca para eleger a "certa".
+   */
+  public async findAllActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<readonly OrganizationExternalReference[]> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, organization_public_id, system_code, entity_type, legacy_id,
+              status, created_at, updated_at
+         FROM organization_external_references
+        WHERE organization_public_id = ? AND system_code = ? AND entity_type = ? AND status = 'ACTIVE'
+        ORDER BY created_at ASC, id ASC`,
+      [organizationPublicId.toString(), systemCode.toString(), entityType.toString()]
+    );
+    return (rows as OrganizationExternalReferenceRow[]).map((row) =>
+      OrganizationExternalReference.reconstitute(mapRowToPersistedState(row))
+    );
+  }
+
+  /**
    * Conta referências ACTIVE da Organization naquele sistema/entidade —
    * usado pela fronteira service-to-service do Helpdesk para recusar
    * ambiguidade. Sem `LIMIT`: saber se há mais de uma é o objetivo.

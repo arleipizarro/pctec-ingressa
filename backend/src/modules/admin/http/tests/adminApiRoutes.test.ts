@@ -9,6 +9,7 @@ import type { AuthorizeApplicationAccessService, AuthorizedApplicationAccess } f
 import type { AdminApiDeps } from "../adminApiRoutes.js";
 import {
   PortalReferenceAlreadyLinkedDifferentError,
+  PortalReferenceAmbiguousError,
   PortalReferenceCompanyRequiredError,
   PortalReferenceLegacyIdInvalidError,
   PortalReferenceOrganizationNotActiveError,
@@ -37,8 +38,29 @@ const COBERTURA_DE_EMPRESA = {
   systemCode: "PCTEC_PORTAL",
   entityType: "clientes",
   covered: true,
+  ambiguous: false,
+  activeReferenceCount: 1,
   reference: { publicId: REFERENCIA, legacyId: 71, status: "ACTIVE" },
+  ambiguousReferences: [],
   group: null
+};
+
+/**
+ * Cadastro ambíguo — duas referências ACTIVE para a MESMA empresa.
+ *
+ * Alcançável pelo CLI genérico e não impedido pela UNIQUE KEY da
+ * migration 0013. A resposta lista as duas; nunca elege uma.
+ */
+const COBERTURA_AMBIGUA = {
+  ...COBERTURA_DE_EMPRESA,
+  covered: false,
+  ambiguous: true,
+  activeReferenceCount: 2,
+  reference: null,
+  ambiguousReferences: [
+    { publicId: REFERENCIA, legacyId: 71, status: "ACTIVE" },
+    { publicId: "6f3c2b88-3d5e-4b7a-8c2f-4e7a9c1b5d22", legacyId: 99, status: "ACTIVE" }
+  ]
 };
 
 /** Grupo com uma empresa pendente — o caso que a tela precisa saber listar. */
@@ -49,7 +71,10 @@ const COBERTURA_DE_GRUPO_PARCIAL = {
   systemCode: "PCTEC_PORTAL",
   entityType: "clientes",
   covered: false,
+  ambiguous: false,
+  activeReferenceCount: 0,
   reference: null,
+  ambiguousReferences: [],
   group: {
     totalActiveCompanies: 2,
     linkedCompanies: 1,
@@ -57,7 +82,9 @@ const COBERTURA_DE_GRUPO_PARCIAL = {
     missingCompanies: [
       { publicId: EMPRESA_PENDENTE, legalName: "EMPRESA PENDENTE LTDA", tradeName: "Pendente" }
     ],
-    missingCompaniesTruncated: false
+    missingCompaniesTruncated: false,
+    ambiguousCompaniesCount: 0,
+    ambiguousCompanies: []
   }
 };
 
@@ -764,7 +791,8 @@ describe("API administrativa — integração com o Portal", () => {
     ["BUSINESS_GROUP", new PortalReferenceCompanyRequiredError(), 422, "PORTAL_REFERENCE_COMPANY_REQUIRED"],
     ["organização INACTIVE", new PortalReferenceOrganizationNotActiveError(), 422, "PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE"],
     ["legacyId inválido", new PortalReferenceLegacyIdInvalidError(), 422, "PORTAL_REFERENCE_LEGACY_ID_INVALID"],
-    ["organização inexistente", new PortalReferenceOrganizationNotFoundError(ORG), 404, "PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND"]
+    ["organização inexistente", new PortalReferenceOrganizationNotFoundError(ORG), 404, "PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND"],
+    ["cadastro ambíguo", new PortalReferenceAmbiguousError(ORG, 2), 409, "PORTAL_REFERENCE_AMBIGUOUS"]
   ])("%s vira %s com código estável", async (_rotulo, erroDeDominio, status, code) => {
     const deps = fakeDeps({
       linkPortalOrganizationReferenceService: {
@@ -906,6 +934,74 @@ describe("API administrativa — integração com o Portal", () => {
       for (const proibido of ["password", "senha", "credential", '"token"', "secret", "cnpj", "document_number", "internalid", "internal_id", "select ", "insert "]) {
         expect(texto).not.toContain(proibido);
       }
+    }
+  });
+});
+
+/**
+ * Cadastro ambíguo na fronteira HTTP.
+ *
+ * A leitura precisa DENUNCIAR sem escolher; o provisionamento precisa
+ * recusar antes de escrever. As duas coisas com o mesmo código estável.
+ */
+describe("API administrativa — referência do Portal ambígua", () => {
+  it("o detalhe informa o conflito e NÃO elege um legacyId", async () => {
+    const deps = fakeDeps({
+      portalOrganizationCoverageService: { execute: vi.fn(async () => COBERTURA_AMBIGUA) }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}`);
+
+    expect(r.status).toBe(200);
+    const portal = r.body["portal"] as Record<string, unknown>;
+    expect(portal["ambiguous"]).toBe(true);
+    expect(portal["covered"]).toBe(false);
+    expect(portal["activeReferenceCount"]).toBe(2);
+    // Nenhuma foi escolhida — é o ponto.
+    expect(portal["reference"]).toBeNull();
+    expect(portal["ambiguousReferences"]).toHaveLength(2);
+  });
+
+  it("provisionar com PCTEC_PORTAL em cadastro ambíguo é 409, e o convite não é emitido", async () => {
+    const deps = fakeDeps({
+      provisionOrganizationUserService: {
+        execute: vi.fn(async () => {
+          throw new PortalReferenceAmbiguousError(ORG, 2);
+        })
+      }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um",
+        email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER",
+        membershipScope: "ORGANIZATION_ONLY",
+        applicationCodes: ["PCTEC_PORTAL"],
+        sendInvitation: true
+      })
+    });
+
+    expect(r.status).toBe(409);
+    const erroDaResposta = r.body["error"] as { code: string; details: Record<string, unknown>[] };
+    expect(erroDaResposta.code).toBe("PORTAL_REFERENCE_AMBIGUOUS");
+    expect(erroDaResposta.details[0]).toMatchObject({ activeReferenceCount: 2 });
+    // Nenhum legacyId na recusa: citar um seria a escolha que o erro evita.
+    expect(JSON.stringify(erroDaResposta.details)).not.toContain("legacyId");
+    expect(deps.createIdentityInvitationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("a resposta de ambiguidade não vaza SQL, id interno nem dado pessoal", async () => {
+    const deps = fakeDeps({
+      portalOrganizationCoverageService: { execute: vi.fn(async () => COBERTURA_AMBIGUA) }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}`);
+
+    const texto = JSON.stringify(r.body).toLowerCase();
+    for (const proibido of ["select ", "insert ", "update ", "for update", "internalid", "internal_id", "cnpj", "document_number", '"token"', "credential", "senha"]) {
+      expect(texto).not.toContain(proibido);
     }
   });
 });
