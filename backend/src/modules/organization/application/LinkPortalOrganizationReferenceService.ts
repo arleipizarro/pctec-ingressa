@@ -79,9 +79,10 @@ export interface LinkPortalOrganizationReferenceResult {
  * 1. `SELECT ... FOR UPDATE` na linha da **Organization**. É o único
  *    registro que já existe antes da escrita e que todos os concorrentes
  *    daquela empresa têm em comum. O InnoDB serializa aí — e só ali:
- *    empresas diferentes não esperam umas pelas outras. Vale entre
- *    processos Node, entre réplicas e entre o CLI e a API, porque quem
- *    serializa é o banco, não a memória de um processo;
+ *    empresas diferentes não esperam umas pelas outras. Como quem
+ *    serializa é o banco, e não a memória de um processo, o bloqueio
+ *    vale entre TODOS os chamadores DESTE serviço — inclusive processos
+ *    Node distintos e réplicas da API ligadas ao mesmo MariaDB;
  * 2. **depois** de obter o bloqueio, a leitura das referências ACTIVE.
  *    A ordem importa: um `SELECT ... FOR UPDATE` não é leitura
  *    consistente e não fixa o snapshot da transação, então a leitura
@@ -113,6 +114,22 @@ export interface LinkPortalOrganizationReferenceResult {
  *   `ORGANIZATION_EXTERNAL_REFERENCE_ALREADY_EXISTS` (409) do serviço
  *   oficial sobe intacto. Aquela invariante é global e continua sendo
  *   dele.
+ *
+ * ## O alcance do bloqueio, e o que ele NÃO cobre
+ *
+ * O `FOR UPDATE` só é adquirido por quem executa este serviço. O CLI
+ * genérico `bootstrap-organization-external-reference` escreve por outro
+ * caminho, não passa por aqui e **não adquire este bloqueio** — ele
+ * continua podendo criar uma segunda referência ACTIVE com `legacyId`
+ * diferente para a mesma organização, e nada no banco o impede (a UNIQUE
+ * KEY da migration 0013 cobre outra chave).
+ *
+ * Ou seja: o bloqueio elimina a corrida ENTRE requisições desta
+ * operação; ele não é uma invariante do banco. Contra o cadastro
+ * ambíguo que o CLI ainda alcança, a defesa é outra e é fail-closed —
+ * a leitura administrativa, a criação do vínculo e o gate de
+ * provisionamento detectam mais de uma referência ACTIVE e recusam
+ * (`PORTAL_REFERENCE_AMBIGUOUS`), em vez de escolher uma.
  *
  * ## Nada de revogar, trocar ou excluir
  *
@@ -155,7 +172,10 @@ export class LinkPortalOrganizationReferenceService {
       const referenceRepository = this.organizationExternalReferenceRepositoryFactory(connection);
 
       // (1) Serializa os concorrentes DESTA organização. A partir daqui,
-      // ninguém mais escreve o vínculo dela até o COMMIT.
+      // nenhum outro chamador deste serviço prossegue com o vínculo dela
+      // até o COMMIT. Quem escreve por fora — o CLI genérico — não passa
+      // por aqui e não é contido por este bloqueio; contra o cadastro
+      // ambíguo que isso permite, a defesa é a checagem logo abaixo.
       const organization = await lockRepository.lockByPublicId(organizationPublicId);
       if (organization === undefined) {
         throw new PortalReferenceOrganizationNotFoundError(organizationPublicId.toString());
