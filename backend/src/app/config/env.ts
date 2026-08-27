@@ -145,7 +145,21 @@ const envSchema = z.object({
   INGRESSA_SMTP_PORT: z.coerce.number().int().positive().max(65_535).default(587),
   INGRESSA_SMTP_USER: z.string().default(""),
   INGRESSA_SMTP_PASSWORD: z.string().default(""),
-  INGRESSA_SMTP_FROM: z.string().default("")
+  INGRESSA_SMTP_FROM: z.string().default(""),
+  // Modo de TLS do SMTP, EXPLÍCITO (v1.0):
+  //   "true"  → TLS implícito, a conexão já nasce cifrada (porta 465);
+  //   "false" → conexão elevada por STARTTLS (porta 587).
+  // Ausente = derivada da porta pela convenção universal de SMTP
+  // (465 → implícito, qualquer outra → STARTTLS), documentada em
+  // `resolveSmtpSecure`. A derivação nunca ENFRAQUECE a conexão: em
+  // produção `requireTls` obriga a elevação de qualquer forma, então o
+  // pior caso da omissão é um handshake correto, nunca texto em claro.
+  INGRESSA_SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value === undefined || value.trim().length === 0 ? undefined : value.trim().toLowerCase() === "true"
+    )
 });
 
 export type Env = z.infer<typeof envSchema>;

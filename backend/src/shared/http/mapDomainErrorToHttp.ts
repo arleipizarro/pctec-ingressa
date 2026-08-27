@@ -41,7 +41,14 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
   // para essa chave legada, o mapeamento ainda não foi cadastrado via
   // CLI (bootstrap-identity-external-reference, Fatia 3). "Recurso
   // inexistente" semanticamente, não falta de autorização.
-  IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND: 404
+  IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND: 404,
+  // v1.0 (production readiness): falha TRANSITÓRIA do canal de e-mail.
+  // 503 e não 422 porque nada no pedido do ADMIN está errado — o convite
+  // foi criado, só a entrega não completou. 503 é o único status que diz
+  // à UI "repita a mesma operação", que é exatamente a ação correta.
+  // Distinto de INVITATION_DELIVERY_NOT_CONFIGURED (422), que pede
+  // intervenção de quem opera o servidor, não uma nova tentativa.
+  INVITATION_DELIVERY_FAILED: 503
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({

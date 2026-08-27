@@ -2,6 +2,10 @@ import type { InvitationDelivery } from "../application/InvitationDelivery.js";
 import { InvitationDeliveryNotConfiguredError } from "../domain/errors/InvitationErrors.js";
 import { ManualDevInvitationDelivery } from "./delivery/ManualDevInvitationDelivery.js";
 import {
+  NodemailerInvitationEmailTransport,
+  resolveSmtpSecure
+} from "./delivery/NodemailerInvitationEmailTransport.js";
+import {
   SmtpInvitationDelivery,
   type InvitationEmailTransport
 } from "./delivery/SmtpInvitationDelivery.js";
@@ -9,32 +13,62 @@ import {
 export interface InvitationDeliveryConfig {
   readonly mode: "MANUAL_DEV" | "EMAIL";
   readonly smtpHost: string;
+  readonly smtpPort: number;
   readonly smtpUser: string;
   readonly smtpPassword: string;
   readonly smtpFrom: string;
+  /**
+   * `INGRESSA_SMTP_SECURE` quando informada; `undefined` quando ausente
+   * — e aí `resolveSmtpSecure` deriva da porta, com a convenção
+   * documentada (465 = TLS implícito).
+   */
+  readonly smtpSecure: boolean | undefined;
+  /** `true` em produção — recusa entrega por conexão não cifrada. */
+  readonly requireTls: boolean;
+}
+
+/**
+ * Aceita `alguem@dominio` e `Nome Legível <alguem@dominio>`.
+ *
+ * Validação de FORMA, não de existência da caixa: o objetivo é pegar o
+ * remetente vazio ou visivelmente errado no boot, quando ainda dá para
+ * corrigir, em vez de descobrir na primeira tentativa de convite que o
+ * servidor recusou o envelope.
+ */
+const REMETENTE_VALIDO = /^(?:[^<>]*<\s*[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+\s*>|[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+)$/u;
+
+export function isValidSmtpFrom(valor: string): boolean {
+  return REMETENTE_VALIDO.test(valor.trim());
 }
 
 /**
  * Escolhe o adaptador de entrega — e falha de forma AUDÍVEL quando o
  * modo pedido não tem como funcionar.
  *
- * `INVITATION_DELIVERY_MODE=EMAIL` sem `INGRESSA_SMTP_*` completos, ou
- * sem transporte injetado, lança `InvitationDeliveryNotConfiguredError`
- * citando os NOMES das variáveis ausentes — nunca os valores. O que este
- * arquivo nunca faz é cair de volta para `MANUAL_DEV`: um fallback
- * silencioso transformaria "configuração de produção incompleta" em
- * "links de acesso aparecendo na tela do administrador", que é
- * exatamente o cenário que o gate de produção em `env.ts` existe para
- * impedir.
+ * `INVITATION_DELIVERY_MODE=EMAIL` sem `INGRESSA_SMTP_*` completos lança
+ * `InvitationDeliveryNotConfiguredError` citando os NOMES das variáveis
+ * ausentes — nunca os valores. O que este arquivo nunca faz é cair de
+ * volta para `MANUAL_DEV`: um fallback silencioso transformaria
+ * "configuração de produção incompleta" em "links de acesso aparecendo
+ * na tela do administrador", que é exatamente o cenário que o gate de
+ * produção em `env.ts` existe para impedir.
  *
- * **O transporte SMTP concreto ainda não está ligado neste ambiente** —
- * o backend do Ingressa não carrega biblioteca de e-mail, e a decisão
- * consciente foi não adicioná-la antes de haver SMTP de DEV para
- * validar contra. `SmtpInvitationDelivery` já existe e recebe o
- * transporte por injeção: ligar o modo EMAIL é fornecer um
- * `InvitationEmailTransport` aqui, sem tocar em caso de uso ou domínio.
- * Até lá, pedir EMAIL é um erro operacional explícito — nunca um e-mail
- * que dizemos ter enviado.
+ * **v1.0 — o transporte concreto agora está ligado.** Até esta fatia,
+ * pedir `EMAIL` lançava mesmo com as variáveis completas, porque nenhum
+ * `InvitationEmailTransport` era construído aqui: o backend não carregava
+ * biblioteca de e-mail. Consequência prática, descoberta no preflight de
+ * produção, é que NENHUM valor de `INVITATION_DELIVERY_MODE` permitia o
+ * boot com `NODE_ENV=production` — `MANUAL_DEV` era recusado por
+ * `loadEnv()` e `EMAIL` era recusado aqui. Com `nodemailer` ligado, o
+ * impasse deixa de existir.
+ *
+ * O parâmetro `transport` permanece, e continua sendo por onde os testes
+ * injetam um dublê. Ele nunca é exigido em produção — quando ausente,
+ * este composer constrói o transporte real.
+ *
+ * **Nenhuma conexão de rede acontece aqui.** Construir o transporte não
+ * abre socket e não chama `verify()`: um SMTP fora do ar não pode
+ * impedir o processo de subir.
  */
 export function composeInvitationDelivery(
   config: InvitationDeliveryConfig,
@@ -60,13 +94,26 @@ export function composeInvitationDelivery(
   if (ausentes.length > 0) {
     throw new InvitationDeliveryNotConfiguredError(`variáveis ausentes: ${ausentes.join(", ")}`);
   }
-  if (transport === undefined) {
+  if (!isValidSmtpFrom(config.smtpFrom)) {
+    // Cita o NOME da variável e o defeito, nunca o valor.
     throw new InvitationDeliveryNotConfiguredError(
-      "modo EMAIL pedido, mas nenhum transporte SMTP está ligado neste build"
+      "INGRESSA_SMTP_FROM não é um remetente válido (use alguem@dominio ou Nome <alguem@dominio>)"
     );
   }
 
-  return new SmtpInvitationDelivery(transport, {
+  const transporteEfetivo =
+    transport ??
+    new NodemailerInvitationEmailTransport({
+      host: config.smtpHost.trim(),
+      port: config.smtpPort,
+      user: config.smtpUser.trim(),
+      password: config.smtpPassword,
+      from: config.smtpFrom.trim(),
+      secure: resolveSmtpSecure(config.smtpPort, config.smtpSecure),
+      requireTls: config.requireTls
+    });
+
+  return new SmtpInvitationDelivery(transporteEfetivo, {
     fromLabel: "PCTEC Ingressa",
     supportContact: "a PCTEC"
   });
