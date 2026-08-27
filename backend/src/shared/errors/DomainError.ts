@@ -26,6 +26,23 @@ export abstract class DomainError extends Error {
   public abstract readonly code: string;
   public abstract readonly classification: DomainErrorClassification;
 
+  /**
+   * Dados ESTRUTURADOS que a recusa precisa carregar para ser acionável
+   * — e só isso.
+   *
+   * Existe porque alguns "não pode" só viram instrução quando dizem o
+   * que falta: "o grupo tem 4 empresas, 3 vinculadas, falta esta".
+   * Reconstruir isso a partir da frase seria a UI fazendo parsing de
+   * texto em português.
+   *
+   * Serializado tal e qual em `error.details` pelo handler de
+   * `createApp` — e por isso vale aqui a MESMA regra da `message`:
+   * nunca id interno, SQL, token, credencial, documento ou dado
+   * pessoal. Quem não precisa disto simplesmente não define o campo, e
+   * a resposta continua com `details: []` como sempre.
+   */
+  public readonly details?: readonly unknown[];
+
   protected constructor(message: string) {
     super(message);
     this.name = new.target.name;

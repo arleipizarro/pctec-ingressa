@@ -16,6 +16,8 @@ import type { CreateOrganizationRelationshipService } from "../../organization/a
 import type { ProvisionOrganizationService } from "../../organization/application/ProvisionOrganizationService.js";
 import type { ProvisionOrganizationUserService } from "../application/ProvisionOrganizationUserService.js";
 import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
+import type { GetPortalOrganizationCoverageService } from "../../organization/application/GetPortalOrganizationCoverageService.js";
+import type { LinkPortalOrganizationReferenceService } from "../../organization/application/LinkPortalOrganizationReferenceService.js";
 import { createRequireSafeOrigin } from "../../security/http/requireSafeOrigin.js";
 import type { AuditEventReadRepository } from "../../audit/application/AuditEventReadRepository.js";
 import { normalizarInstante } from "../../audit/infrastructure/MariaDbAuditEventReadRepository.js";
@@ -42,6 +44,13 @@ export interface AdminApiDeps {
    */
   readonly createIdentityInvitationService: CreateIdentityInvitationService;
   readonly auditEventReadRepository: AuditEventReadRepository;
+  /**
+   * Cobertura do Portal — a MESMA consulta que o provisionamento usa
+   * como gate. A tela mostra e o servidor recusa a partir de uma única
+   * definição de "coberto"; duas seriam duas verdades.
+   */
+  readonly portalOrganizationCoverageService: GetPortalOrganizationCoverageService;
+  readonly linkPortalOrganizationReferenceService: LinkPortalOrganizationReferenceService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -159,7 +168,19 @@ export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonl
       naoEncontrado(res, "Organização");
       return;
     }
-    res.status(200).json(detalhe);
+    // `portal` responde a pergunta que a lista crua de referências
+    // externas não responde: "esta empresa está vinculada ao Portal?" e,
+    // num grupo, "quantas empresas ainda faltam?". A tela precisa disso
+    // para decidir o que oferecer, e o número tem que ser o MESMO que o
+    // provisionamento usa para recusar — por isso vem do serviço de
+    // cobertura, e não de um segundo cálculo sobre `externalReferences`.
+    //
+    // `legacyId` aparece aqui porque este contorno inteiro está atrás de
+    // `ApplicationAccess(PCTEC_INGRESSA, ADMIN)`: é o dado que o ADMIN
+    // confere para saber se vinculou o cliente certo. Nenhuma rota de
+    // produto passa a expô-lo.
+    const portal = (await deps.portalOrganizationCoverageService.execute(publicId)) ?? null;
+    res.status(200).json({ ...detalhe, portal });
   }));
 
   router.get("/import-batches", envolver(async (req, res) => {
@@ -473,6 +494,37 @@ export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonl
       correlationId: req.correlationId
     });
     res.status(201).json(resultado);
+  }));
+
+  /**
+   * Vincula uma COMPANY ao Portal — `PCTEC_PORTAL`/`clientes`.
+   *
+   * É a operação que tira o CLI do caminho cotidiano. Corpo mínimo de
+   * propósito: só `legacyId`. `systemCode` e `entityType` são fixos e
+   * NÃO vêm do cliente — deixá-los abertos permitiria cadastrar, por
+   * esta tela, uma referência de qualquer sistema para qualquer
+   * entidade, que é exatamente o poder que o CLI tem e que esta rota não
+   * deve ter. O ator sai da sessão administrativa, como em toda mutação
+   * daqui.
+   *
+   * 201 quando cria; 200 quando o vínculo idêntico já existia (nada
+   * escrito, nenhum evento novo); 409 quando existe outro. Revogar,
+   * trocar e excluir não têm caminho nesta rota — ver o serviço.
+   */
+  router.post("/organizations/:publicId/portal-reference", origemSegura, envolver(async (req, res) => {
+    const publicId = publicIdDaRota(req, "publicId");
+    if (publicId === undefined) {
+      erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+      return;
+    }
+    const corpo = (req.body ?? {}) as Record<string, unknown>;
+    const resultado = await deps.linkPortalOrganizationReferenceService.execute({
+      organizationPublicId: publicId,
+      legacyId: corpo["legacyId"],
+      actorPublicId: atorAutenticado(req),
+      correlationId: req.correlationId
+    });
+    res.status(resultado.alreadyLinked ? 200 : 201).json(resultado);
   }));
 
   /**

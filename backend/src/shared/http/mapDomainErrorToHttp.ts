@@ -48,7 +48,14 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
   // à UI "repita a mesma operação", que é exatamente a ação correta.
   // Distinto de INVITATION_DELIVERY_NOT_CONFIGURED (422), que pede
   // intervenção de quem opera o servidor, não uma nova tentativa.
-  INVITATION_DELIVERY_FAILED: 503
+  INVITATION_DELIVERY_FAILED: 503,
+  // Gestão administrativa da referência do Portal (v0.12.x): mesmo
+  // padrão de IDENTITY_NOT_FOUND — a rota administrativa já autenticou e
+  // autorizou; aqui é genuinamente "essa organização não existe", que é
+  // 404 em todo o resto da API administrativa. Código próprio, e não o
+  // ORGANIZATION_NOT_FOUND compartilhado, justamente para não
+  // reclassificar fluxos que hoje respondem 422 com aquele código.
+  PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: 404
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({

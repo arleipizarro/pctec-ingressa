@@ -46,6 +46,9 @@ import { MariaDbMembershipRepository } from "../../modules/organization/infrastr
 import { MariaDbOrganizationRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRepository.js";
 import { MariaDbOrganizationRelationshipRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationRelationshipRepository.js";
 import { MariaDbOrganizationExternalReferenceRepository } from "../../modules/organization/infrastructure/persistence/MariaDbOrganizationExternalReferenceRepository.js";
+import { CreateOrganizationExternalReferenceService } from "../../modules/organization/application/CreateOrganizationExternalReferenceService.js";
+import { GetPortalOrganizationCoverageService } from "../../modules/organization/application/GetPortalOrganizationCoverageService.js";
+import { LinkPortalOrganizationReferenceService } from "../../modules/organization/application/LinkPortalOrganizationReferenceService.js";
 import { GetActiveOrganizationExternalReferenceService } from "../../modules/organization/application/GetActiveOrganizationExternalReferenceService.js";
 import { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
 import { RequireOrganizationAccessService } from "../../modules/portal/application/RequireOrganizationAccessService.js";
@@ -646,6 +649,23 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createRequireSafeOrigin(allowedOrigins),
     helpdeskImportRouter(options, sharedPool)
   );
+  /**
+   * Cobertura do Portal de uma organização — leitura pura, composta dos
+   * repositórios oficiais, sobre o pool.
+   *
+   * Uma FÁBRICA e não uma instância: o literal de `options.adminApi ??
+   * {...}` só é avaliado quando ninguém injeta as dependências (testes
+   * injetam), e construir isto fora dele criaria repositórios sobre um
+   * pool que talvez nem exista naquele modo. O serviço não guarda
+   * estado, então duas instâncias respondem a mesma coisa — o que
+   * precisa ser único é a DEFINIÇÃO de "coberto", e ela é uma só.
+   */
+  const criarCoberturaDoPortal = (): GetPortalOrganizationCoverageService =>
+    new GetPortalOrganizationCoverageService(
+      new MariaDbOrganizationRepository(sharedPool!),
+      new MariaDbOrganizationRelationshipRepository(sharedPool!),
+      new MariaDbOrganizationExternalReferenceRepository(sharedPool!)
+    );
   // GET /api/v1/admin/whoami — v0.6.x, Fase F. Ordem OBRIGATÓRIA:
   // requireAuthenticatedSession (autenticação) SEMPRE antes de
   // requireApplicationAccess (autorização) — nunca o contrário (task,
@@ -667,6 +687,25 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createAdminApiRoutes(
       options.adminApi ?? {
         readRepository: new MariaDbAdminReadRepository(sharedPool!),
+        // A MESMA composição em dois consumidores: a tela de detalhes
+        // (que mostra a cobertura) e o gate do provisionamento (que
+        // recusa com base nela). Leitura pura sobre o pool — sem
+        // transação, porque nada aqui escreve.
+        portalOrganizationCoverageService: criarCoberturaDoPortal(),
+        // Vínculo administrativo da COMPANY ao Portal. A ESCRITA continua
+        // sendo do serviço oficial de criação de referência externa, com
+        // a transação e a auditoria dele; este serviço só decide quando
+        // ela é legítima.
+        linkPortalOrganizationReferenceService: new LinkPortalOrganizationReferenceService(
+          new MariaDbOrganizationRepository(sharedPool!),
+          new MariaDbOrganizationExternalReferenceRepository(sharedPool!),
+          new CreateOrganizationExternalReferenceService(
+            new MariaDbUnitOfWork(sharedPool!),
+            (c) => new MariaDbOrganizationRepository(c),
+            (c) => new MariaDbOrganizationExternalReferenceRepository(c),
+            (c) => new MariaDbAuditEventRepository(c)
+          )
+        ),
         // Projeção de leitura da auditoria — contrato separado do
         // repositório de ESCRITA, que segue append-only e sem consulta.
         auditEventReadRepository: new MariaDbAuditEventReadRepository(sharedPool!),
@@ -770,7 +809,10 @@ export function createApp(options: CreateAppOptions = {}): Express {
               (c) => new MariaDbIdentityRepository(c),
               (c) => new MariaDbApplicationAccessRepository(c),
               (c) => new MariaDbAuditEventRepository(c)
-            )
+            ),
+          // Fora das fábricas de propósito: a cobertura é conferida
+          // ANTES de a transação abrir, e por isso vive no pool.
+          portalOrganizationCoverageService: criarCoberturaDoPortal()
         }),
         // O MESMO serviço já montado para a tela de convites — uma
         // implementação só da regra de elegibilidade.
@@ -925,7 +967,16 @@ export function createApp(options: CreateAppOptions = {}): Express {
     if (isDomainError(err)) {
       const mapped = mapDomainErrorToHttp(err);
       res.status(mapped.status).json({
-        error: { code: mapped.code, message: mapped.message, correlation_id: correlationId, details: [] }
+        error: {
+          code: mapped.code,
+          message: mapped.message,
+          correlation_id: correlationId,
+          // `details` só existe no erro que precisa dele; os demais
+          // continuam respondendo a lista vazia de sempre. O conteúdo é
+          // do próprio erro de domínio, que responde pela mesma regra de
+          // sigilo da mensagem.
+          details: err.details ?? []
+        }
       });
       return;
     }

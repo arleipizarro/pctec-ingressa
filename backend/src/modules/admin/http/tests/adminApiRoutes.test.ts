@@ -7,6 +7,17 @@ import { SESSION_COOKIE_NAME } from "../../../security/http/sessionCookie.js";
 import type { AuthenticatedPrincipal, ValidateSessionService } from "../../../security/application/ValidateSessionService.js";
 import type { AuthorizeApplicationAccessService, AuthorizedApplicationAccess } from "../../../authorization/application/AuthorizeApplicationAccessService.js";
 import type { AdminApiDeps } from "../adminApiRoutes.js";
+import {
+  PortalReferenceAlreadyLinkedDifferentError,
+  PortalReferenceCompanyRequiredError,
+  PortalReferenceLegacyIdInvalidError,
+  PortalReferenceOrganizationNotActiveError,
+  PortalReferenceOrganizationNotFoundError
+} from "../../../organization/domain/errors/PortalOrganizationReferenceErrors.js";
+import {
+  PortalGroupReferenceIncompleteError,
+  PortalOrganizationReferenceRequiredError
+} from "../../application/errors/UserProvisioningErrors.js";
 
 const ADMIN = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const IDENTITY = "8aceafb7-5ff7-4043-947b-85f035757e9e";
@@ -14,6 +25,41 @@ const ORG = "971ec096-e7de-4cc1-be06-2b4709565757";
 const ACCESS = "4d982417-1cf1-4f21-ad5e-bfbf6c7fd3c1";
 const MEMBERSHIP = "7a9e673b-d2c5-499a-917a-3ecf4ce41558";
 const BATCH = "9bca284c-621c-4e4e-b889-42c0db889b7e";
+const REFERENCIA = "5e2f1a77-2b4c-4c3f-9a1e-3d6f8b0c4a11";
+const GRUPO = "1c0a9e42-6f31-4c8b-9d77-0a5b3c2e1f90";
+const EMPRESA_PENDENTE = "2d1b8f53-7a42-4d9c-8e66-1b6c4d3f2a01";
+
+/** Cobertura como o serviço de consulta a devolve para uma COMPANY vinculada. */
+const COBERTURA_DE_EMPRESA = {
+  organizationPublicId: ORG,
+  organizationType: "COMPANY",
+  organizationStatus: "ACTIVE",
+  systemCode: "PCTEC_PORTAL",
+  entityType: "clientes",
+  covered: true,
+  reference: { publicId: REFERENCIA, legacyId: 71, status: "ACTIVE" },
+  group: null
+};
+
+/** Grupo com uma empresa pendente — o caso que a tela precisa saber listar. */
+const COBERTURA_DE_GRUPO_PARCIAL = {
+  organizationPublicId: GRUPO,
+  organizationType: "BUSINESS_GROUP",
+  organizationStatus: "ACTIVE",
+  systemCode: "PCTEC_PORTAL",
+  entityType: "clientes",
+  covered: false,
+  reference: null,
+  group: {
+    totalActiveCompanies: 2,
+    linkedCompanies: 1,
+    missingCompaniesCount: 1,
+    missingCompanies: [
+      { publicId: EMPRESA_PENDENTE, legalName: "EMPRESA PENDENTE LTDA", tradeName: "Pendente" }
+    ],
+    missingCompaniesTruncated: false
+  }
+};
 
 const PRINCIPAL: AuthenticatedPrincipal = { identityPublicId: ADMIN, sessionPublicId: "22222222-2222-2222-2222-222222222222" };
 const AUTORIZACAO: AuthorizedApplicationAccess = {
@@ -115,6 +161,22 @@ function fakeDeps(overrides: Partial<AdminApiDeps> = {}) {
     auditEventReadRepository: {
       listar: vi.fn(async (f: Record<string, unknown>) => ({ items: [], total: 0, limit: 25, offset: 0, filtros: f })),
       listarTiposDeEvento: vi.fn(async () => ["identity.created"])
+    },
+    // Cobertura do Portal — a MESMA consulta que a tela mostra e que o
+    // provisionamento usa como gate.
+    portalOrganizationCoverageService: {
+      execute: vi.fn(async (publicId: string) => (publicId === ORG ? COBERTURA_DE_EMPRESA : undefined))
+    },
+    linkPortalOrganizationReferenceService: {
+      execute: vi.fn(async (pedido: { organizationPublicId: string; legacyId: unknown }) => ({
+        publicId: REFERENCIA,
+        organizationPublicId: pedido.organizationPublicId,
+        systemCode: "PCTEC_PORTAL",
+        entityType: "clientes",
+        legacyId: Number(pedido.legacyId),
+        status: "ACTIVE",
+        alreadyLinked: false
+      }))
     },
     ...overrides
   } as unknown as AdminApiDeps;
@@ -478,7 +540,8 @@ const MUTACOES_PROTEGIDAS: readonly { caminho: string; corpo: unknown }[] = [
       applicationCodes: ["PCTEC_PORTAL"]
     }
   },
-  { caminho: `/api/v1/admin/organizations/${ORG}/parent`, corpo: { parentOrganizationPublicId: IDENTITY } }
+  { caminho: `/api/v1/admin/organizations/${ORG}/parent`, corpo: { parentOrganizationPublicId: IDENTITY } },
+  { caminho: `/api/v1/admin/organizations/${ORG}/portal-reference`, corpo: { legacyId: 71 } }
 ];
 
 describe("API administrativa — proteção de origem (CSRF)", () => {
@@ -600,5 +663,249 @@ describe("API administrativa — proteção de origem (CSRF)", () => {
     // É o motivo de a guarda não estar no router inteiro: 403 aqui
     // diria "sua origem não é confiável" sobre uma rota que não existe.
     expect(r.status).toBe(404);
+  });
+});
+
+/**
+ * Integração com o Portal — consulta de cobertura e criação do vínculo.
+ *
+ * O que estas rotas precisam garantir, além do óbvio: que `systemCode` e
+ * `entityType` NÃO são escolhidos pelo cliente, que o ator sai da sessão,
+ * que a idempotência não é confundida com criação, e que nada do que sai
+ * daqui carrega segredo, documento ou id interno.
+ */
+describe("API administrativa — integração com o Portal", () => {
+  it("o detalhe da organização carrega a cobertura junto, vinda do serviço de consulta", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}`);
+
+    expect(r.status).toBe(200);
+    expect(r.body["portal"]).toMatchObject({
+      systemCode: "PCTEC_PORTAL",
+      entityType: "clientes",
+      covered: true,
+      reference: { publicId: REFERENCIA, legacyId: 71, status: "ACTIVE" }
+    });
+    expect(deps.portalOrganizationCoverageService.execute).toHaveBeenCalledWith(ORG);
+  });
+
+  it("num grupo, a cobertura descreve o que falta — só com publicId e nomes organizacionais", async () => {
+    const deps = fakeDeps({
+      readRepository: {
+        ...fakeDeps().readRepository,
+        detalharOrganizacao: vi.fn(async () => ({ public_id: GRUPO, type: "BUSINESS_GROUP", members: [], children: [] }))
+      },
+      portalOrganizationCoverageService: { execute: vi.fn(async () => COBERTURA_DE_GRUPO_PARCIAL) }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${GRUPO}`);
+
+    expect(r.status).toBe(200);
+    const portal = r.body["portal"] as { covered: boolean; reference: unknown; group: Record<string, unknown> };
+    expect(portal.covered).toBe(false);
+    // Grupo NUNCA tem referência própria, nem no contrato.
+    expect(portal.reference).toBeNull();
+    expect(portal.group["totalActiveCompanies"]).toBe(2);
+    expect(portal.group["linkedCompanies"]).toBe(1);
+    expect(portal.group["missingCompanies"]).toEqual([
+      { publicId: EMPRESA_PENDENTE, legalName: "EMPRESA PENDENTE LTDA", tradeName: "Pendente" }
+    ]);
+    // A lista de pendentes não carrega id legado de ninguém.
+    expect(JSON.stringify(portal.group["missingCompanies"])).not.toMatch(/legacy/i);
+  });
+
+  it("vincula uma COMPANY ao Portal: 201, systemCode/entityType fixos e ator da sessão", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+      method: "POST",
+      // `systemCode` e `entityType` no corpo são IGNORADOS: a rota não os
+      // lê. Sem isso, esta tela seria um CLI genérico com autenticação.
+      body: JSON.stringify({ legacyId: 71, systemCode: "PCTEC_HUB", entityType: "clientes_grupo" })
+    });
+
+    expect(r.status).toBe(201);
+    expect(r.body).toMatchObject({ systemCode: "PCTEC_PORTAL", entityType: "clientes", legacyId: 71, alreadyLinked: false });
+    const chamada = (deps.linkPortalOrganizationReferenceService.execute as unknown as {
+      mock: { calls: Record<string, unknown>[][] };
+    }).mock.calls[0]?.[0];
+    expect(chamada?.["organizationPublicId"]).toBe(ORG);
+    expect(chamada?.["legacyId"]).toBe(71);
+    expect(chamada?.["actorPublicId"]).toBe(ADMIN);
+    expect(chamada).not.toHaveProperty("systemCode");
+    expect(chamada).not.toHaveProperty("entityType");
+  });
+
+  it("repetir o MESMO vínculo responde 200, não 201 — nada foi criado", async () => {
+    const deps = fakeDeps({
+      linkPortalOrganizationReferenceService: {
+        execute: vi.fn(async () => ({
+          publicId: REFERENCIA,
+          organizationPublicId: ORG,
+          systemCode: "PCTEC_PORTAL",
+          entityType: "clientes",
+          legacyId: 71,
+          status: "ACTIVE",
+          alreadyLinked: true
+        }))
+      }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(r.status).toBe(200);
+    expect(r.body["alreadyLinked"]).toBe(true);
+  });
+
+  it.each([
+    ["vínculo diferente já existente", new PortalReferenceAlreadyLinkedDifferentError(), 409, "PORTAL_REFERENCE_ALREADY_LINKED_DIFFERENT"],
+    ["BUSINESS_GROUP", new PortalReferenceCompanyRequiredError(), 422, "PORTAL_REFERENCE_COMPANY_REQUIRED"],
+    ["organização INACTIVE", new PortalReferenceOrganizationNotActiveError(), 422, "PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE"],
+    ["legacyId inválido", new PortalReferenceLegacyIdInvalidError(), 422, "PORTAL_REFERENCE_LEGACY_ID_INVALID"],
+    ["organização inexistente", new PortalReferenceOrganizationNotFoundError(ORG), 404, "PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND"]
+  ])("%s vira %s com código estável", async (_rotulo, erroDeDominio, status, code) => {
+    const deps = fakeDeps({
+      linkPortalOrganizationReferenceService: {
+        execute: vi.fn(async () => {
+          throw erroDeDominio;
+        })
+      }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(r.status).toBe(status);
+    expect((r.body["error"] as { code: string }).code).toBe(code);
+  });
+
+  it("publicId malformado é 422 e o serviço nem é chamado", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations/nao-e-uuid/portal-reference", {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(r.status).toBe(422);
+    expect(deps.linkPortalOrganizationReferenceService.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["sem sessão", { comSessao: false }, 401],
+    ["sem ADMIN", {}, 403]
+  ])("vínculo %s é recusado pelos gates existentes, sem chegar ao serviço", async (rotulo, extra, status) => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps, ...(rotulo === "sem ADMIN" ? { semAdmin: true } : {}) });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 }),
+      ...extra
+    });
+
+    expect(r.status).toBe(status);
+    expect(deps.linkPortalOrganizationReferenceService.execute).not.toHaveBeenCalled();
+  });
+
+  it("origem insegura é barrada ANTES do serviço", async () => {
+    const deps = fakeDeps();
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 }),
+      origem: "https://atacante.example.invalid"
+    });
+
+    expect(r.status).toBe(403);
+    expect(deps.linkPortalOrganizationReferenceService.execute).not.toHaveBeenCalled();
+  });
+
+  it("o provisionamento recusado por cobertura devolve código estável e os publicIds que faltam", async () => {
+    const deps = fakeDeps({
+      provisionOrganizationUserService: {
+        execute: vi.fn(async () => {
+          throw new PortalGroupReferenceIncompleteError({
+            organizationPublicId: GRUPO,
+            totalActiveCompanies: 2,
+            linkedCompanies: 1,
+            missingCompaniesCount: 1,
+            missingCompanyPublicIds: [EMPRESA_PENDENTE]
+          });
+        })
+      }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${GRUPO}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um",
+        email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER",
+        membershipScope: "ORGANIZATION_AND_DESCENDANTS",
+        applicationCodes: ["PCTEC_PORTAL"],
+        sendInvitation: true
+      })
+    });
+
+    expect(r.status).toBe(422);
+    const erroDaResposta = r.body["error"] as { code: string; details: Record<string, unknown>[] };
+    expect(erroDaResposta.code).toBe("PORTAL_GROUP_REFERENCE_INCOMPLETE");
+    expect(erroDaResposta.details[0]).toMatchObject({
+      totalActiveCompanies: 2,
+      linkedCompanies: 1,
+      missingCompanyPublicIds: [EMPRESA_PENDENTE]
+    });
+
+    // A recusa acontece no serviço, ANTES da transação — e o convite,
+    // que só existe depois do commit, nunca é emitido.
+    expect(deps.createIdentityInvitationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("COMPANY sem referência: o convite não é emitido quando o provisionamento recusa", async () => {
+    const deps = fakeDeps({
+      provisionOrganizationUserService: {
+        execute: vi.fn(async () => {
+          throw new PortalOrganizationReferenceRequiredError(ORG);
+        })
+      }
+    } as unknown as Partial<AdminApiDeps>);
+    const { baseUrl } = await subir({ deps });
+    const r = await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/users`, {
+      method: "POST",
+      body: JSON.stringify({
+        fullName: "Piloto Um",
+        email: "piloto.um@example.invalid",
+        membershipProfile: "CUSTOMER",
+        membershipScope: "ORGANIZATION_ONLY",
+        applicationCodes: ["PCTEC_PORTAL"],
+        sendInvitation: true
+      })
+    });
+
+    expect(r.status).toBe(422);
+    expect((r.body["error"] as { code: string }).code).toBe("PORTAL_ORGANIZATION_REFERENCE_REQUIRED");
+    expect(deps.createIdentityInvitationService.execute).not.toHaveBeenCalled();
+  });
+
+  it("nenhuma resposta do fluxo Portal carrega segredo, documento ou id interno", async () => {
+    const { baseUrl } = await subir();
+    const respostas = [
+      await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}`),
+      await chamar(baseUrl, `/api/v1/admin/organizations/${ORG}/portal-reference`, {
+        method: "POST",
+        body: JSON.stringify({ legacyId: 71 })
+      })
+    ];
+
+    for (const resposta of respostas) {
+      const texto = JSON.stringify(resposta.body).toLowerCase();
+      for (const proibido of ["password", "senha", "credential", '"token"', "secret", "cnpj", "document_number", "internalid", "internal_id", "select ", "insert "]) {
+        expect(texto).not.toContain(proibido);
+      }
+    }
   });
 });
