@@ -77,23 +77,39 @@ Por isso a operação inteira acontece numa **transação só**:
    `ExistingConnectionUnitOfWork` — dentro da MESMA transação, com o
    Aggregate, o evento e a auditoria de sempre.
 
-Quem serializa é o banco, não a memória de um processo: vale entre
-processos Node, entre réplicas e entre a API e o CLI. **Nenhuma migration
-nova**: uma restrição global sobre `(organization_public_id, system_code,
-entity_type)` resolveria a corrida e proibiria, de quebra, mapeamentos
-muitos-para-um legítimos de outros sistemas, que o modelo permite de
-propósito.
+Quem serializa é o banco, e não a memória de um processo: o bloqueio vale
+entre **todos os chamadores desta operação** — inclusive processos Node
+distintos e réplicas da API ligadas ao mesmo MariaDB.
+
+**Nenhuma migration nova**: uma restrição global sobre
+`(organization_public_id, system_code, entity_type)` resolveria a corrida
+e proibiria, de quebra, mapeamentos muitos-para-um legítimos de outros
+sistemas, que o modelo permite de propósito.
+
+### O que o bloqueio NÃO cobre
+
+O `FOR UPDATE` só é adquirido por quem executa esta operação. O CLI
+genérico escreve por outro caminho, **não adquire este bloqueio** e
+continua podendo criar uma segunda referência ACTIVE com `legacyId`
+diferente para a mesma organização — nada no banco o impede.
+
+O bloqueio elimina a corrida entre requisições desta operação; ele não é
+uma invariante do banco. Contra o cadastro ambíguo que o CLI ainda
+alcança, a defesa é a detecção fail-closed descrita a seguir: leitura
+administrativa, criação de vínculo e provisionamento recusam em vez de
+escolher.
 
 Prova: `LinkPortalOrganizationReference.concurrency.integration.test.ts`
-dispara duas chamadas simultâneas, em conexões diferentes, para a mesma
-COMPANY com `legacyId` diferentes — e exige uma criação, uma recusa e um
-único evento de auditoria.
+dispara duas chamadas simultâneas **desta operação**, em conexões
+diferentes, para a mesma COMPANY com `legacyId` diferentes — e exige uma
+criação, uma recusa e um único evento de auditoria.
 
 ## Cadastro ambíguo
 
 Mais de uma referência ACTIVE `PCTEC_PORTAL`/`clientes` na mesma
 organização. Não deveria existir, e é alcançável: o CLI genérico continua
-podendo criar qualquer par, e a UNIQUE KEY não cobre essa chave.
+podendo criar qualquer par, não passa pelo bloqueio desta operação, e a
+UNIQUE KEY não cobre essa chave.
 
 Nesse estado, **nada escolhe por você**:
 
