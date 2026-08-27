@@ -79,6 +79,7 @@ import { MariaDbInvitationRepository } from "../../modules/invitation/infrastruc
 import { MariaDbInvitationEligibilityReadRepository } from "../../modules/invitation/infrastructure/persistence/MariaDbInvitationEligibilityReadRepository.js";
 import { CryptoInvitationTokenGenerator } from "../../modules/invitation/infrastructure/token/invitationToken.js";
 import { composeInvitationDelivery } from "../../modules/invitation/infrastructure/InvitationComposition.js";
+import type { InvitationEmailTransport } from "../../modules/invitation/infrastructure/delivery/SmtpInvitationDelivery.js";
 import { createAdminInvitationRoutes } from "../../modules/invitation/http/adminInvitationRoutes.js";
 import { createInvitationRoutes } from "../../modules/invitation/http/invitationRoutes.js";
 import { BlockIdentityService } from "../../modules/identity/application/BlockIdentityService.js";
@@ -223,6 +224,14 @@ export interface CreateAppOptions {
   readonly getMyApplicationsService?: GetMyApplicationsService;
   readonly createIdentityInvitationService?: CreateIdentityInvitationService;
   readonly redeemIdentityInvitationService?: RedeemIdentityInvitationService;
+  /**
+   * Dublê de transporte SMTP para teste (v1.0). Em produção fica sempre
+   * ausente e `composeInvitationDelivery` constrói o transporte real a
+   * partir de `INGRESSA_SMTP_*` — nunca o contrário: um teste que
+   * esquecesse de injetar não pode acabar falando com um servidor SMTP
+   * de verdade.
+   */
+  readonly invitationEmailTransport?: InvitationEmailTransport;
 }
 
 /**
@@ -520,13 +529,20 @@ export function createApp(options: CreateAppOptions = {}): Express {
       (c) => new MariaDbInvitationRepository(c),
       (c) => new MariaDbAuditEventRepository(c),
       new CryptoInvitationTokenGenerator(),
-      composeInvitationDelivery({
-        mode: env.INVITATION_DELIVERY_MODE,
-        smtpHost: env.INGRESSA_SMTP_HOST,
-        smtpUser: env.INGRESSA_SMTP_USER,
-        smtpPassword: env.INGRESSA_SMTP_PASSWORD,
-        smtpFrom: env.INGRESSA_SMTP_FROM
-      }),
+      composeInvitationDelivery(
+        {
+          mode: env.INVITATION_DELIVERY_MODE,
+          smtpHost: env.INGRESSA_SMTP_HOST,
+          smtpPort: env.INGRESSA_SMTP_PORT,
+          smtpUser: env.INGRESSA_SMTP_USER,
+          smtpPassword: env.INGRESSA_SMTP_PASSWORD,
+          smtpFrom: env.INGRESSA_SMTP_FROM,
+          smtpSecure: env.INGRESSA_SMTP_SECURE,
+          // TLS obrigatório em produção — nunca configurável para menos.
+          requireTls: env.NODE_ENV === "production"
+        },
+        options.invitationEmailTransport
+      ),
       env.INVITATION_TTL_SECONDS,
       env.INGRESSA_PUBLIC_BASE_URL
     );

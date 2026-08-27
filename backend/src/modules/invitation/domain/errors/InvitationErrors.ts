@@ -44,3 +44,25 @@ export class InvitationDeliveryNotConfiguredError extends DomainError {
     super(`Entrega de convite indisponível: ${motivo}.`);
   }
 }
+
+/**
+ * O canal externo recusou ou não respondeu — falha TRANSITÓRIA de envio,
+ * não de configuração.
+ *
+ * Separada de `InvitationDeliveryNotConfiguredError` de propósito: esta
+ * aqui não pede que ninguém mexa em variável de ambiente, pede que a
+ * operação seja REPETIDA. A UI precisa dessa diferença para dizer
+ * "tente novamente" em vez de "chame quem opera o servidor".
+ *
+ * A mensagem é fixa e não carrega nada do erro original — a resposta do
+ * servidor SMTP pode conter credencial, host interno ou o próprio link
+ * do convite.
+ */
+export class InvitationDeliveryFailedError extends DomainError {
+  public readonly code = "INVITATION_DELIVERY_FAILED";
+  public readonly classification = "VALIDATION" as const;
+
+  public constructor() {
+    super("Não foi possível enviar o convite agora. Tente novamente em instantes.");
+  }
+}
