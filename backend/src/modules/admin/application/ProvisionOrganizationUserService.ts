@@ -17,7 +17,11 @@ import { ApplicationNotFoundError } from "../../application/domain/errors/Applic
 import type { CreateIdentityService } from "../../identity/application/CreateIdentityService.js";
 import type { CreateMembershipService } from "../../organization/application/CreateMembershipService.js";
 import type { GrantApplicationAccessService } from "../../application/application/GrantApplicationAccessService.js";
+import { PCTEC_PORTAL_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
+import type { GetPortalOrganizationCoverageService } from "../../organization/application/GetPortalOrganizationCoverageService.js";
 import {
+  PortalGroupReferenceIncompleteError,
+  PortalOrganizationReferenceRequiredError,
   UserProvisioningApplicationNotActiveError,
   UserProvisioningApplicationsRequiredError,
   UserProvisioningScopeNotAllowedForCompanyError
@@ -87,6 +91,17 @@ export interface ProvisionOrganizationUserDeps {
   readonly createIdentityServiceFactory: (uow: UnitOfWork) => CreateIdentityService;
   readonly createMembershipServiceFactory: (uow: UnitOfWork) => CreateMembershipService;
   readonly grantApplicationAccessServiceFactory: (uow: UnitOfWork) => GrantApplicationAccessService;
+  /**
+   * Consulta de cobertura do Portal — a MESMA que a tela usa para
+   * mostrar o estado do vínculo. Uma segunda leitura de "está coberto?"
+   * escrita aqui divergiria da exibida, e a tela passaria a prometer o
+   * que o servidor recusa.
+   *
+   * Não é fábrica sobre a UnitOfWork: é leitura, feita ANTES de a
+   * transação existir. É justamente isso que garante que uma recusa de
+   * cobertura não abre transação nenhuma.
+   */
+  readonly portalOrganizationCoverageService: GetPortalOrganizationCoverageService;
 }
 
 /**
@@ -134,6 +149,19 @@ export interface ProvisionOrganizationUserDeps {
  *
  * Pessoa cadastrada aqui não veio do Helpdesk nem do Portal. Nada é
  * inferido de sistema de origem algum.
+ *
+ * ## Cobertura do Portal — a única pré-condição que roda FORA da transação
+ *
+ * Pedir `PCTEC_PORTAL` para uma organização sem referência
+ * `PCTEC_PORTAL`/`clientes` produz um usuário que existe, tem acesso
+ * concedido e não consegue abrir tela nenhuma: o Portal não resolve a
+ * empresa para o cadastro legado. Por isso a cobertura é conferida antes
+ * de `runInTransaction`, e não junto das demais pré-condições lá dentro
+ * — a recusa não abre transação, não queima `public_id` e não depende de
+ * rollback para não deixar rastro.
+ *
+ * Nenhuma outra aplicação é afetada: sem `PCTEC_PORTAL` na lista, a
+ * consulta sequer acontece.
  */
 export class ProvisionOrganizationUserService {
   public constructor(private readonly deps: ProvisionOrganizationUserDeps) {}
@@ -155,6 +183,20 @@ export class ProvisionOrganizationUserService {
       throw new UserProvisioningApplicationsRequiredError();
     }
     const applicationCodes = codigos.map((codigo) => ApplicationCode.create(codigo));
+
+    // ---- Cobertura do Portal, ANTES de qualquer transação.
+    //
+    // Só quando `PCTEC_PORTAL` foi pedido: quem provisiona para
+    // Helpdesk, Ingressa ou qualquer outra aplicação não depende de
+    // referência do Portal e não paga consulta nenhuma por isso.
+    //
+    // A recusa acontece aqui, fora de `runInTransaction`, e é isso que
+    // sustenta a garantia: sem Identity órfã, sem Membership parcial,
+    // sem ApplicationAccess pela metade e sem convite emitido — nada
+    // chega a ser escrito, porque a transação nunca é aberta. Recusar
+    // lá dentro funcionaria pelo rollback, mas queimaria conexão,
+    // public_id e AUTO_INCREMENT a cada tentativa.
+    await this.garantirCoberturaDoPortal(request.organizationPublicId, codigos);
 
     return this.deps.unitOfWork.runInTransaction(async (connection) => {
       const interna = new ExistingConnectionUnitOfWork(connection);
@@ -269,6 +311,45 @@ export class ProvisionOrganizationUserService {
         },
         applicationAccesses: acessos
       };
+    });
+  }
+
+  /**
+   * Recusa o provisionamento quando `PCTEC_PORTAL` foi pedido e a
+   * organização não tem cobertura suficiente.
+   *
+   * COMPANY precisa da própria referência ACTIVE; BUSINESS_GROUP precisa
+   * de TODAS as filhas ativas vinculadas — e de ao menos uma filha
+   * ativa. Um grupo nunca recebe referência própria, então "vincular o
+   * grupo" não é um caminho de saída: a instrução é vincular cada
+   * empresa.
+   *
+   * Organização inexistente NÃO é decidida aqui. A cobertura devolve
+   * `undefined` e o fluxo segue como sempre seguiu, para que quem apagou
+   * a organização continue recebendo `MEMBERSHIP_ORGANIZATION_NOT_FOUND`
+   * — o mesmo erro de antes, no mesmo lugar. Trocar isso por um erro de
+   * Portal esconderia a causa real atrás de um sintoma.
+   */
+  private async garantirCoberturaDoPortal(
+    organizationPublicId: string,
+    applicationCodes: readonly string[]
+  ): Promise<void> {
+    if (!applicationCodes.includes(PCTEC_PORTAL_APPLICATION_CODE)) {
+      return;
+    }
+    const cobertura = await this.deps.portalOrganizationCoverageService.execute(organizationPublicId);
+    if (cobertura === undefined || cobertura.covered) {
+      return;
+    }
+    if (cobertura.group === null) {
+      throw new PortalOrganizationReferenceRequiredError(cobertura.organizationPublicId);
+    }
+    throw new PortalGroupReferenceIncompleteError({
+      organizationPublicId: cobertura.organizationPublicId,
+      totalActiveCompanies: cobertura.group.totalActiveCompanies,
+      linkedCompanies: cobertura.group.linkedCompanies,
+      missingCompaniesCount: cobertura.group.missingCompaniesCount,
+      missingCompanyPublicIds: cobertura.group.missingCompanies.map((empresa) => empresa.publicId)
     });
   }
 }

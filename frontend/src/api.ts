@@ -164,6 +164,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  /**
+   * Vincula uma COMPANY ao Portal — `PCTEC_PORTAL`/`clientes`.
+   *
+   * O corpo carrega SÓ `legacyId`. `systemCode` e `entityType` são
+   * fixados no servidor e não têm campo: mandá-los daqui transformaria
+   * a tela num CLI genérico de referências externas, que é exatamente o
+   * poder que ela não deve ter.
+   *
+   * Responde 201 quando cria e 200 quando o vínculo idêntico já
+   * existia — os dois caem no mesmo `then`, e `alreadyLinked` distingue.
+   */
+  linkPortalReference: (publicId: string, legacyId: number) =>
+    requisitar<ReferenciaPortalVinculada>(`/admin/organizations/${publicId}/portal-reference`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId })
+    }),
   /** Associação inicial: só para COMPANY ainda sem grupo. */
   associateParent: (publicId: string, parentOrganizationPublicId: string) =>
     requisitar<unknown>(`/admin/organizations/${publicId}/parent`, {
@@ -516,6 +532,66 @@ export interface UsuarioProvisionado {
   readonly invitation: ConviteDoProvisionamento | null;
 }
 
+/** A referência `PCTEC_PORTAL`/`clientes` ACTIVE de uma empresa. */
+export interface ReferenciaDoPortal {
+  /** `public_id` da própria referência — identificador técnico. */
+  readonly publicId: string;
+  /**
+   * `clientes.id` do Portal legado. Só existe em resposta administrativa:
+   * é o dado que o ADMIN confere para saber se vinculou a empresa certa.
+   */
+  readonly legacyId: number;
+  readonly status: string;
+}
+
+/** Empresa do grupo — identificada só por publicId e nomes organizacionais. */
+export interface EmpresaSemReferenciaDoPortal {
+  readonly publicId: string;
+  readonly legalName: string;
+  readonly tradeName: string | null;
+}
+
+export interface CoberturaDeGrupoNoPortal {
+  readonly totalActiveCompanies: number;
+  readonly linkedCompanies: number;
+  readonly missingCompaniesCount: number;
+  readonly missingCompanies: readonly EmpresaSemReferenciaDoPortal[];
+  /** `true` quando a lista acima é um recorte de `missingCompaniesCount`. */
+  readonly missingCompaniesTruncated: boolean;
+}
+
+/**
+ * Estado da integração com o Portal, como o servidor o calcula.
+ *
+ * `covered` é a MESMA leitura que o provisionamento usa para recusar —
+ * a tela não recalcula nada a partir de `externalReferences`, porque uma
+ * segunda definição de "coberto" divergiria da primeira e passaria a
+ * prometer o que o servidor nega.
+ */
+export interface IntegracaoComOPortal {
+  readonly organizationPublicId: string;
+  readonly organizationType: string;
+  readonly organizationStatus: string;
+  readonly systemCode: string;
+  readonly entityType: string;
+  readonly covered: boolean;
+  /** Só em COMPANY. Um BUSINESS_GROUP nunca tem referência própria. */
+  readonly reference: ReferenciaDoPortal | null;
+  /** Só em BUSINESS_GROUP. */
+  readonly group: CoberturaDeGrupoNoPortal | null;
+}
+
+export interface ReferenciaPortalVinculada {
+  readonly publicId: string;
+  readonly organizationPublicId: string;
+  readonly systemCode: string;
+  readonly entityType: string;
+  readonly legacyId: number;
+  readonly status: string;
+  /** `true` quando o vínculo idêntico já existia e nada foi criado. */
+  readonly alreadyLinked: boolean;
+}
+
 export interface OrganizacaoDetalhe extends Organizacao {
   /** Trava otimista: reenviada no salvamento e comparada no servidor. */
   readonly version: number;
@@ -524,6 +600,13 @@ export interface OrganizacaoDetalhe extends Organizacao {
   readonly externalReferences: readonly ReferenciaExterna[];
   readonly members: readonly { public_id: string; full_name: string; profile: string; scope: string; status: string }[];
   readonly applications: readonly { application_code: string; access_profile: string; total: number }[];
+  /**
+   * Opcional de propósito: uma resposta anterior a esta fatia não traz o
+   * campo, e a tela precisa continuar abrindo. Ausente é tratado como
+   * "cobertura desconhecida" — nunca como "não vinculada", que seria
+   * inventar um estado a partir de silêncio.
+   */
+  readonly portal?: IntegracaoComOPortal | null;
 }
 
 export interface Lote {

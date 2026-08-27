@@ -1,7 +1,17 @@
 import { useMemo, useState, type FormEvent } from "react";
-import type { Aplicacao, Organizacao, UsuarioProvisionado } from "../api.js";
+import { Link } from "react-router-dom";
+import type { Aplicacao, IntegracaoComOPortal, Organizacao, UsuarioProvisionado } from "../api.js";
 
 const PERFIS_DE_VINCULO = ["EMPLOYEE", "CUSTOMER", "PARTNER", "SUPPLIER", "SERVICE_ACCOUNT"] as const;
+
+/**
+ * Código da Application do Portal.
+ *
+ * É a única aplicação cuja concessão depende de a organização ter
+ * referência legada — por isso o nome aparece aqui, e não uma lista
+ * genérica de "aplicações com pré-requisito" que hoje teria um item só.
+ */
+const CODIGO_DO_PORTAL = "PCTEC_PORTAL";
 
 /**
  * Criação de organização.
@@ -143,15 +153,31 @@ export function FormularioNovaOrganizacao({
  * administração da plataforma e continua sendo concessão explícita, na
  * tela da pessoa. Um seletor aqui transformaria "criar usuário" num
  * caminho silencioso para criar administrador.
+ *
+ * **`PCTEC_PORTAL` exige cobertura, e a tela mostra isso ANTES do
+ * clique.** Sem referência, o servidor recusa antes de escrever
+ * (`PORTAL_ORGANIZATION_REFERENCE_REQUIRED` /
+ * `PORTAL_GROUP_REFERENCE_INCOMPLETE`) — a checagem daqui não substitui
+ * aquela, e nem poderia: um POST direto na rota nunca passa por este
+ * componente. O que ela evita é a pessoa preencher o formulário inteiro
+ * para descobrir no fim que faltava um passo anterior.
  */
 export function FormularioNovoUsuario({
   organizacao,
+  portal,
   aplicacoes,
   enviando,
   onCancelar,
   onConfirmar
 }: {
   organizacao: { public_id: string; type: string; legal_name: string };
+  /**
+   * Cobertura do Portal, como o servidor a calculou. `undefined`/`null`
+   * (resposta anterior a esta fatia) NÃO bloqueia: quem decide continua
+   * sendo o servidor, e travar a tela por ausência de informação
+   * impediria o que talvez seja legítimo.
+   */
+  portal?: IntegracaoComOPortal | null;
   aplicacoes: readonly Aplicacao[];
   enviando: boolean;
   onCancelar: () => void;
@@ -180,8 +206,14 @@ export function FormularioNovoUsuario({
     );
   }
 
+  // Só bloqueia quando o servidor DISSE que não está coberto. Cobertura
+  // desconhecida (`portal` ausente) segue o caminho normal e deixa a
+  // recusa acontecer onde ela é autoritativa.
+  const portalSelecionado = selecionadas.includes(CODIGO_DO_PORTAL);
+  const semCobertura = portalSelecionado && portal != null && !portal.covered;
+
   const podeEnviar =
-    fullName.trim().length > 0 && email.trim().length > 0 && selecionadas.length > 0;
+    fullName.trim().length > 0 && email.trim().length > 0 && selecionadas.length > 0 && !semCobertura;
 
   function enviar(evento: FormEvent): void {
     evento.preventDefault();
@@ -273,6 +305,7 @@ export function FormularioNovoUsuario({
               Ao menos uma. O perfil concedido é sempre <strong>USER</strong>; conceder ADMIN é uma ação
               separada, na tela da pessoa.
             </p>
+            {semCobertura && <AvisoDeCoberturaDoPortal portal={portal!} />}
           </fieldset>
 
           <label style={{ display: "block", fontWeight: "normal", marginTop: 12 }}>
@@ -296,6 +329,53 @@ export function FormularioNovoUsuario({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Por que `PCTEC_PORTAL` está bloqueado, e o que fazer a respeito.
+ *
+ * Empresa: um link para a própria tela, que é onde o vínculo se resolve
+ * — só que a pessoa já ESTÁ nessa tela, então o texto aponta a seção. O
+ * grupo é o caso que precisa de link de verdade: cada empresa pendente
+ * tem a sua própria página, e é lá que o vínculo acontece.
+ */
+function AvisoDeCoberturaDoPortal({ portal }: { portal: IntegracaoComOPortal }): JSX.Element {
+  if (portal.group === null) {
+    return (
+      <div className="aviso aviso-erro" role="alert" data-testid="portal-bloqueio">
+        Esta empresa ainda não está vinculada ao Portal. Feche este formulário e conclua o vínculo em{" "}
+        <strong>“Integração com o Portal”</strong> antes de conceder <code>{CODIGO_DO_PORTAL}</code>.
+      </div>
+    );
+  }
+
+  if (portal.group.totalActiveCompanies === 0) {
+    return (
+      <div className="aviso aviso-erro" role="alert" data-testid="portal-bloqueio">
+        Este grupo não tem nenhuma empresa ativa. Não há cobertura de Portal a consolidar.
+      </div>
+    );
+  }
+
+  return (
+    <div className="aviso aviso-erro" role="alert" data-testid="portal-bloqueio">
+      Cobertura do Portal incompleta: <strong>{portal.group.linkedCompanies}</strong> de{" "}
+      <strong>{portal.group.totalActiveCompanies}</strong> empresas vinculadas. Vincule as que faltam antes de
+      conceder <code>{CODIGO_DO_PORTAL}</code>:
+      <ul>
+        {portal.group.missingCompanies.map((empresa) => (
+          <li key={empresa.publicId}>
+            <Link to={`/admin/organizacoes/${empresa.publicId}`}>{empresa.legalName}</Link>
+          </li>
+        ))}
+      </ul>
+      {portal.group.missingCompaniesTruncated && (
+        <span>
+          Mostrando {portal.group.missingCompanies.length} de {portal.group.missingCompaniesCount}.
+        </span>
+      )}
     </div>
   );
 }

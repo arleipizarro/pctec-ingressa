@@ -8,6 +8,7 @@
  */
 import type {
   EmpresaDeOrigem,
+  IntegracaoComOPortal,
   Identidade,
   IdentidadeDetalhe,
   ItemDeLote,
@@ -125,6 +126,65 @@ export const ORGANIZACAO_DETALHE: OrganizacaoDetalhe = {
   applications: [{ application_code: "APP_SINTETICA", access_profile: "USER", total: 1 }]
 };
 
+/**
+ * Cobertura do Portal de uma COMPANY já vinculada.
+ *
+ * Fica separada de `ORGANIZACAO_DETALHE` porque cada teste escolhe o
+ * estado que quer descrever: vinculada, não vinculada, grupo completo,
+ * grupo pela metade. O detalhe padrão continua sem `portal`, para que os
+ * testes anteriores a esta fatia sigam exercitando o caminho de
+ * "cobertura desconhecida" — que é o que uma resposta antiga produz.
+ */
+export const PORTAL_EMPRESA_VINCULADA: IntegracaoComOPortal = {
+  organizationPublicId: ORG_PUBLIC_ID,
+  organizationType: "COMPANY",
+  organizationStatus: "ACTIVE",
+  systemCode: "PCTEC_PORTAL",
+  entityType: "clientes",
+  covered: true,
+  reference: { publicId: "99999999-9999-4999-8999-999999999999", legacyId: 71, status: "ACTIVE" },
+  group: null
+};
+
+export const PORTAL_EMPRESA_SEM_VINCULO: IntegracaoComOPortal = {
+  ...PORTAL_EMPRESA_VINCULADA,
+  covered: false,
+  reference: null
+};
+
+export const EMPRESA_PENDENTE_PUBLIC_ID = "77777777-7777-4777-8777-777777777777";
+
+export const PORTAL_GRUPO_PARCIAL: IntegracaoComOPortal = {
+  organizationPublicId: "88888888-8888-4888-8888-888888888888",
+  organizationType: "BUSINESS_GROUP",
+  organizationStatus: "ACTIVE",
+  systemCode: "PCTEC_PORTAL",
+  entityType: "clientes",
+  covered: false,
+  reference: null,
+  group: {
+    totalActiveCompanies: 2,
+    linkedCompanies: 1,
+    missingCompaniesCount: 1,
+    missingCompanies: [
+      { publicId: EMPRESA_PENDENTE_PUBLIC_ID, legalName: "EMPRESA PENDENTE LTDA", tradeName: "Pendente" }
+    ],
+    missingCompaniesTruncated: false
+  }
+};
+
+export const PORTAL_GRUPO_COMPLETO: IntegracaoComOPortal = {
+  ...PORTAL_GRUPO_PARCIAL,
+  covered: true,
+  group: {
+    totalActiveCompanies: 2,
+    linkedCompanies: 2,
+    missingCompaniesCount: 0,
+    missingCompanies: [],
+    missingCompaniesTruncated: false
+  }
+};
+
 export const GRUPO: Organizacao = {
   public_id: "88888888-8888-4888-8888-888888888888",
   type: "BUSINESS_GROUP",
@@ -144,6 +204,18 @@ export const APLICACOES = {
   items: [
     { public_id: "aaaaaaa1-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "APP_SINTETICA", name: "Aplicação Sintética", status: "ACTIVE" },
     { public_id: "aaaaaaa2-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "APP_DESATIVADA", name: "Aplicação Desativada", status: "INACTIVE" }
+  ]
+};
+
+/**
+ * Catálogo com o Portal — usado só onde o teste precisa exercitar a
+ * regra de cobertura. `APLICACOES` segue sem ele para que as suítes que
+ * nada têm a ver com o Portal continuem descrevendo o que descreviam.
+ */
+export const APLICACOES_COM_PORTAL = {
+  items: [
+    ...APLICACOES.items,
+    { public_id: "aaaaaaa3-aaaa-4aaa-8aaa-aaaaaaaaaaaa", code: "PCTEC_PORTAL", name: "PCTEC Portal", status: "ACTIVE" }
   ]
 };
 

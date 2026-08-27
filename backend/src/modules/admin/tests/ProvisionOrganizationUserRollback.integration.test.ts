@@ -18,6 +18,7 @@ import { GrantApplicationAccessService } from "../../application/application/Gra
 import { Identity } from "../../identity/domain/Identity.js";
 import { Organization } from "../../organization/domain/Organization.js";
 import { ProvisionOrganizationUserService } from "../application/ProvisionOrganizationUserService.js";
+import type { GetPortalOrganizationCoverageService } from "../../organization/application/GetPortalOrganizationCoverageService.js";
 
 /**
  * Rollback do provisionamento contra MariaDB REAL.
@@ -155,7 +156,27 @@ describe.skipIf(!shouldRun)("Provisionamento de usuário — rollback (integraç
             return resultado;
           }
         } as GrantApplicationAccessService;
-      }
+      },
+      // Cobertura do Portal declarada como satisfeita.
+      //
+      // Este teste é sobre o InnoDB desfazer uma escrita que JÁ
+      // aconteceu — ele precisa chegar até a segunda concessão. O gate de
+      // cobertura recusa ANTES da transação, então usá-lo de verdade aqui
+      // faria o teste passar pelo motivo errado: nada no banco porque
+      // nada foi tentado. A regra de cobertura tem os testes dela em
+      // `ProvisionOrganizationUserService.test.ts` e nas rotas.
+      portalOrganizationCoverageService: {
+        execute: async () => ({
+          organizationPublicId,
+          organizationType: "COMPANY",
+          organizationStatus: "ACTIVE",
+          systemCode: "PCTEC_PORTAL",
+          entityType: "clientes",
+          covered: true,
+          reference: { publicId: randomUUID(), legacyId: 71, status: "ACTIVE" },
+          group: null
+        })
+      } as unknown as GetPortalOrganizationCoverageService
     });
 
     await expect(

@@ -58,3 +58,78 @@ export class UserProvisioningScopeNotAllowedForCompanyError extends DomainError 
     );
   }
 }
+
+/**
+ * `PCTEC_PORTAL` pedido para uma COMPANY que ainda não tem a referência
+ * `PCTEC_PORTAL`/`clientes` ACTIVE.
+ *
+ * Sem essa referência o Portal não resolve a empresa para
+ * `pctecdb.clientes`: a pessoa entraria, e cada tela comercial
+ * responderia 404. Criar assim mesmo produz um usuário que existe, tem
+ * acesso concedido, recebe convite — e não consegue usar nada. Recusar
+ * ANTES da transação é o que garante que nem a Identity nem o vínculo
+ * nem o convite chegam a existir.
+ */
+export class PortalOrganizationReferenceRequiredError extends DomainError {
+  public readonly code = "PORTAL_ORGANIZATION_REFERENCE_REQUIRED";
+  public readonly classification = "VALIDATION" as const;
+
+  public override readonly details: readonly unknown[];
+
+  constructor(organizationPublicId: string) {
+    super(
+      "Esta empresa ainda não está vinculada ao Portal. Conclua o vínculo em " +
+        "“Integração com o Portal” antes de conceder acesso ao PCTEC_PORTAL."
+    );
+    this.details = [{ organizationPublicId }];
+  }
+}
+
+/**
+ * `PCTEC_PORTAL` pedido num BUSINESS_GROUP cuja cobertura está
+ * incompleta — ou que não tem nenhuma empresa ativa.
+ *
+ * O consolidado de um grupo é a soma das empresas filhas, e o escopo
+ * comercial do Portal é fail-closed: uma filha sem referência derruba a
+ * leitura inteira. Provisionar sobre cobertura parcial entregaria um
+ * usuário cujo dashboard falha por completo — não "quase completo".
+ *
+ * Grupo sem nenhuma empresa ativa cai no MESMO código: não há nada a
+ * consolidar, e "coberto" seria uma resposta falsa sobre um conjunto
+ * vazio.
+ *
+ * `details` carrega contagens e os `publicId` que faltam — nunca id
+ * legado, documento ou dado pessoal. É o que transforma a recusa em
+ * instrução: a tela consegue dizer QUAIS empresas vincular.
+ */
+export class PortalGroupReferenceIncompleteError extends DomainError {
+  public readonly code = "PORTAL_GROUP_REFERENCE_INCOMPLETE";
+  public readonly classification = "VALIDATION" as const;
+
+  public override readonly details: readonly unknown[];
+
+  constructor(cobertura: {
+    readonly organizationPublicId: string;
+    readonly totalActiveCompanies: number;
+    readonly linkedCompanies: number;
+    readonly missingCompaniesCount: number;
+    readonly missingCompanyPublicIds: readonly string[];
+  }) {
+    super(
+      cobertura.totalActiveCompanies === 0
+        ? "Este grupo não tem nenhuma empresa ativa. Não há cobertura de Portal a consolidar."
+        : `Cobertura do Portal incompleta: ${cobertura.linkedCompanies} de ` +
+            `${cobertura.totalActiveCompanies} empresas vinculadas. Vincule as empresas que faltam antes de ` +
+            "conceder acesso ao PCTEC_PORTAL."
+    );
+    this.details = [
+      {
+        organizationPublicId: cobertura.organizationPublicId,
+        totalActiveCompanies: cobertura.totalActiveCompanies,
+        linkedCompanies: cobertura.linkedCompanies,
+        missingCompaniesCount: cobertura.missingCompaniesCount,
+        missingCompanyPublicIds: cobertura.missingCompanyPublicIds
+      }
+    ];
+  }
+}

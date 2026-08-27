@@ -5,9 +5,19 @@ import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
 import { FormularioAssociarGrupo, FormularioEditarOrganizacao } from "../components/formulariosOrganizacao.js";
 import { FormularioNovoUsuario, ResultadoDoProvisionamento } from "../components/formulariosProvisionamento.js";
+import {
+  FormularioVincularPortal,
+  MOTIVOS_DO_VINCULO,
+  SecaoIntegracaoPortal
+} from "../components/integracaoPortal.js";
 import type { UsuarioProvisionado } from "../api.js";
 
-type AcaoPendente = { tipo: "editar" } | { tipo: "associar" } | { tipo: "novoUsuario" } | null;
+type AcaoPendente =
+  | { tipo: "editar" }
+  | { tipo: "associar" }
+  | { tipo: "novoUsuario" }
+  | { tipo: "vincularPortal" }
+  | null;
 
 export function OrganizacaoDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
@@ -89,6 +99,42 @@ export function OrganizacaoDetalhePage(): JSX.Element {
     }
   }
 
+  /**
+   * Vínculo com o Portal.
+   *
+   * Passa por `executar()` de propósito: no sucesso, o `recarregar()`
+   * traz a cobertura nova do servidor — e é isso que faz a seção e o
+   * formulário de usuário mudarem de estado sem recarregar a página
+   * inteira. Recalcular a cobertura localmente daria a mesma tela por um
+   * segundo e divergiria do servidor no seguinte.
+   *
+   * A mensagem de erro vem do `code`, não do status: o único 409 desta
+   * operação não é "o registro mudou", que é o texto genérico.
+   */
+  async function vincularAoPortal(legacyId: number): Promise<void> {
+    setEnviando(true);
+    setMensagem(null);
+    try {
+      const resultado = await api.linkPortalReference(publicId, legacyId);
+      setMensagem({
+        tipo: "ok",
+        texto: resultado.alreadyLinked
+          ? "Esta empresa já estava vinculada a este cliente do Portal."
+          : "Empresa vinculada ao Portal."
+      });
+      setAcaoPendente(null);
+      recarregar();
+    } catch (falha) {
+      const texto =
+        falha instanceof ApiError
+          ? MOTIVOS_DO_VINCULO[falha.code] ?? falha.message
+          : "Falha ao vincular ao Portal.";
+      setMensagem({ tipo: "erro", texto });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
   return (
     <>
       <p className="subtitulo"><Link to="/admin/organizacoes">← Organizações</Link></p>
@@ -161,6 +207,11 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                 </div>
               )}
             </div>
+
+            <SecaoIntegracaoPortal
+              portal={dados.portal}
+              onVincular={() => setAcaoPendente({ tipo: "vincularPortal" })}
+            />
 
             <div className="secao">
               <h3>Referências externas</h3>
@@ -247,10 +298,20 @@ export function OrganizacaoDetalhePage(): JSX.Element {
             {acao?.tipo === "novoUsuario" && (
               <FormularioNovoUsuario
                 organizacao={dados}
+                portal={dados.portal}
                 aplicacoes={aplicacoes?.items ?? []}
                 enviando={enviando}
                 onCancelar={() => setAcaoPendente(null)}
                 onConfirmar={(payload) => { void provisionarUsuario(payload); }}
+              />
+            )}
+
+            {acao?.tipo === "vincularPortal" && (
+              <FormularioVincularPortal
+                organizacao={dados}
+                enviando={enviando}
+                onCancelar={() => setAcaoPendente(null)}
+                onConfirmar={(legacyId) => { void vincularAoPortal(legacyId); }}
               />
             )}
 

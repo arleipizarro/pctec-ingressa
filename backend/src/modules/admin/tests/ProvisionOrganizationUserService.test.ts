@@ -30,10 +30,16 @@ import { IdentityEmailAlreadyExistsError } from "../../identity/domain/errors/Id
 import { MembershipOrganizationNotActiveError } from "../../organization/domain/errors/MembershipErrors.js";
 import { ApplicationNotFoundError } from "../../application/domain/errors/ApplicationErrors.js";
 import {
+  PortalGroupReferenceIncompleteError,
+  PortalOrganizationReferenceRequiredError,
   UserProvisioningApplicationNotActiveError,
   UserProvisioningApplicationsRequiredError,
   UserProvisioningScopeNotAllowedForCompanyError
 } from "../application/errors/UserProvisioningErrors.js";
+import type {
+  GetPortalOrganizationCoverageService,
+  PortalOrganizationCoverage
+} from "../../organization/application/GetPortalOrganizationCoverageService.js";
 
 const ADMIN = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 
@@ -182,8 +188,19 @@ class FakeAuditEventRepository implements AuditEventRepository {
 
 /** Restaura os stores quando o trabalho lança — modela BEGIN/ROLLBACK. */
 class RollbackAwareUnitOfWork implements UnitOfWork {
+  /**
+   * Quantas transações foram ABERTAS.
+   *
+   * A recusa por cobertura de Portal promete mais do que "nada foi
+   * gravado": promete que a transação nem começou. Contar aqui é o que
+   * transforma essa promessa em teste — verificar só o estado final
+   * passaria igual se a escrita tivesse acontecido e sido desfeita.
+   */
+  public transacoesAbertas = 0;
+
   public constructor(private readonly stores: { restaurar: () => () => void }) {}
   public async runInTransaction<T>(work: (connection: Queryable) => Promise<T>): Promise<T> {
+    this.transacoesAbertas += 1;
     const desfazer = this.stores.restaurar();
     const conexao: Queryable = {
       execute: async () => {
@@ -203,7 +220,54 @@ const COMPANY = randomUUID();
 const GRUPO = randomUUID();
 const COMPANY_INATIVA = randomUUID();
 
-function montar() {
+/**
+ * Cobertura do Portal como o serviço de consulta a devolveria.
+ *
+ * O provisionamento só lê `covered`, `group` e `organizationPublicId` —
+ * o resto do contrato existe para a tela. Montar o objeto inteiro aqui
+ * mantém o duplo honesto: se o contrato mudar, o teste quebra junto.
+ */
+function coberturaDeEmpresa(overrides: Partial<PortalOrganizationCoverage> = {}): PortalOrganizationCoverage {
+  return {
+    organizationPublicId: COMPANY,
+    organizationType: "COMPANY",
+    organizationStatus: "ACTIVE",
+    systemCode: "PCTEC_PORTAL",
+    entityType: "clientes",
+    covered: true,
+    reference: { publicId: randomUUID(), legacyId: 71, status: "ACTIVE" },
+    group: null,
+    ...overrides
+  };
+}
+
+function coberturaDeGrupo(overrides: Partial<PortalOrganizationCoverage> = {}): PortalOrganizationCoverage {
+  return {
+    organizationPublicId: GRUPO,
+    organizationType: "BUSINESS_GROUP",
+    organizationStatus: "ACTIVE",
+    systemCode: "PCTEC_PORTAL",
+    entityType: "clientes",
+    covered: true,
+    reference: null,
+    group: {
+      totalActiveCompanies: 2,
+      linkedCompanies: 2,
+      missingCompaniesCount: 0,
+      missingCompanies: [],
+      missingCompaniesTruncated: false
+    },
+    ...overrides
+  };
+}
+
+/**
+ * @param cobertura O que a consulta de cobertura responde. `undefined`
+ * significa "organização não encontrada" — e o padrão é o caso comum,
+ * empresa vinculada, para que os testes anteriores a esta fatia
+ * continuem descrevendo o que sempre descreveram.
+ */
+function montar(cobertura: PortalOrganizationCoverage | undefined = coberturaDeEmpresa()) {
   const identidades = new FakeIdentityRepository();
   const organizacoes = new FakeOrganizationRepository();
   const vinculos = new FakeMembershipRepository();
@@ -265,8 +329,17 @@ function montar() {
     };
   };
 
+  const consultasDeCobertura: string[] = [];
+  const portalOrganizationCoverageService = {
+    execute: async (organizationPublicId: string) => {
+      consultasDeCobertura.push(organizationPublicId);
+      return cobertura;
+    }
+  } as unknown as GetPortalOrganizationCoverageService;
+
+  const unitOfWork = new RollbackAwareUnitOfWork({ restaurar: snapshot });
   const service = new ProvisionOrganizationUserService({
-    unitOfWork: new RollbackAwareUnitOfWork({ restaurar: snapshot }),
+    unitOfWork,
     organizationRepositoryFactory: () => organizacoes,
     identityRepositoryFactory: () => identidades,
     applicationRepositoryFactory: () => aplicacoes,
@@ -275,10 +348,11 @@ function montar() {
     createMembershipServiceFactory: (uow) =>
       new CreateMembershipService(uow, () => identidades, () => organizacoes, () => vinculos, () => auditoria),
     grantApplicationAccessServiceFactory: (uow) =>
-      new GrantApplicationAccessService(uow, () => aplicacoes, () => identidades, () => acessos, () => auditoria)
+      new GrantApplicationAccessService(uow, () => aplicacoes, () => identidades, () => acessos, () => auditoria),
+    portalOrganizationCoverageService
   });
 
-  return { identidades, organizacoes, vinculos, aplicacoes, acessos, auditoria, service };
+  return { identidades, organizacoes, vinculos, aplicacoes, acessos, auditoria, service, consultasDeCobertura, unitOfWork };
 }
 
 const PEDIDO_VALIDO = {
@@ -444,5 +518,143 @@ describe("ProvisionOrganizationUserService — recusas", () => {
     await expect(
       service.execute({ ...PEDIDO_VALIDO, applicationCodes: ["  ", ""] })
     ).rejects.toBeInstanceOf(UserProvisioningApplicationsRequiredError);
+  });
+});
+
+/**
+ * Cobertura do Portal — a pré-condição que roda FORA da transação.
+ *
+ * O que estes testes protegem não é a mensagem de erro: é a promessa de
+ * que uma recusa por cobertura não deixa Identity órfã, Membership
+ * parcial nem ApplicationAccess pela metade — porque a transação nem
+ * chega a abrir. Verificar só o estado final passaria igual se a escrita
+ * tivesse acontecido e sido desfeita pelo rollback.
+ */
+describe("ProvisionOrganizationUserService — cobertura do Portal", () => {
+  it("COMPANY sem referência + PCTEC_PORTAL: recusa sem abrir transação e sem escrever nada", async () => {
+    const { service, identidades, vinculos, acessos, auditoria, unitOfWork } = montar(
+      coberturaDeEmpresa({ covered: false, reference: null })
+    );
+
+    await expect(service.execute(PEDIDO_VALIDO)).rejects.toBeInstanceOf(
+      PortalOrganizationReferenceRequiredError
+    );
+
+    expect(unitOfWork.transacoesAbertas).toBe(0);
+    expect(identidades.stored.size).toBe(0);
+    expect(vinculos.stored).toHaveLength(0);
+    expect(acessos.stored).toHaveLength(0);
+    expect(auditoria.events).toHaveLength(0);
+  });
+
+  it("COMPANY com referência ACTIVE: o provisionamento segue como sempre seguiu", async () => {
+    const { service, identidades, consultasDeCobertura } = montar(coberturaDeEmpresa());
+
+    const resultado = await service.execute(PEDIDO_VALIDO);
+
+    expect(resultado.status).toBe("ACTIVE");
+    expect(identidades.stored.size).toBe(1);
+    expect(consultasDeCobertura).toEqual([COMPANY]);
+  });
+
+  it("sem PCTEC_PORTAL na lista, a cobertura sequer é consultada", async () => {
+    // Empresa deliberadamente SEM cobertura: quem provisiona para outra
+    // aplicação não depende de referência do Portal, e não paga por ela.
+    const { service, identidades, consultasDeCobertura } = montar(
+      coberturaDeEmpresa({ covered: false, reference: null })
+    );
+
+    const resultado = await service.execute({
+      ...PEDIDO_VALIDO,
+      applicationCodes: ["PCTEC_HELPDESK"]
+    });
+
+    expect(resultado.applicationAccesses).toEqual([
+      { applicationCode: "PCTEC_HELPDESK", accessProfile: "USER" }
+    ]);
+    expect(identidades.stored.size).toBe(1);
+    expect(consultasDeCobertura).toEqual([]);
+  });
+
+  it("BUSINESS_GROUP com todas as empresas cobertas: provisiona normalmente", async () => {
+    const { service, identidades } = montar(coberturaDeGrupo());
+
+    const resultado = await service.execute({
+      ...PEDIDO_VALIDO,
+      organizationPublicId: GRUPO,
+      membershipScope: "ORGANIZATION_AND_DESCENDANTS"
+    });
+
+    expect(resultado.membership.organizationPublicId).toBe(GRUPO);
+    expect(identidades.stored.size).toBe(1);
+  });
+
+  it("BUSINESS_GROUP parcialmente coberto: recusa sem transação, dizendo quais empresas faltam", async () => {
+    const FALTANTE = randomUUID();
+    const { service, identidades, unitOfWork } = montar(
+      coberturaDeGrupo({
+        covered: false,
+        group: {
+          totalActiveCompanies: 3,
+          linkedCompanies: 2,
+          missingCompaniesCount: 1,
+          missingCompanies: [{ publicId: FALTANTE, legalName: "EMPRESA TRES LTDA", tradeName: "Três" }],
+          missingCompaniesTruncated: false
+        }
+      })
+    );
+
+    const falha = await service
+      .execute({ ...PEDIDO_VALIDO, organizationPublicId: GRUPO, membershipScope: "ORGANIZATION_AND_DESCENDANTS" })
+      .catch((erro: unknown) => erro);
+
+    expect(falha).toBeInstanceOf(PortalGroupReferenceIncompleteError);
+    expect(unitOfWork.transacoesAbertas).toBe(0);
+    expect(identidades.stored.size).toBe(0);
+
+    // A recusa precisa ser acionável: sem os publicIds, a tela só
+    // conseguiria dizer "falta alguma coisa".
+    const detalhe = (falha as PortalGroupReferenceIncompleteError).details[0] as Record<string, unknown>;
+    expect(detalhe["totalActiveCompanies"]).toBe(3);
+    expect(detalhe["linkedCompanies"]).toBe(2);
+    expect(detalhe["missingCompanyPublicIds"]).toEqual([FALTANTE]);
+    // Nem nome de pessoa, nem id legado, nem documento.
+    expect(JSON.stringify(detalhe)).not.toContain("legacyId");
+  });
+
+  it("BUSINESS_GROUP sem nenhuma empresa ativa: também recusa", async () => {
+    const { service, identidades, unitOfWork } = montar(
+      coberturaDeGrupo({
+        covered: false,
+        group: {
+          totalActiveCompanies: 0,
+          linkedCompanies: 0,
+          missingCompaniesCount: 0,
+          missingCompanies: [],
+          missingCompaniesTruncated: false
+        }
+      })
+    );
+
+    const falha = await service
+      .execute({ ...PEDIDO_VALIDO, organizationPublicId: GRUPO, membershipScope: "ORGANIZATION_AND_DESCENDANTS" })
+      .catch((erro: unknown) => erro);
+
+    expect(falha).toBeInstanceOf(PortalGroupReferenceIncompleteError);
+    expect((falha as PortalGroupReferenceIncompleteError).message).toContain("nenhuma empresa ativa");
+    expect(unitOfWork.transacoesAbertas).toBe(0);
+    expect(identidades.stored.size).toBe(0);
+  });
+
+  it("organização inexistente continua sendo erro de vínculo, não de Portal", async () => {
+    // A cobertura devolve `undefined`; quem responde é o mesmo caminho de
+    // sempre (`MembershipOrganizationNotFoundError`, código
+    // `ORGANIZATION_NOT_FOUND`), dentro da transação. Trocar isso por um
+    // erro de Portal esconderia a causa real atrás de um sintoma.
+    const { service } = montar(undefined);
+
+    await expect(
+      service.execute({ ...PEDIDO_VALIDO, organizationPublicId: randomUUID() })
+    ).rejects.toMatchObject({ code: "ORGANIZATION_NOT_FOUND" });
   });
 });
