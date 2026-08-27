@@ -7,6 +7,11 @@ import { loadEnv } from "../../../app/config/env.js";
 import { createPool } from "../../../shared/database/Pool.js";
 import { MariaDbIdentityRepository } from "../../identity/infrastructure/persistence/MariaDbIdentityRepository.js";
 import { MariaDbAuditEventRepository } from "../../audit/infrastructure/MariaDbAuditEventRepository.js";
+import { MariaDbApplicationRepository } from "../../application/infrastructure/persistence/MariaDbApplicationRepository.js";
+import { MariaDbApplicationAccessRepository } from "../../application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
+import { ApplicationAccess } from "../../application/domain/ApplicationAccess.js";
+import { ApplicationCode } from "../../application/domain/value-objects/ApplicationCode.js";
+import { PCTEC_INGRESSA_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
 import { MariaDbCredentialRepository } from "../infrastructure/persistence/MariaDbCredentialRepository.js";
 import { Argon2PasswordHasher } from "../infrastructure/hashing/Argon2PasswordHasher.js";
 import { BootstrapFirstCredentialService } from "../application/BootstrapFirstCredentialService.js";
@@ -66,6 +71,7 @@ describe.skipIf(!shouldRun)(
   () => {
     let pool: Pool;
     let fixtureIdentityPublicId: string | undefined;
+  let fixtureAccessPublicId: string | undefined;
     let createdCredentialPublicId: string | undefined;
 
     beforeAll(async () => {
@@ -104,12 +110,38 @@ describe.skipIf(!shouldRun)(
       });
       await identityRepository.insert(fixtureIdentity);
       fixtureIdentityPublicId = fixtureIdentity.getPublicId().toString();
+
+      // v1.0 (ADR-027, emenda): a primeira Credential só pode ser criada
+      // para a Identity que possui o ADMIN fundacional de PCTEC_INGRESSA.
+      // A fixture precisa, portanto, receber esse acesso — não é um
+      // detalhe do teste, é a pré-condição que o serviço passou a exigir.
+      const applicationRepository = new MariaDbApplicationRepository(pool);
+      const applicationAccessRepository = new MariaDbApplicationAccessRepository(pool);
+      const ingressaApplication = await applicationRepository.findByCode(
+        ApplicationCode.create(PCTEC_INGRESSA_APPLICATION_CODE)
+      );
+      if (ingressaApplication === undefined) {
+        throw new Error("Seed 0007 ausente no banco de teste — PCTEC_INGRESSA precisa existir.");
+      }
+      const fixtureAccess = ApplicationAccess.grantFoundationalAdminAccess({
+        identityPublicId: fixtureIdentityPublicId,
+        applicationPublicId: ingressaApplication.getPublicId().toString(),
+        correlationId: "00000000-0000-0000-0000-000000000000"
+      });
+      await applicationAccessRepository.insert(fixtureAccess);
+      fixtureAccessPublicId = fixtureAccess.getPublicId().toString();
     });
 
     afterAll(async () => {
       if (createdCredentialPublicId !== undefined) {
         await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [createdCredentialPublicId]);
         await pool.execute(`DELETE FROM credentials WHERE public_id = ?`, [createdCredentialPublicId]);
+      }
+      if (fixtureAccessPublicId !== undefined) {
+        // Só a linha criada por esta fixture — nunca um DELETE amplo em
+        // application_accesses.
+        await pool.execute(`DELETE FROM audit_events WHERE aggregate_public_id = ?`, [fixtureAccessPublicId]);
+        await pool.execute(`DELETE FROM application_accesses WHERE public_id = ?`, [fixtureAccessPublicId]);
       }
       if (fixtureIdentityPublicId !== undefined) {
         // Remove exclusivamente a Identity fixture criada por este
@@ -126,7 +158,9 @@ describe.skipIf(!shouldRun)(
         (connection) => new MariaDbCredentialRepository(connection),
         (connection) => new MariaDbIdentityRepository(connection),
         (connection) => new MariaDbAuditEventRepository(connection),
-        new Argon2PasswordHasher()
+        new Argon2PasswordHasher(),
+        (connection) => new MariaDbApplicationRepository(connection),
+        (connection) => new MariaDbApplicationAccessRepository(connection)
       );
 
       const result = await service.execute({
@@ -176,7 +210,9 @@ describe.skipIf(!shouldRun)(
         (connection) => new MariaDbCredentialRepository(connection),
         (connection) => new MariaDbIdentityRepository(connection),
         (connection) => new MariaDbAuditEventRepository(connection),
-        new Argon2PasswordHasher()
+        new Argon2PasswordHasher(),
+        (connection) => new MariaDbApplicationRepository(connection),
+        (connection) => new MariaDbApplicationAccessRepository(connection)
       );
 
       await expect(

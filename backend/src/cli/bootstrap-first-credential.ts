@@ -12,6 +12,8 @@ import {
 import { loadEnv } from "../app/config/env.js";
 import { createPool } from "../shared/database/Pool.js";
 import { MariaDbIdentityRepository } from "../modules/identity/infrastructure/persistence/MariaDbIdentityRepository.js";
+import { MariaDbApplicationRepository } from "../modules/application/infrastructure/persistence/MariaDbApplicationRepository.js";
+import { MariaDbApplicationAccessRepository } from "../modules/application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
 import { PublicId as IdentityPublicId, InvalidPublicIdError } from "../modules/identity/domain/value-objects/PublicId.js";
 import { MariaDbAuditEventRepository } from "../modules/audit/infrastructure/MariaDbAuditEventRepository.js";
 import { MariaDbCredentialRepository } from "../modules/security/infrastructure/persistence/MariaDbCredentialRepository.js";
@@ -396,7 +398,9 @@ if (isMainModule) {
     (connection) => new MariaDbCredentialRepository(connection),
     (connection) => new MariaDbIdentityRepository(connection),
     (connection) => new MariaDbAuditEventRepository(connection),
-    new Argon2PasswordHasher()
+    new Argon2PasswordHasher(),
+    (connection) => new MariaDbApplicationRepository(connection),
+    (connection) => new MariaDbApplicationAccessRepository(connection)
   );
   const identityRepository = new MariaDbIdentityRepository(pool);
 

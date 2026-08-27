@@ -17,6 +17,7 @@ import { PCTEC_INGRESSA_APPLICATION_CODE } from "../domain/value-objects/Applica
 import { ApplicationNotFoundError, IdentityNotFoundForAccessError } from "../domain/errors/ApplicationErrors.js";
 import {
   ApplicationAccessBootstrapAlreadyCompletedError,
+  FoundationalIdentityAmbiguousError,
   ApplicationAccessLockNotAcquiredError
 } from "./errors/ApplicationAccessBootstrapErrors.js";
 
@@ -124,6 +125,20 @@ export class BootstrapFirstApplicationAccessService {
       const identity = await identityRepository.findByPublicId(IdentityPublicId.fromString(identityPublicId));
       if (identity === undefined) {
         throw new IdentityNotFoundForAccessError(identityPublicId);
+      }
+
+      // Guard de unicidade fundacional (v1.0, ADR-027 emenda): o CLI só
+      // promove A Identity fundacional, e "fundacional" só é uma noção
+      // bem definida enquanto ela for a ÚNICA. Com duas ou mais, o
+      // `publicId` recebido por parâmetro passaria a DECIDIR quem manda
+      // na plataforma — e um dígito trocado escolheria a conta errada
+      // sem que nada aqui pudesse perceber.
+      //
+      // Dentro da mesma transação e sob o mesmo lock dos guards abaixo,
+      // então a contagem não pode mudar entre a leitura e a concessão.
+      const identityCount = await identityRepository.countAll();
+      if (identityCount !== 1) {
+        throw new FoundationalIdentityAmbiguousError(identityCount);
       }
 
       const accessProfile = AccessProfile.admin();
