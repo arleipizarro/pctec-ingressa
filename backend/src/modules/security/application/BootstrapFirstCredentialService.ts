@@ -5,6 +5,11 @@ import type {
   BootstrapConnectionPool
 } from "../../identity/application/BootstrapFirstIdentityService.js";
 import type { IdentityRepository } from "../../identity/domain/IdentityRepository.js";
+import type { ApplicationRepository } from "../../application/domain/ApplicationRepository.js";
+import type { ApplicationAccessRepository } from "../../application/domain/ApplicationAccessRepository.js";
+import { ApplicationCode } from "../../application/domain/value-objects/ApplicationCode.js";
+import { AccessProfile } from "../../application/domain/value-objects/AccessProfile.js";
+import { PCTEC_INGRESSA_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
 import { PublicId as IdentityPublicId } from "../../identity/domain/value-objects/PublicId.js";
 import type { AuditEventRepository } from "../../audit/domain/AuditEventRepository.js";
 import { AuditEvent } from "../../audit/domain/AuditEvent.js";
@@ -16,6 +21,7 @@ import type { PasswordHash } from "../domain/value-objects/PasswordHash.js";
 import { IdentityNotFoundForCredentialError } from "../domain/errors/CredentialErrors.js";
 import {
   CredentialBootstrapAlreadyCompletedError,
+  CredentialIdentityNotFoundationalAdminError,
   CredentialLockNotAcquiredError
 } from "./errors/CredentialBootstrapErrors.js";
 
@@ -88,7 +94,15 @@ export class BootstrapFirstCredentialService {
     private readonly credentialRepositoryFactory: (connection: Queryable) => CredentialRepository,
     private readonly identityRepositoryFactory: (connection: Queryable) => IdentityRepository,
     private readonly auditEventRepositoryFactory: (connection: Queryable) => AuditEventRepository,
-    private readonly passwordHasher: PasswordHasher
+    private readonly passwordHasher: PasswordHasher,
+    /**
+     * Necessários para o guard de "esta é a Identity do ADMIN
+     * fundacional" (v1.0, ADR-027 emenda). Obrigatórios de propósito:
+     * opcionais, um chamador que os esquecesse desligaria a invariante
+     * em silêncio, que é o modo mais fácil de perder uma guarda.
+     */
+    private readonly applicationRepositoryFactory: (connection: Queryable) => ApplicationRepository,
+    private readonly applicationAccessRepositoryFactory: (connection: Queryable) => ApplicationAccessRepository
   ) {}
 
   public async execute(request: BootstrapFirstCredentialRequest): Promise<BootstrapFirstCredentialResult> {
@@ -150,6 +164,33 @@ export class BootstrapFirstCredentialService {
       const identity = await identityRepository.findByPublicId(IdentityPublicId.fromString(identityPublicId));
       if (identity === undefined) {
         throw new IdentityNotFoundForCredentialError(identityPublicId);
+      }
+
+      // Guard de vínculo fundacional (v1.0, ADR-027 emenda): a primeira
+      // Credential pertence à Identity que recebeu o ADMIN fundacional,
+      // e a nenhuma outra.
+      //
+      // O guard global acima impede uma SEGUNDA Credential. Este impede
+      // a PRIMEIRA na Identity errada — o erro que passaria despercebido:
+      // um `publicId` trocado no passo 3 faria a plataforma nascer com a
+      // senha numa conta sem acesso nenhum, enquanto a conta ADMIN ficaria
+      // sem como entrar. Consistente e inutilizável ao mesmo tempo, e o
+      // guard global não teria o que reclamar.
+      const applicationRepository = this.applicationRepositoryFactory(connection);
+      const applicationAccessRepository = this.applicationAccessRepositoryFactory(connection);
+      const application = await applicationRepository.findByCode(
+        ApplicationCode.create(PCTEC_INGRESSA_APPLICATION_CODE)
+      );
+      if (application === undefined) {
+        throw new CredentialIdentityNotFoundationalAdminError();
+      }
+      const isFoundationalAdmin = await applicationAccessRepository.existsGrantedByIdentityApplicationAndProfile(
+        identityPublicId,
+        application.getPublicId().toString(),
+        AccessProfile.admin().toString()
+      );
+      if (!isFoundationalAdmin) {
+        throw new CredentialIdentityNotFoundationalAdminError();
       }
 
       // Hash da senha — nunca a senha bruta persistida em nenhuma

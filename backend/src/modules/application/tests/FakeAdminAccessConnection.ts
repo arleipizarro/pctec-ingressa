@@ -45,6 +45,13 @@ export class FakeAdminAccessConnection implements BootstrapConnection {
   };
 
   /** Identity existente — por padrão, a Identity informada é encontrada. */
+  /**
+   * Quantas Identities existem no diretório (v1.0, ADR-027 emenda).
+   * Padrão 1 — na sequência correta do bootstrap, o passo 1 acabou
+   * de criar a única Identity fundacional.
+   */
+  public identityCount = 1;
+
   public identityExists = true;
 
   /** Já existe ADMIN concedido para a aplicação (guard one-shot). */
@@ -72,6 +79,10 @@ export class FakeAdminAccessConnection implements BootstrapConnection {
     if (normalized.includes("FROM APPLICATIONS") && normalized.includes("WHERE CODE = ?")) {
       this.timeline.push("SELECT_APPLICATION");
       return [this.applicationRow === undefined ? [] : [this.applicationRow], []];
+    }
+    if (normalized.includes("COUNT(*)") && normalized.includes("FROM IDENTITIES")) {
+      this.timeline.push("COUNT_IDENTITIES");
+      return [[{ total: this.identityCount }], []];
     }
     if (normalized.includes("FROM IDENTITIES") && normalized.includes("WHERE PUBLIC_ID = ?")) {
       this.timeline.push("SELECT_IDENTITY");

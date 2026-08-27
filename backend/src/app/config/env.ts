@@ -154,12 +154,40 @@ const envSchema = z.object({
   // `resolveSmtpSecure`. A derivação nunca ENFRAQUECE a conexão: em
   // produção `requireTls` obriga a elevação de qualquer forma, então o
   // pior caso da omissão é um handshake correto, nunca texto em claro.
+  //
+  // Parsing ESTRITO: apenas "true"/"false" (livres de espaço e caixa).
+  // Nada de "1"/"0"/"yes"/"no"/"sim", e nada de tratar texto
+  // desconhecido como `false`. Um `INGRESSA_SMTP_SECURE=1` digitado por
+  // hábito viraria "STARTTLS" silenciosamente numa caixa que só fala TLS
+  // implícito — e o sintoma seria um erro de handshake incompreensível,
+  // longe da causa. Recusar no boot troca isso por uma mensagem que
+  // nomeia a variável.
   INGRESSA_SMTP_SECURE: z
     .string()
     .optional()
-    .transform((value) =>
-      value === undefined || value.trim().length === 0 ? undefined : value.trim().toLowerCase() === "true"
-    )
+    .transform((value, ctx) => {
+      if (value === undefined || value.trim().length === 0) {
+        return undefined;
+      }
+      const normalizado = value.trim().toLowerCase();
+      if (normalizado === "true") {
+        return true;
+      }
+      if (normalizado === "false") {
+        return false;
+      }
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        // Só o NOME da variável e os valores ACEITOS. Nunca o valor
+        // recebido: esta variável fica ao lado da senha de SMTP no mesmo
+        // arquivo, e um erro de configuração não pode ser o caminho pelo
+        // qual um valor daquele bloco aparece num log de boot.
+        message:
+          "INGRESSA_SMTP_SECURE aceita apenas \"true\" ou \"false\" (ou ausente, para derivar da porta). " +
+          "Nenhum outro valor é interpretado — em especial, um valor desconhecido NUNCA vira false."
+      });
+      return z.NEVER;
+    })
 });
 
 export type Env = z.infer<typeof envSchema>;

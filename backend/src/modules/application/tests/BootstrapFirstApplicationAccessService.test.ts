@@ -397,6 +397,7 @@ describe("BootstrapFirstApplicationAccessService — 6. prova explícita da sequ
       "BEGIN",
       "SELECT_APPLICATION",
       "SELECT_IDENTITY",
+      "COUNT_IDENTITIES",
       "SELECT_APPLICATION_ACCESS_BY_APPLICATION", // = CHECK_ADMIN
       "SELECT_APPLICATION_ACCESS_BY_IDENTITY", // = CHECK_DUPLICATE
       "INSERT_APPLICATION_ACCESS",
@@ -419,6 +420,7 @@ describe("BootstrapFirstApplicationAccessService — 6. prova explícita da sequ
       "BEGIN",
       "SELECT_APPLICATION",
       "SELECT_IDENTITY",
+      "COUNT_IDENTITIES",
       "SELECT_APPLICATION_ACCESS_BY_APPLICATION",
       "SELECT_APPLICATION_ACCESS_BY_IDENTITY",
       "INSERT_APPLICATION_ACCESS",
@@ -443,6 +445,7 @@ describe("BootstrapFirstApplicationAccessService — 6. prova explícita da sequ
       "BEGIN",
       "SELECT_APPLICATION",
       "SELECT_IDENTITY",
+      "COUNT_IDENTITIES",
       "SELECT_APPLICATION_ACCESS_BY_APPLICATION", // CHECK_ADMIN encontra conflito aqui
       "ROLLBACK",
       "RELEASE_LOCK",

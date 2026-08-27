@@ -9,6 +9,8 @@ import { CredentialPasswordPolicyViolationError } from "../domain/value-objects/
 import { MariaDbCredentialRepository } from "../infrastructure/persistence/MariaDbCredentialRepository.js";
 import { MariaDbIdentityRepository } from "../../identity/infrastructure/persistence/MariaDbIdentityRepository.js";
 import { MariaDbAuditEventRepository } from "../../audit/infrastructure/MariaDbAuditEventRepository.js";
+import { MariaDbApplicationRepository } from "../../application/infrastructure/persistence/MariaDbApplicationRepository.js";
+import { MariaDbApplicationAccessRepository } from "../../application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
 import { FakeCredentialConnection, FakeCredentialConnectionPool } from "./FakeCredentialConnection.js";
 import { FakePasswordHasher } from "./FakePasswordHasher.js";
 
@@ -33,7 +35,9 @@ function createService(
     (conn) => new MariaDbCredentialRepository(conn),
     (conn) => new MariaDbIdentityRepository(conn),
     (conn) => new MariaDbAuditEventRepository(conn),
-    effectiveHasher
+    effectiveHasher,
+    (conn) => new MariaDbApplicationRepository(conn),
+    (conn) => new MariaDbApplicationAccessRepository(conn)
   );
   return { service, pool, hasher: effectiveHasher };
 }
@@ -291,6 +295,8 @@ describe("BootstrapFirstCredentialService — conexão física única e atomicid
       "BEGIN",
       "CHECK_BOOTSTRAP",
       "SELECT_IDENTITY",
+      "SELECT_APPLICATION",
+      "CHECK_FOUNDATIONAL_ADMIN",
       "HASH_PASSWORD",
       "INSERT_CREDENTIAL",
       "UPDATE_IDENTITY",
@@ -305,7 +311,13 @@ describe("BootstrapFirstCredentialService — conexão física única e atomicid
   it("15b. [PROVA EXPLÍCITA — revisão crítica, item 5] CredentialRepository, IdentityRepository e AuditEventRepository recebem exatamente a MESMA referência de conexão — nenhum abre conexão secundária via pool", async () => {
     const connection = new FakeCredentialConnection();
     const pool = new FakeCredentialConnectionPool(() => connection);
-    const seenConnections: { credential?: unknown; identity?: unknown; audit?: unknown } = {};
+    const seenConnections: {
+      credential?: unknown;
+      identity?: unknown;
+      audit?: unknown;
+      application?: unknown;
+      applicationAccess?: unknown;
+    } = {};
 
     const service = new BootstrapFirstCredentialService(
       pool,
@@ -321,7 +333,15 @@ describe("BootstrapFirstCredentialService — conexão física única e atomicid
         seenConnections.audit = conn;
         return new MariaDbAuditEventRepository(conn);
       },
-      new FakePasswordHasher(connection.timeline)
+      new FakePasswordHasher(connection.timeline),
+      (conn) => {
+        seenConnections.application = conn;
+        return new MariaDbApplicationRepository(conn);
+      },
+      (conn) => {
+        seenConnections.applicationAccess = conn;
+        return new MariaDbApplicationAccessRepository(conn);
+      }
     );
 
     await service.execute(validRequest());
@@ -363,6 +383,8 @@ describe("BootstrapFirstCredentialService — falhas parciais", () => {
       "BEGIN",
       "CHECK_BOOTSTRAP",
       "SELECT_IDENTITY",
+      "SELECT_APPLICATION",
+      "CHECK_FOUNDATIONAL_ADMIN",
       "HASH_PASSWORD_FAILED",
       "ROLLBACK",
       "RELEASE_LOCK",

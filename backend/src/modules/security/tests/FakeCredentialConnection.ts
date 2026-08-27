@@ -15,6 +15,9 @@ import type {
  * GET_LOCK/BEGIN/CHECK/SELECT/INSERT/UPDATE/COMMIT/ROLLBACK/
  * RELEASE_LOCK/release().
  */
+/** `public_id` fixo da Application PCTEC_INGRESSA neste fake. */
+const INGRESSA_APPLICATION_PUBLIC_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+
 export class FakeCredentialConnection implements BootstrapConnection {
   public readonly calls: Array<{ sql: string; params: readonly unknown[] | undefined }> = [];
   public readonly timeline: string[] = [];
@@ -35,6 +38,16 @@ export class FakeCredentialConnection implements BootstrapConnection {
 
   /** Já existe QUALQUER Credential LOCAL_PASSWORD na plataforma (guard global). */
   public anyCredentialExists = false;
+
+  /**
+   * A Identity informada possui o ADMIN fundacional de PCTEC_INGRESSA
+   * (v1.0, ADR-027 emenda). Padrão `true` — na sequência correta do
+   * bootstrap o passo 2 acabou de conceder esse acesso.
+   */
+  public identityHasFoundationalAdmin = true;
+
+  /** A Application PCTEC_INGRESSA existe (seed 0007). */
+  public ingressaApplicationExists = true;
 
   /** Identity existente — por padrão, a Identity informada é encontrada, PENDING, loginEnabled=false. */
   public identityExists = true;
@@ -61,6 +74,31 @@ export class FakeCredentialConnection implements BootstrapConnection {
     if (normalized.startsWith("SELECT 1 FROM CREDENTIALS")) {
       this.timeline.push("CHECK_BOOTSTRAP");
       return [this.anyCredentialExists ? [{ 1: 1 }] : [], []];
+    }
+    if (normalized.includes("FROM APPLICATIONS") && normalized.includes("WHERE CODE = ?")) {
+      this.timeline.push("SELECT_APPLICATION");
+      if (!this.ingressaApplicationExists) {
+        return [[], []];
+      }
+      return [
+        [
+          {
+            id: 1,
+            public_id: INGRESSA_APPLICATION_PUBLIC_ID,
+            code: String(params?.[0]),
+            name: "PCTEC Ingressa",
+            status: "ACTIVE",
+            version: 1,
+            created_at: new Date("2026-01-01T00:00:00Z"),
+            updated_at: new Date("2026-01-01T00:00:00Z")
+          }
+        ],
+        []
+      ];
+    }
+    if (normalized.includes("FROM APPLICATION_ACCESSES") && normalized.includes("ACCESS_PROFILE = ?")) {
+      this.timeline.push("CHECK_FOUNDATIONAL_ADMIN");
+      return [this.identityHasFoundationalAdmin ? [{ 1: 1 }] : [], []];
     }
     if (normalized.includes("FROM IDENTITIES") && normalized.includes("WHERE PUBLIC_ID = ?")) {
       this.timeline.push("SELECT_IDENTITY");

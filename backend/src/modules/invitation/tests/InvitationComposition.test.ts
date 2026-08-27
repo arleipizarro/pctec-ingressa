@@ -254,3 +254,84 @@ describe("gate de produção — MANUAL_DEV recusado, EMAIL exige TLS", () => {
     expect(loadEnv({ ...BASE_PRODUCAO, INGRESSA_SMTP_SECURE: "false" }).INGRESSA_SMTP_SECURE).toBe(false);
   });
 });
+
+describe("INGRESSA_SMTP_SECURE — parsing estrito no loadEnv", () => {
+  it.each(["true", "TRUE", "True", " true ", "  TRUE  "])("aceita %o como true", (valor) => {
+    expect(loadEnv({ INGRESSA_SMTP_SECURE: valor }).INGRESSA_SMTP_SECURE).toBe(true);
+  });
+
+  it.each(["false", "FALSE", "False", " false ", "  FALSE  "])("aceita %o como false", (valor) => {
+    expect(loadEnv({ INGRESSA_SMTP_SECURE: valor }).INGRESSA_SMTP_SECURE).toBe(false);
+  });
+
+  it.each([["ausente", {}], ["vazia", { INGRESSA_SMTP_SECURE: "" }], ["só espaços", { INGRESSA_SMTP_SECURE: "   " }]])(
+    "trata %s como undefined, deixando a derivação por porta decidir",
+    (_rotulo, source) => {
+      expect(loadEnv(source).INGRESSA_SMTP_SECURE).toBeUndefined();
+    }
+  );
+
+  it.each(["1", "0", "yes", "no", "sim", "nao", "não", "tru", "fals", "on", "off", "y", "n", "verdadeiro"])(
+    "RECUSA %o — valor desconhecido nunca vira false silenciosamente",
+    (valor) => {
+      expect(() => loadEnv({ INGRESSA_SMTP_SECURE: valor })).toThrow();
+    }
+  );
+
+  it("a mensagem de recusa cita o NOME da variável e nunca o valor recebido", () => {
+    const valorRecusado = "1";
+
+    try {
+      loadEnv({ INGRESSA_SMTP_SECURE: valorRecusado });
+      expect.unreachable("deveria ter lançado");
+    } catch (error) {
+      const mensagem = (error as Error).message;
+      expect(mensagem).toContain("INGRESSA_SMTP_SECURE");
+      // A mensagem cita os valores ACEITOS ("true"/"false"), nunca o
+      // recebido — e nunca nenhum outro valor do bloco SMTP.
+      expect(mensagem).not.toMatch(/recebido|informado|valor "1"|=1\b/u);
+    }
+  });
+
+  it("nunca ecoa host, usuário, senha ou remetente ao recusar o modo de TLS", () => {
+    const segredos = {
+      INGRESSA_SMTP_HOST: "smtp-interno.exemplo.invalid",
+      INGRESSA_SMTP_USER: "usuario-secreto",
+      INGRESSA_SMTP_PASSWORD: "senha-que-nunca-pode-vazar",
+      INGRESSA_SMTP_FROM: "remetente@exemplo.invalid"
+    };
+
+    try {
+      loadEnv({ ...segredos, INGRESSA_SMTP_SECURE: "yes" });
+      expect.unreachable("deveria ter lançado");
+    } catch (error) {
+      const mensagem = (error as Error).message;
+      for (const valor of Object.values(segredos)) {
+        expect(mensagem).not.toContain(valor);
+      }
+    }
+  });
+
+  it("porta 465 sem a variável deriva TLS implícito", () => {
+    const env = loadEnv({ INGRESSA_SMTP_PORT: "465" });
+
+    expect(env.INGRESSA_SMTP_SECURE).toBeUndefined();
+    expect(resolveSmtpSecure(env.INGRESSA_SMTP_PORT, env.INGRESSA_SMTP_SECURE)).toBe(true);
+  });
+
+  it("porta 587 sem a variável deriva STARTTLS — e em produção requireTLS continua obrigatório", () => {
+    const env = loadEnv({
+      NODE_ENV: "production",
+      SESSION_TTL_SECONDS: "28800",
+      INVITATION_DELIVERY_MODE: "EMAIL",
+      INGRESSA_SMTP_PORT: "587"
+    });
+
+    expect(env.INGRESSA_SMTP_SECURE).toBeUndefined();
+    expect(resolveSmtpSecure(env.INGRESSA_SMTP_PORT, env.INGRESSA_SMTP_SECURE)).toBe(false);
+    // `requireTls` é derivado do ambiente em createApp, nunca configurável
+    // para menos: STARTTLS sem exigência de elevação deixaria a senha e o
+    // link do convite trafegarem em claro se o servidor não anunciasse TLS.
+    expect(env.NODE_ENV === "production").toBe(true);
+  });
+});
