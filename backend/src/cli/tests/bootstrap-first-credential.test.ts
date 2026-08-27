@@ -133,7 +133,9 @@ describe("runCredentialBootstrapCli — 37. recusa production", () => {
 
     expect(exitCode).toBe(2);
     expect(collectInputSpy).not.toHaveBeenCalled();
-    expect(errorLogs.join("\n")).toContain("NODE_ENV");
+    // v1.0 (ADR-027): produção exige cerimônia. Sem autorização temporária,
+    // a recusa continua sendo exit 2, antes de qualquer coleta ou escrita.
+    expect(errorLogs.join("\n")).toContain("INGRESSA_ALLOW_PRODUCTION_BOOTSTRAP");
   });
 
   it("NODE_ENV=development e test são permitidos", async () => {

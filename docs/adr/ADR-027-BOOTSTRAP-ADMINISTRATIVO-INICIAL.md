@@ -484,3 +484,131 @@ de erros formalizado) — a Identity fundacional
 validada diretamente, com o `AuditEvent` correspondente
 (`identity.created`, `actor_public_id = BOOTSTRAP`). Ver "Execução real
 da Fase A" acima. Quarta rodada de revisão.
+
+---
+
+## Emenda v1.0 — Bootstrap em produção sob cerimônia controlada
+
+### O que muda
+
+Até esta emenda, os três CLIs de bootstrap
+(`bootstrap:first-identity`, `bootstrap:first-admin-access`,
+`bootstrap:first-credential`) recusavam `NODE_ENV=production` de forma
+absoluta, com `exit code 2`, deixando a decisão para "um processo
+formalmente aprovado no futuro". Esta emenda **é** esse processo.
+
+Produção deixa de ser proibida e passa a exigir uma **cerimônia
+controlada**. Nenhuma outra fase, invariante ou pré-condição muda.
+
+### Por que não bastou acrescentar `"production"` à lista de ambientes
+
+Porque a lista nunca foi o controle — era só onde o controle estava
+escrito. Os três comandos criam a primeira Identity, o primeiro acesso
+ADMIN e a primeira Credential da plataforma inteira. Em desenvolvimento,
+acioná-los por engano custa um `DROP DATABASE`. Em produção, custa uma
+conta administrativa fundacional num diretório real, com auditoria
+afirmando que alguém a criou deliberadamente. A diferença não é de grau,
+e uma constante com duas strings não expressa diferença de grau nenhuma.
+
+O que forçou a decisão foi constatar que a proibição absoluta não
+elimina o risco — ela o desloca. Um ambiente de produção precisa nascer
+de alguma forma, e a alternativa que sempre aparece quando o caminho
+oficial está fechado é o `INSERT` manual no banco. Esse caminho é
+estritamente pior: pula o agregado, pula as invariantes, pula a
+transação e pula a auditoria, deixando uma Identity que o sistema nunca
+decidiu criar e que ninguém consegue explicar depois. Ver "D. INSERT
+administrativo manual", já rejeitada acima — a proibição absoluta a
+tornava, na prática, a única saída.
+
+Melhor um caminho oficial difícil de acionar por acidente do que um
+caminho não-oficial fácil de acionar por necessidade.
+
+### As quatro barreiras
+
+Implementadas em `src/cli/productionBootstrapGuard.ts`, compartilhadas
+pelos três CLIs. Todas **fail-closed**: qualquer uma que não seja
+satisfeita encerra com `exit code 2`, antes de coletar qualquer dado e
+antes de abrir qualquer conexão de escrita.
+
+1. **Autorização temporária por processo.**
+   `INGRESSA_ALLOW_PRODUCTION_BOOTSTRAP=YES` precisa existir no ambiente
+   **daquele comando**. Só o valor exato `YES` é aceito — nunca `yes`,
+   `1`, `true` ou `sim`. **Esta variável nunca é escrita no `.env`.** Se
+   estivesse lá, deixaria de ser cerimônia e viraria configuração
+   permanente, que é exatamente o que esta guarda existe para impedir.
+   Ela também não aparece no `.env.example`, pelo mesmo motivo.
+
+2. **Terminal interativo obrigatório.** Sem TTY, nada roda. Elimina o
+   CLI disparado por script, cron, pipeline de CI ou
+   `ssh servidor comando` — que é como um bootstrap acidental acontece
+   de verdade. A suíte exercita o caminho de produção injetando
+   `interactive: true` num harness que nunca toca banco real.
+
+3. **Frase de confirmação que nomeia o alvo.** Fora de produção, a frase
+   continua sendo a base de cada CLI (`BOOTSTRAP`, `GRANT_ADMIN`,
+   `CREATE_CREDENTIAL`). Em produção ela passa a ser:
+
+   ```
+   PRODUCTION <FRASE_BASE> <database> <hostname>
+   ```
+
+   Quem digita não consegue confirmar sem ter lido para ONDE está
+   apontando. É a barreira contra o erro mais provável de todos — rodar
+   no servidor certo com o `.env` do ambiente errado carregado. O
+   database vem da **mesma** configuração que o CLI usará para escrever,
+   nunca de um parâmetro à parte; o hostname vem de `os.hostname()`.
+   Espaços extras são tolerados, palavras diferentes nunca.
+
+4. **Pré-condições de domínio.** Continuam onde sempre estiveram: nos
+   serviços oficiais. A guarda **não as reimplementa** — reimplementá-las
+   no CLI criaria uma segunda cópia da regra, livre para divergir.
+
+### Ordem dos comandos e pré-condições
+
+Executar após `npm run build`, na ordem, no diretório `backend/`:
+
+| # | Comando | Pré-condição (verificada pelo serviço) | Frase base |
+|---|---|---|---|
+| 1 | `node dist/cli/bootstrap-first-identity.js` | Nenhuma Identity existe no diretório | `BOOTSTRAP` |
+| 2 | `node dist/cli/bootstrap-first-admin-access.js` | A Identity fundacional existe e ainda **não** tem acesso ADMIN | `GRANT_ADMIN` |
+| 3 | `node dist/cli/bootstrap-first-credential.js` | A Identity fundacional tem ADMIN e ainda **não** tem Credential | `CREATE_CREDENTIAL` |
+
+Violar qualquer pré-condição resulta em
+`*BootstrapAlreadyCompletedError` e `exit code 1`, sem escrita. É o que
+garante que este caminho **nunca cria um segundo ADMIN** e **nunca
+substitui uma Credential existente** — inclusive numa reexecução
+acidental.
+
+Dados reais necessários no passo 1: nome completo, e-mail e CPF
+(opcional) da pessoa que será a Identity fundacional. No passo 3, a
+senha é digitada por ela, em prompt oculto. **Nenhum dos três aceita
+argumento de linha de comando** — entrada é 100% por stdin, o que
+elimina a classe de risco "segredo em `argv`/`ps`/histórico de shell".
+
+### Retomada segura após interrupção
+
+Os três comandos são **retomáveis e idempotentes por pré-condição**. Se
+a sessão cair entre o passo 1 e o passo 2, basta reexecutar o passo 2 —
+o passo 1 recusará repetir. A autorização temporária precisa ser
+exportada de novo a cada comando, o que é deliberado: uma interrupção
+não deve deixar a janela aberta.
+
+O `one-shot guard` com lock (ver seção acima) continua valendo: dois
+processos concorrentes resultam em `exit code 3` para o segundo, nunca
+em duas Identities.
+
+### O que continua proibido
+
+**SQL manual para criar Identity, ApplicationAccess ou Credential — em
+qualquer ambiente, sob qualquer urgência.** Um `INSERT` direto produz
+uma linha sem evento de auditoria, sem validação de invariante e sem o
+`actor_public_id = BOOTSTRAP` que torna a origem daquela conta
+explicável seis meses depois. Se a cerimônia acima está bloqueada por
+algum motivo, o caminho é destravar a cerimônia, nunca contorná-la.
+
+### Status desta emenda
+
+Implementada em código (`productionBootstrapGuard.ts`, os três CLIs e
+`src/cli/tests/productionBootstrapGuard.test.ts`). **Nunca executada em
+produção** — nenhum ambiente de produção do Ingressa existia no momento
+desta entrega.
