@@ -1,5 +1,6 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { OrganizationRepository } from "../../domain/OrganizationRepository.js";
+import type { OrganizationLockRepository } from "../../domain/OrganizationLockRepository.js";
 import { OrganizationVersionConflictError } from "../../domain/errors/OrganizationErrors.js";
 import { Organization, type OrganizationPersistedState } from "../../domain/Organization.js";
 import type { PublicId } from "../../domain/value-objects/PublicId.js";
@@ -63,7 +64,7 @@ function mapRowToPersistedState(row: OrganizationRow): OrganizationPersistedStat
  * `0010_create_organizations.up.sql`. Todas as queries usam parâmetros
  * preparados (`?`), nunca concatenação de SQL com entrada.
  */
-export class MariaDbOrganizationRepository implements OrganizationRepository {
+export class MariaDbOrganizationRepository implements OrganizationRepository, OrganizationLockRepository {
   public constructor(private readonly connection: Queryable) {}
 
   public async findByPublicId(publicId: PublicId): Promise<Organization | undefined> {
@@ -73,6 +74,32 @@ export class MariaDbOrganizationRepository implements OrganizationRepository {
          FROM organizations
         WHERE public_id = ?
         LIMIT 1`,
+      [publicId.toString()]
+    );
+    const rowList = rows as OrganizationRow[];
+    const row = rowList[0];
+    return row === undefined ? undefined : Organization.reconstitute(mapRowToPersistedState(row));
+  }
+
+  /**
+   * A MESMA leitura de `findByPublicId`, com `FOR UPDATE`.
+   *
+   * Só faz sentido dentro de uma transação: é ela que segura o bloqueio
+   * até o COMMIT. Duas transações que bloqueiem a mesma organização são
+   * serializadas pelo InnoDB — a segunda só prossegue depois que a
+   * primeira termina, e então enxerga o que a primeira gravou.
+   *
+   * Nada aqui bloqueia organizações diferentes: o bloqueio é de linha,
+   * não de tabela.
+   */
+  public async lockByPublicId(publicId: PublicId): Promise<Organization | undefined> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, type, legal_name, trade_name, document_number,
+              status, version, created_at, updated_at
+         FROM organizations
+        WHERE public_id = ?
+        LIMIT 1
+        FOR UPDATE`,
       [publicId.toString()]
     );
     const rowList = rows as OrganizationRow[];

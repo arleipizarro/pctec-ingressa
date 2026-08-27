@@ -77,6 +77,24 @@ class FakeReferenceRepository implements OrganizationExternalReferenceRepository
         r.getEntityType().equals(entityType)
     );
   }
+  /**
+   * Duplo REAL, não delegação: esta suíte precisa modelar o estado
+   * ambíguo — duas referências ACTIVE para a mesma organização —, que é
+   * exatamente o que a busca de uma só esconde.
+   */
+  public async findAllActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<readonly OrganizationExternalReference[]> {
+    return this.stored.filter(
+      (r) =>
+        r.isActive() &&
+        r.getOrganizationPublicId() === organizationPublicId.toString() &&
+        r.getSystemCode().equals(systemCode) &&
+        r.getEntityType().equals(entityType)
+    );
+  }
   public async insert(reference: OrganizationExternalReference): Promise<void> {
     this.stored.push(reference);
   }
@@ -289,5 +307,70 @@ describe("GetPortalOrganizationCoverageService — BUSINESS_GROUP", () => {
     expect(cobertura?.group?.missingCompaniesCount).toBe(55);
     expect(cobertura?.group?.missingCompanies).toHaveLength(50);
     expect(cobertura?.group?.missingCompaniesTruncated).toBe(true);
+  });
+});
+
+/**
+ * Estado ambíguo — mais de uma referência ACTIVE para a mesma
+ * organização.
+ *
+ * Alcançável hoje pelo CLI genérico, e não impedido pela UNIQUE KEY da
+ * migration 0013, que cobre `(system_code, entity_type, legacy_id)`. A
+ * consulta precisa DENUNCIAR, nunca escolher: `LIMIT 1` devolveria um
+ * `legacyId` arbitrário e a tela o exibiria como se fosse o vínculo da
+ * empresa.
+ */
+describe("GetPortalOrganizationCoverageService — ambiguidade", () => {
+  it("COMPANY com duas referências ACTIVE: não coberta, nenhuma escolhida, as duas listadas", async () => {
+    const { organizacoes, referencias, service } = montar();
+    const empresa = organizacao(organizacoes, { type: "COMPANY" });
+    vincular(referencias, empresa, 71);
+    vincular(referencias, empresa, 99);
+
+    const cobertura = await service.execute(empresa);
+
+    expect(cobertura?.ambiguous).toBe(true);
+    expect(cobertura?.covered).toBe(false);
+    expect(cobertura?.activeReferenceCount).toBe(2);
+    // NENHUMA foi eleita — é o ponto do teste.
+    expect(cobertura?.reference).toBeNull();
+    expect(cobertura?.ambiguousReferences.map((r) => r.legacyId).sort()).toEqual([71, 99]);
+  });
+
+  it("uma referência ACTIVE continua sendo o caminho normal, sem ambiguidade", async () => {
+    const { organizacoes, referencias, service } = montar();
+    const empresa = organizacao(organizacoes, { type: "COMPANY" });
+    vincular(referencias, empresa, 71);
+
+    const cobertura = await service.execute(empresa);
+
+    expect(cobertura?.ambiguous).toBe(false);
+    expect(cobertura?.activeReferenceCount).toBe(1);
+    expect(cobertura?.ambiguousReferences).toEqual([]);
+  });
+
+  it("grupo com uma filha ambígua não é coberto — e ela não conta como vinculada nem como faltando", async () => {
+    const { organizacoes, relacoes, referencias, service } = montar();
+    const grupo = organizacao(organizacoes, { type: "BUSINESS_GROUP" });
+    const ok = organizacao(organizacoes, { type: "COMPANY" });
+    const ambigua = organizacao(organizacoes, { type: "COMPANY", legalName: "EMPRESA AMBIGUA LTDA" });
+    relacionar(relacoes, grupo, ok);
+    relacionar(relacoes, grupo, ambigua);
+    vincular(referencias, ok, 71);
+    vincular(referencias, ambigua, 72);
+    vincular(referencias, ambigua, 73);
+
+    const cobertura = await service.execute(grupo);
+
+    expect(cobertura?.covered).toBe(false);
+    expect(cobertura?.ambiguous).toBe(true);
+    expect(cobertura?.group?.totalActiveCompanies).toBe(2);
+    expect(cobertura?.group?.linkedCompanies).toBe(1);
+    expect(cobertura?.group?.missingCompaniesCount).toBe(0);
+    expect(cobertura?.group?.ambiguousCompaniesCount).toBe(1);
+    expect(cobertura?.group?.ambiguousCompanies[0]?.legalName).toBe("EMPRESA AMBIGUA LTDA");
+    // O GRUPO nunca tem referência própria, nem sob ambiguidade das filhas.
+    expect(cobertura?.activeReferenceCount).toBe(0);
+    expect(cobertura?.reference).toBeNull();
   });
 });

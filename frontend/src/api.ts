@@ -558,6 +558,13 @@ export interface CoberturaDeGrupoNoPortal {
   readonly missingCompanies: readonly EmpresaSemReferenciaDoPortal[];
   /** `true` quando a lista acima é um recorte de `missingCompaniesCount`. */
   readonly missingCompaniesTruncated: boolean;
+  /**
+   * Empresas com MAIS DE UMA referência ACTIVE — nem vinculadas nem
+   * faltando. Vincular de novo pioraria o cadastro; o que falta é
+   * decidir qual referência vale.
+   */
+  readonly ambiguousCompaniesCount: number;
+  readonly ambiguousCompanies: readonly EmpresaSemReferenciaDoPortal[];
 }
 
 /**
@@ -575,8 +582,21 @@ export interface IntegracaoComOPortal {
   readonly systemCode: string;
   readonly entityType: string;
   readonly covered: boolean;
-  /** Só em COMPANY. Um BUSINESS_GROUP nunca tem referência própria. */
+  /**
+   * Mais de uma referência ACTIVE — na própria empresa, ou em alguma
+   * empresa do grupo.
+   *
+   * Estado inconsistente que o CLI genérico ainda alcança. Quando
+   * `true`, `reference` é `null`: o servidor não escolhe uma, e a tela
+   * também não pode.
+   */
+  readonly ambiguous: boolean;
+  /** Quantas referências ACTIVE a própria organização tem. Sempre 0 em grupo. */
+  readonly activeReferenceCount: number;
+  /** Só em COMPANY, e só quando há EXATAMENTE uma. Um BUSINESS_GROUP nunca tem referência própria. */
   readonly reference: ReferenciaDoPortal | null;
+  /** Todas as referências ACTIVE quando há mais de uma — listadas, nunca eleitas. */
+  readonly ambiguousReferences: readonly ReferenciaDoPortal[];
   /** Só em BUSINESS_GROUP. */
   readonly group: CoberturaDeGrupoNoPortal | null;
 }

@@ -55,6 +55,64 @@ Aplicações que não são o Portal (`PCTEC_HELPDESK`, `PCTEC_INGRESSA`,
 qualquer outra) seguem sem exigência nenhuma, e a cobertura sequer é
 consultada.
 
+## Atomicidade — como a regra "uma COMPANY, um cliente" é imposta
+
+A `UNIQUE KEY uk_org_ext_ref_active_match` (migration 0013) cobre
+`(system_code, entity_type, legacy_id)`. Ela impede **duas organizações**
+de reivindicarem o mesmo `clientes.id` — e é só isso. Ela **não** impede
+a mesma organização de ganhar duas referências ACTIVE com `legacyId`
+diferentes.
+
+Por isso a operação inteira acontece numa **transação só**:
+
+1. `SELECT ... FOR UPDATE` na linha da **Organization**. É o único
+   registro que já existe antes da escrita e que todos os concorrentes
+   daquela empresa têm em comum. O InnoDB serializa ali — e só ali:
+   empresas diferentes seguem em paralelo;
+2. **depois** do bloqueio, a leitura das referências ACTIVE, sem
+   `LIMIT`. A ordem importa: um `SELECT ... FOR UPDATE` não é leitura
+   consistente e não fixa o snapshot da transação, então a leitura
+   seguinte enxerga o que o concorrente comitou enquanto se esperava;
+3. a escrita, pelo serviço oficial de criação montado sobre
+   `ExistingConnectionUnitOfWork` — dentro da MESMA transação, com o
+   Aggregate, o evento e a auditoria de sempre.
+
+Quem serializa é o banco, não a memória de um processo: vale entre
+processos Node, entre réplicas e entre a API e o CLI. **Nenhuma migration
+nova**: uma restrição global sobre `(organization_public_id, system_code,
+entity_type)` resolveria a corrida e proibiria, de quebra, mapeamentos
+muitos-para-um legítimos de outros sistemas, que o modelo permite de
+propósito.
+
+Prova: `LinkPortalOrganizationReference.concurrency.integration.test.ts`
+dispara duas chamadas simultâneas, em conexões diferentes, para a mesma
+COMPANY com `legacyId` diferentes — e exige uma criação, uma recusa e um
+único evento de auditoria.
+
+## Cadastro ambíguo
+
+Mais de uma referência ACTIVE `PCTEC_PORTAL`/`clientes` na mesma
+organização. Não deveria existir, e é alcançável: o CLI genérico continua
+podendo criar qualquer par, e a UNIQUE KEY não cobre essa chave.
+
+Nesse estado, **nada escolhe por você**:
+
+- a leitura administrativa marca `ambiguous: true`, devolve
+  `reference: null` e **lista** as referências em `ambiguousReferences`;
+- a criação de vínculo é recusada com `PORTAL_REFERENCE_AMBIGUOUS` (409)
+  — inclusive quando o `legacyId` pedido é um dos que já existem, porque
+  tratar isso como idempotência seria eleger uma das duas;
+- o provisionamento com `PCTEC_PORTAL` é recusado com o mesmo código,
+  antes de abrir transação;
+- a tela mostra os vínculos lado a lado e orienta a encerrar o incorreto
+  — nunca a criar mais um.
+
+Num grupo, uma empresa ambígua não conta como vinculada nem como
+faltando: o grupo deixa de estar coberto até alguém decidir.
+
+Corrigir exige encerrar a referência incorreta, hoje só pelo CLI, com
+registro.
+
 ## Códigos de erro do vínculo
 
 | código | HTTP | quando |
@@ -64,12 +122,13 @@ consultada.
 | `PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE` | 422 | organização INACTIVE |
 | `PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND` | 404 | organização inexistente |
 | `PORTAL_REFERENCE_ALREADY_LINKED_DIFFERENT` | 409 | a empresa já aponta para outro `legacyId` |
+| `PORTAL_REFERENCE_AMBIGUOUS` | 409 | a organização tem mais de uma referência ACTIVE |
 | `ORGANIZATION_EXTERNAL_REFERENCE_ALREADY_EXISTS` | 409 | esse `legacyId` já pertence a outra empresa |
 
 Repetir o **mesmo** vínculo responde **200** com `alreadyLinked: true` —
-nada é escrito e nenhum evento novo é gravado. Sob concorrência a
-autoridade é a UNIQUE KEY: duas requisições idênticas simultâneas podem
-resultar em uma 201 e um 409, nunca em sobrescrita.
+nada é escrito e nenhum evento novo é gravado, inclusive quando as duas
+requisições chegam simultaneamente: a segunda espera no bloqueio, relê e
+encontra a referência recém-criada.
 
 ## O CLI
 

@@ -123,6 +123,25 @@ class InMemoryOrganizationExternalReferenceRepository implements OrganizationExt
   public async findByPublicId(publicId: PublicId): Promise<OrganizationExternalReference | undefined> {
     return this.stored.find((r) => r.getPublicId().equals(publicId));
   }
+  /**
+   * Estes duplos nunca modelam ambiguidade — nenhuma destas suítes trata
+   * de "duas referências ACTIVE para a mesma organização". Delegar à
+   * busca de uma só mantém o duplo honesto sobre o que ele representa,
+   * em vez de inventar um segundo armazenamento paralelo.
+   */
+  public async findAllActiveByOrganizationSystemCodeAndEntityType(
+    organizationPublicId: PublicId,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<readonly OrganizationExternalReference[]> {
+    const unica = await this.findActiveByOrganizationSystemCodeAndEntityType(
+      organizationPublicId,
+      systemCode,
+      entityType
+    );
+    return unica === undefined ? [] : [unica];
+  }
+
   public async findActiveByOrganizationSystemCodeAndEntityType(
     organizationPublicId: PublicId,
     systemCode: SystemCode,

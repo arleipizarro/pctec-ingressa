@@ -696,15 +696,23 @@ export function createApp(options: CreateAppOptions = {}): Express {
         // sendo do serviço oficial de criação de referência externa, com
         // a transação e a auditoria dele; este serviço só decide quando
         // ela é legítima.
+        // Tudo numa transação só: o serviço abre a dele, bloqueia a linha
+        // da Organization (`FOR UPDATE`) e passa `ExistingConnectionUnitOfWork`
+        // ao serviço oficial de criação — que assim escreve DENTRO dela,
+        // com o Aggregate, o evento e a auditoria de sempre. Uma segunda
+        // transação aqui reabriria a janela de corrida que este desenho
+        // fecha.
         linkPortalOrganizationReferenceService: new LinkPortalOrganizationReferenceService(
-          new MariaDbOrganizationRepository(sharedPool!),
-          new MariaDbOrganizationExternalReferenceRepository(sharedPool!),
-          new CreateOrganizationExternalReferenceService(
-            new MariaDbUnitOfWork(sharedPool!),
-            (c) => new MariaDbOrganizationRepository(c),
-            (c) => new MariaDbOrganizationExternalReferenceRepository(c),
-            (c) => new MariaDbAuditEventRepository(c)
-          )
+          new MariaDbUnitOfWork(sharedPool!),
+          (c) => new MariaDbOrganizationRepository(c),
+          (c) => new MariaDbOrganizationExternalReferenceRepository(c),
+          (uow) =>
+            new CreateOrganizationExternalReferenceService(
+              uow,
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbOrganizationExternalReferenceRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            )
         ),
         // Projeção de leitura da auditoria — contrato separado do
         // repositório de ESCRITA, que segue append-only e sem consulta.

@@ -20,8 +20,24 @@ export const MOTIVOS_DO_VINCULO: Readonly<Record<string, string>> = {
     "Somente uma empresa recebe vínculo. Um grupo é coberto pelas empresas dele.",
   PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE: "A organização precisa estar ACTIVE para ser vinculada.",
   PORTAL_REFERENCE_LEGACY_ID_INVALID: "Informe o id do cliente no Portal como um número inteiro positivo.",
-  PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: "Organização não encontrada."
+  PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: "Organização não encontrada.",
+  PORTAL_REFERENCE_AMBIGUOUS:
+    "Esta empresa tem mais de um vínculo ativo com o Portal. Enquanto isso não for resolvido, nenhum novo " +
+    "vínculo pode ser criado — peça à equipe de plataforma para encerrar o vínculo incorreto."
 };
+
+/**
+ * Orientação para o cadastro ambíguo.
+ *
+ * Repetida na seção e no formulário de usuário porque as duas telas
+ * levam a pessoa a agir, e a ação certa é a MESMA — e não é "vincular de
+ * novo", que é o que a tela ofereceria se tratasse ambiguidade como
+ * ausência de vínculo.
+ */
+const ORIENTACAO_AMBIGUIDADE =
+  "Corrigir exige decidir qual vínculo vale e encerrar o outro — operação que hoje só a equipe de " +
+  "plataforma executa, com registro. Nenhuma ação desta tela resolve, e criar mais um vínculo agravaria " +
+  "o problema.";
 
 /**
  * Seção "Integração com o Portal" na tela de detalhes da organização.
@@ -66,6 +82,37 @@ function VinculoDaEmpresa({
   portal: IntegracaoComOPortal;
   onVincular: () => void;
 }): JSX.Element {
+  // Ambiguidade vem ANTES de "vinculada" e de "não vinculada": não é
+  // nenhuma das duas, e tratá-la como ausência ofereceria o botão que
+  // agravaria o estado.
+  if (portal.ambiguous) {
+    return (
+      <>
+        <div className="aviso aviso-erro" role="alert" data-testid="portal-estado-empresa">
+          Esta empresa tem <strong>{portal.activeReferenceCount} vínculos ativos</strong> com o Portal. Enquanto
+          houver mais de um, nenhum deles pode ser tratado como o vínculo da empresa.
+        </div>
+        <p className="subtitulo">{ORIENTACAO_AMBIGUIDADE}</p>
+        {/* Todos listados, nenhum eleito: escolher aqui seria repetir na
+            tela o erro que o servidor recusa cometer. */}
+        <div className="tabela-rolavel">
+          <table>
+            <thead><tr><th>Id do cliente no Portal</th><th>Referência</th><th>Status</th></tr></thead>
+            <tbody>
+              {portal.ambiguousReferences.map((referencia) => (
+                <tr key={referencia.publicId}>
+                  <td><code>{referencia.legacyId}</code></td>
+                  <td><code>{referencia.publicId}</code></td>
+                  <td><Badge valor={referencia.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </>
+    );
+  }
+
   if (portal.reference !== null) {
     return (
       <>
@@ -112,12 +159,31 @@ function CoberturaDoGrupo({ portal }: { portal: IntegracaoComOPortal }): JSX.Ele
         <strong>{grupo.linkedCompanies}</strong> de <strong>{grupo.totalActiveCompanies}</strong> empresas ativas
         vinculadas ao Portal.
       </p>
+      {grupo.ambiguousCompaniesCount > 0 && (
+        <>
+          <div className="aviso aviso-erro" role="alert" data-testid="portal-grupo-ambiguo">
+            <strong>{grupo.ambiguousCompaniesCount}</strong> empresa(s) deste grupo têm mais de um vínculo ativo
+            com o Portal. Enquanto isso durar, o grupo não fica coberto — e vincular de novo agravaria o
+            problema.
+          </div>
+          <ul>
+            {grupo.ambiguousCompanies.map((empresa) => (
+              <li key={empresa.publicId}>
+                <Link to={`/admin/organizacoes/${empresa.publicId}`}>{empresa.legalName}</Link>
+              </li>
+            ))}
+          </ul>
+          <p className="subtitulo">{ORIENTACAO_AMBIGUIDADE}</p>
+        </>
+      )}
       {grupo.totalActiveCompanies === 0 ? (
         <div className="aviso aviso-alerta" role="status">
           Este grupo não tem nenhuma empresa ativa. Não há cobertura de Portal a consolidar.
         </div>
-      ) : grupo.missingCompaniesCount === 0 ? (
+      ) : grupo.missingCompaniesCount === 0 && grupo.ambiguousCompaniesCount === 0 ? (
         <div className="aviso aviso-ok" role="status">Cobertura completa.</div>
+      ) : grupo.missingCompaniesCount === 0 ? (
+        <></>
       ) : (
         <>
           <div className="aviso aviso-alerta" role="status">

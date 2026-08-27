@@ -342,6 +342,37 @@ export function FormularioNovoUsuario({
  * tem a sua própria página, e é lá que o vínculo acontece.
  */
 function AvisoDeCoberturaDoPortal({ portal }: { portal: IntegracaoComOPortal }): JSX.Element {
+  // Ambiguidade primeiro: a instrução aqui NÃO é "conclua o vínculo".
+  // Mandar vincular quem já tem dois vínculos ativos criaria um terceiro.
+  if (portal.ambiguous) {
+    const empresas = portal.group?.ambiguousCompanies ?? [];
+    return (
+      <div className="aviso aviso-erro" role="alert" data-testid="portal-bloqueio">
+        {portal.group === null ? (
+          <>
+            Esta empresa tem <strong>{portal.activeReferenceCount} vínculos ativos</strong> com o Portal.
+          </>
+        ) : (
+          <>
+            <strong>{portal.group.ambiguousCompaniesCount}</strong> empresa(s) deste grupo têm mais de um vínculo
+            ativo com o Portal.
+          </>
+        )}{" "}
+        Enquanto houver mais de um, não é possível conceder <code>{CODIGO_DO_PORTAL}</code> — e criar outro
+        vínculo agravaria o problema. Peça à equipe de plataforma para encerrar o vínculo incorreto.
+        {empresas.length > 0 && (
+          <ul>
+            {empresas.map((empresa) => (
+              <li key={empresa.publicId}>
+                <Link to={`/admin/organizacoes/${empresa.publicId}`}>{empresa.legalName}</Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
   if (portal.group === null) {
     return (
       <div className="aviso aviso-erro" role="alert" data-testid="portal-bloqueio">

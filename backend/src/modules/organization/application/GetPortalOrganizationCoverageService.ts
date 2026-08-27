@@ -52,6 +52,15 @@ export interface PortalGroupCoverageView {
   readonly missingCompanies: readonly PortalCoverageCompanyView[];
   /** `true` quando a lista acima é um recorte de `missingCompaniesCount`. */
   readonly missingCompaniesTruncated: boolean;
+  /**
+   * Empresas do grupo com MAIS DE UMA referência ACTIVE.
+   *
+   * Nem vinculadas nem faltando: ambíguas. Contá-las como vinculadas
+   * daria o grupo por coberto apoiado num vínculo que ninguém escolheu;
+   * contá-las como faltando mandaria o ADMIN criar mais uma.
+   */
+  readonly ambiguousCompaniesCount: number;
+  readonly ambiguousCompanies: readonly PortalCoverageCompanyView[];
 }
 
 export interface PortalOrganizationCoverage {
@@ -61,17 +70,40 @@ export interface PortalOrganizationCoverage {
   readonly systemCode: string;
   readonly entityType: string;
   /**
-   * COMPANY: existe referência ACTIVE.
-   * BUSINESS_GROUP: existe ao menos uma empresa filha ACTIVE **e** todas
-   * elas estão vinculadas.
+   * COMPANY: existe EXATAMENTE uma referência ACTIVE.
+   * BUSINESS_GROUP: existe ao menos uma empresa filha ACTIVE, todas
+   * vinculadas, e nenhuma ambígua.
    *
    * Grupo sem nenhuma empresa ativa é `false` de propósito: não há nada
    * que o Portal consiga resolver, e chamar isso de "coberto" produziria
    * um usuário com acesso a um consolidado vazio.
    */
   readonly covered: boolean;
-  /** COMPANY apenas. Sempre `null` em BUSINESS_GROUP — grupo não tem referência própria. */
+  /**
+   * Mais de uma referência ACTIVE (na própria COMPANY, ou em alguma
+   * empresa do grupo).
+   *
+   * Estado que o CLI genérico ainda alcança e que a UNIQUE KEY da
+   * migration 0013 não impede — ela cobre
+   * `(system_code, entity_type, legacy_id)`, não
+   * `(organização, sistema, entidade)`. Quando `true`, `reference` é
+   * `null`: escolher uma seria transformar um cadastro inconsistente
+   * numa resposta que parece certa.
+   */
+  readonly ambiguous: boolean;
+  /** Quantas referências ACTIVE a própria organização tem. Sempre 0 em grupo. */
+  readonly activeReferenceCount: number;
+  /**
+   * COMPANY apenas, e só quando há EXATAMENTE uma. `null` em grupo
+   * (que não tem referência própria) e `null` sob ambiguidade.
+   */
   readonly reference: PortalReferenceView | null;
+  /**
+   * Todas as referências ACTIVE da COMPANY quando há mais de uma —
+   * listadas, nunca eleitas. É o que o ADMIN precisa para decidir qual
+   * encerrar pelo CLI. Vazio no caso normal.
+   */
+  readonly ambiguousReferences: readonly PortalReferenceView[];
   /** BUSINESS_GROUP apenas. Sempre `null` em COMPANY. */
   readonly group: PortalGroupCoverageView | null;
 }
@@ -131,14 +163,36 @@ export class GetPortalOrganizationCoverageService {
     };
 
     if (!organization.getType().isBusinessGroup()) {
-      const reference = await this.buscarReferencia(organization.getPublicId());
-      return { ...base, covered: reference !== null, reference, group: null };
+      const referencias = await this.buscarReferencias(organization.getPublicId());
+      if (referencias.length > 1) {
+        // Nenhuma é "a" referência. Devolver uma delas é o que
+        // `LIMIT 1` faria — e é exatamente o que esconde o problema.
+        return {
+          ...base,
+          covered: false,
+          ambiguous: true,
+          activeReferenceCount: referencias.length,
+          reference: null,
+          ambiguousReferences: referencias,
+          group: null
+        };
+      }
+      return {
+        ...base,
+        covered: referencias.length === 1,
+        ambiguous: false,
+        activeReferenceCount: referencias.length,
+        reference: referencias[0] ?? null,
+        ambiguousReferences: [],
+        group: null
+      };
     }
 
     // BUSINESS_GROUP — a cobertura é a das filhas, uma a uma.
     const relacoes = await this.organizationRelationshipRepository.findChildrenByParentPublicId(organizationPublicId);
     const vistas = new Set<string>();
     const faltantes: PortalCoverageCompanyView[] = [];
+    const ambiguas: PortalCoverageCompanyView[] = [];
     let ativas = 0;
     let vinculadas = 0;
 
@@ -159,16 +213,23 @@ export class GetPortalOrganizationCoverageService {
       }
       ativas += 1;
 
-      const reference = await this.buscarReferencia(childPublicId);
-      if (reference !== null) {
-        vinculadas += 1;
-        continue;
-      }
-      faltantes.push({
+      const identificacao: PortalCoverageCompanyView = {
         publicId: chave,
         legalName: filha.getLegalName().toString(),
         tradeName: filha.getTradeName()?.toString() ?? null
-      });
+      };
+      const referencias = await this.buscarReferencias(childPublicId);
+      if (referencias.length > 1) {
+        // Nem vinculada nem faltando. O grupo inteiro deixa de estar
+        // coberto até alguém decidir qual referência vale.
+        ambiguas.push(identificacao);
+        continue;
+      }
+      if (referencias.length === 1) {
+        vinculadas += 1;
+        continue;
+      }
+      faltantes.push(identificacao);
     }
 
     const group: PortalGroupCoverageView = {
@@ -176,22 +237,37 @@ export class GetPortalOrganizationCoverageService {
       linkedCompanies: vinculadas,
       missingCompaniesCount: faltantes.length,
       missingCompanies: faltantes.slice(0, LIMITE_DE_EMPRESAS_LISTADAS),
-      missingCompaniesTruncated: faltantes.length > LIMITE_DE_EMPRESAS_LISTADAS
+      missingCompaniesTruncated: faltantes.length > LIMITE_DE_EMPRESAS_LISTADAS,
+      ambiguousCompaniesCount: ambiguas.length,
+      ambiguousCompanies: ambiguas.slice(0, LIMITE_DE_EMPRESAS_LISTADAS)
     };
 
-    return { ...base, covered: ativas > 0 && faltantes.length === 0, reference: null, group };
+    return {
+      ...base,
+      covered: ativas > 0 && faltantes.length === 0 && ambiguas.length === 0,
+      ambiguous: ambiguas.length > 0,
+      // O GRUPO nunca tem referência própria — nem uma, nem várias.
+      activeReferenceCount: 0,
+      reference: null,
+      ambiguousReferences: [],
+      group
+    };
   }
 
-  private async buscarReferencia(organizationPublicId: PublicId): Promise<PortalReferenceView | null> {
-    const referencia = await this.organizationExternalReferenceRepository
-      .findActiveByOrganizationSystemCodeAndEntityType(organizationPublicId, this.systemCode, this.entityType);
-    if (referencia === undefined) {
-      return null;
-    }
-    return {
+  /**
+   * TODAS as referências ACTIVE da organização, sem `LIMIT 1`.
+   *
+   * Descobrir que há mais de uma é parte do trabalho: é a diferença
+   * entre "esta empresa aponta para o cliente 71" e "esta empresa aponta
+   * para dois clientes e ninguém decidiu qual".
+   */
+  private async buscarReferencias(organizationPublicId: PublicId): Promise<readonly PortalReferenceView[]> {
+    const referencias = await this.organizationExternalReferenceRepository
+      .findAllActiveByOrganizationSystemCodeAndEntityType(organizationPublicId, this.systemCode, this.entityType);
+    return referencias.map((referencia) => ({
       publicId: referencia.getPublicId().toString(),
       legacyId: referencia.getLegacyId().toNumber(),
       status: referencia.getStatus()
-    };
+    }));
   }
 }
