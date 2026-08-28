@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HelpdeskClientRecord, HelpdeskSourceReader, HelpdeskUserRecord } from "../domain/pilot/HelpdeskSourcePort.js";
+import type {
+  HelpdeskClientDocumentRead,
+  HelpdeskClientRecord,
+  HelpdeskSourceReader,
+  HelpdeskUserRecord
+} from "../domain/pilot/HelpdeskSourcePort.js";
 import { HelpdeskImportSelection } from "../domain/wizard/HelpdeskImportSelection.js";
 import type { WizardTargetState } from "../domain/wizard/WizardTargetState.js";
 import {
@@ -68,6 +73,8 @@ interface Bancada {
   readonly fail: ReturnType<typeof vi.fn>;
   readonly writer: WizardApplyWriter;
   readonly escritasDeOrganizacao: unknown[];
+  /** O CNPJ que a fonte forneceu para a organização criada — `null` quando não forneceu. */
+  readonly documentosDeOrganizacao: (string | null)[];
   readonly escritasDeUsuario: { readonly sourceLegacyId: number; readonly organizationPublicId: string }[];
   readonly ordemDeChamadas: string[];
 }
@@ -80,6 +87,7 @@ function montar(
 ): Bancada {
   const ordemDeChamadas: string[] = [];
   const escritasDeOrganizacao: unknown[] = [];
+  const documentosDeOrganizacao: (string | null)[] = [];
   const escritasDeUsuario: { sourceLegacyId: number; organizationPublicId: string }[] = [];
 
   const start = vi.fn(async (request: { mode: string }) => {
@@ -98,6 +106,7 @@ function montar(
     writeOrganization: async (input) => {
       ordemDeChamadas.push("writeOrganization");
       escritasDeOrganizacao.push(input.plan);
+      documentosDeOrganizacao.push(input.sourceDocumentNumber);
       await input.recordItems({} as never, { ORGANIZATION: NOVA_ORG });
       return { organizationPublicId: NOVA_ORG, targetPublicIdByEntityKind: { ORGANIZATION: NOVA_ORG } };
     },
@@ -140,7 +149,18 @@ function montar(
     ...extras
   } as unknown as RunHelpdeskImportWizardDeps;
 
-  return { deps, start, record, complete, fail, writer, escritasDeOrganizacao, escritasDeUsuario, ordemDeChamadas };
+  return {
+    deps,
+    start,
+    record,
+    complete,
+    fail,
+    writer,
+    escritasDeOrganizacao,
+    documentosDeOrganizacao,
+    escritasDeUsuario,
+    ordemDeChamadas
+  };
 }
 
 function pedidoApply(overrides: Record<string, unknown> = {}) {
@@ -489,5 +509,90 @@ describe("assistente — fingerprints", () => {
     const enviado = bancada.start.mock.calls[0]?.[0] as { scopeFingerprint: string };
     expect(enviado.scopeFingerprint).toBe(resultado.scopeFingerprint);
     expect(enviado.scopeFingerprint).not.toBe("f".repeat(64));
+  });
+});
+
+/**
+ * CNPJ da origem — a única evidência que o vínculo automático com o
+ * Portal aceita.
+ *
+ * A descoberta que motiva estes testes: `pctec_helpdesk.clients` TEM a
+ * coluna `cnpj`, mas o principal read-only do Ingressa tem SELECT de
+ * COLUNA em `(id, name, active)`. Enquanto o GRANT não for ampliado, a
+ * fonte responde "não fornece" — e o assistente precisa se comportar
+ * corretamente nos DOIS mundos, porque o segundo depende só de uma
+ * decisão de quem opera.
+ */
+describe("assistente — CNPJ da origem", () => {
+  class FonteComDocumento extends FonteFake {
+    public readonly idsConsultados: number[] = [];
+    public constructor(private readonly documento: string | null, private readonly disponivel = true) {
+      super();
+    }
+    public async readClientDocument(clientId: number): Promise<HelpdeskClientDocumentRead> {
+      this.idsConsultados.push(clientId);
+      return this.disponivel ? { available: true, documentNumber: this.documento } : { available: false };
+    }
+  }
+
+  it("transporta o CNPJ até a criação da Organization quando a fonte o fornece", async () => {
+    const fonte = new FonteComDocumento("11.222.333/0001-81");
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonte);
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(bancada.documentosDeOrganizacao).toEqual(["11.222.333/0001-81"]);
+    expect(fonte.idsConsultados).toEqual([CLIENTE_ID]);
+  });
+
+  it("empresa sem CNPJ na origem: organização criada sem documento, e NUNCA pelo nome", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteComDocumento(null));
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+  });
+
+  it("fonte sem privilégio na coluna é tratada como 'não fornece', não como falha", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteComDocumento("11222333000181", false));
+
+    // O APPLY completa. Deixar o 1143 subir faria uma importação
+    // inteira falhar por causa de um campo opcional que a operação
+    // nunca teve.
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.status).toBe("COMPLETED");
+    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+  });
+
+  it("fonte que sequer implementa a leitura continua funcionando", async () => {
+    // `FonteFake` é a fonte de todos os outros testes desta suíte: ela
+    // não tem `readClientDocument`. Tratar a ausência do método como
+    // erro quebraria o assistente que já está em uso.
+    const bancada = montar();
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.status).toBe("COMPLETED");
+    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+  });
+
+  it("o documento NÃO é lido na pré-visualização nem no dry-run", async () => {
+    const fonte = new FonteComDocumento("11222333000181");
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonte);
+    const servico = new RunHelpdeskImportWizardService(bancada.deps);
+
+    await servico.prepare(selecao());
+    await servico.execute({
+      mode: "DRY_RUN",
+      selection: selecao(),
+      actorIdentityPublicId: APROVADOR
+    });
+
+    // Se entrasse no plano, um CNPJ corrigido no Helpdesk entre o
+    // dry-run e o apply mudaria o `scopeFingerprint` e faria o apply ser
+    // recusado por "a origem mudou" — punindo uma correção que não
+    // altera nada do que vai ser escrito.
+    expect(fonte.idsConsultados).toEqual([]);
   });
 });

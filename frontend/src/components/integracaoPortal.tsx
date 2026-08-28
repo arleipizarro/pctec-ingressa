@@ -1,7 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "./ui.js";
-import type { IntegracaoComOPortal } from "../api.js";
+import { ApiError } from "../api.js";
+import type {
+  ClienteDoPortal,
+  CorrespondenciaDoPortal,
+  IntegracaoComOPortal,
+  PaginaDoCatalogoDoPortal
+} from "../api.js";
 
 /**
  * Mensagens por código estável do servidor.
@@ -221,32 +227,118 @@ function CoberturaDoGrupo({ portal }: { portal: IntegracaoComOPortal }): JSX.Ele
 }
 
 /**
- * Confirmação explícita antes de escrever.
+ * Mensagens da correspondência automática, por estado do servidor.
  *
- * O vínculo não tem desfazer nesta fatia — nem por esta tela, nem por
- * outra. Uma escrita irreversível que acontece no primeiro clique é a
- * receita para descobrir o engano quando já não dá para corrigir; por
- * isso o botão de confirmar só habilita depois de um número válido, e o
- * texto diz o alcance da decisão.
+ * Cada uma diz o que a pessoa faz A SEGUIR. "Não encontrado" e
+ * "ambíguo" levam ao mesmo lugar (a busca manual) por caminhos
+ * diferentes, e "sem CNPJ" leva a outro — cadastrar o documento, ou
+ * escolher na mão.
+ */
+export const MOTIVOS_DA_CORRESPONDENCIA: Readonly<Record<string, string>> = {
+  NOT_FOUND:
+    "Nenhum cliente do Portal tem o CNPJ desta empresa. Busque pelo nome e selecione o cliente correto.",
+  AMBIGUOUS:
+    "Mais de um cliente do Portal tem o CNPJ desta empresa. Nada é sugerido automaticamente enquanto houver " +
+    "duplicidade no cadastro do Portal — selecione manualmente o cliente correto, ou corrija a duplicidade lá.",
+  DOCUMENT_MISSING_OR_INVALID:
+    "Esta empresa não tem CNPJ cadastrado no Ingressa, então não há correspondência automática. Busque pelo " +
+    "nome e selecione o cliente do Portal.",
+  NOT_A_COMPANY: "Um grupo não recebe vínculo próprio."
+};
+
+/** Código do 503 quando a fonte do Portal não está configurada no servidor. */
+export const PORTAL_CATALOGO_INDISPONIVEL = "PORTAL_CATALOG_SOURCE_NOT_CONFIGURED";
+
+interface EstadoDaBusca {
+  readonly carregando: boolean;
+  readonly resultados: readonly ClienteDoPortal[];
+  readonly total: number;
+  readonly buscou: boolean;
+  readonly erro: string | null;
+}
+
+const BUSCA_VAZIA: EstadoDaBusca = { carregando: false, resultados: [], total: 0, buscou: false, erro: null };
+
+/**
+ * Vínculo ao Portal — busca, seleção explícita e confirmação.
+ *
+ * **O campo cru de `clientes.id` deixou de existir.** Ele exigia que
+ * quem administra soubesse um id de outro sistema, descoberto no SQL —
+ * e um número digitado errado criava um vínculo irreversível para a
+ * empresa errada, sem nada na tela que permitisse notar. Agora a tela
+ * mostra nome e CNPJ mascarado, e o `legacyId` só existe como
+ * consequência de um resultado selecionado.
+ *
+ * Três caminhos, nesta ordem:
+ *
+ *  1. **sugestão automática** — quando o CNPJ da empresa bate com
+ *     exatamente UM cliente do Portal. Ainda assim exige o clique: o
+ *     vínculo não tem desfazer nesta tela, e uma correspondência exata
+ *     depende de os dois cadastros estarem certos;
+ *  2. **busca administrativa** — por nome ou por CNPJ. Ela nunca
+ *     vincula sozinha, nem quando devolve um resultado só: um resultado
+ *     único de busca textual continua sendo coincidência de nome, e
+ *     nome não é evidência nesta integração;
+ *  3. **fonte indisponível** — a tela diz isso, e não "nada
+ *     encontrado". São fatos diferentes, e confundi-los faria alguém
+ *     procurar um cadastro que existe.
  */
 export function FormularioVincularPortal({
   organizacao,
+  correspondencia,
+  correspondenciaCarregando,
+  correspondenciaIndisponivel,
   enviando,
+  onBuscar,
   onCancelar,
   onConfirmar
 }: {
   organizacao: { legal_name: string };
+  /** Resultado da correspondência automática. `null` enquanto não se sabe. */
+  correspondencia: CorrespondenciaDoPortal | null;
+  correspondenciaCarregando: boolean;
+  /** `true` quando o servidor respondeu 503: a fonte não está configurada. */
+  correspondenciaIndisponivel: boolean;
   enviando: boolean;
+  onBuscar: (termo: string) => Promise<PaginaDoCatalogoDoPortal>;
   onCancelar: () => void;
   onConfirmar: (legacyId: number) => void;
 }): JSX.Element {
-  const [valor, setValor] = useState("");
-  const legacyId = /^[1-9][0-9]*$/.test(valor.trim()) ? Number(valor.trim()) : null;
+  const [termo, setTermo] = useState("");
+  const [busca, setBusca] = useState<EstadoDaBusca>(BUSCA_VAZIA);
+  const [selecionado, setSelecionado] = useState<number | null>(null);
 
-  function enviar(evento: FormEvent): void {
+  const sugestao = correspondencia?.status === "EXACT_UNIQUE" ? correspondencia.suggestion : null;
+
+  async function buscar(evento: FormEvent): Promise<void> {
     evento.preventDefault();
-    if (legacyId !== null) {
-      onConfirmar(legacyId);
+    if (termo.trim().length === 0) {
+      return;
+    }
+    setBusca({ ...BUSCA_VAZIA, carregando: true });
+    // Trocar a busca limpa a seleção: confirmar um resultado que saiu da
+    // lista vincularia algo que a pessoa não está mais vendo.
+    setSelecionado(null);
+    try {
+      const pagina = await onBuscar(termo.trim());
+      setBusca({ carregando: false, resultados: pagina.items, total: pagina.total, buscou: true, erro: null });
+    } catch (falha) {
+      const indisponivel = falha instanceof ApiError && falha.code === PORTAL_CATALOGO_INDISPONIVEL;
+      setBusca({
+        ...BUSCA_VAZIA,
+        buscou: true,
+        erro: indisponivel
+          ? "O catálogo do Portal está indisponível neste servidor. Nenhuma busca é possível agora."
+          : falha instanceof ApiError
+            ? falha.message
+            : "Falha ao buscar no catálogo do Portal."
+      });
+    }
+  }
+
+  function confirmar(): void {
+    if (selecionado !== null) {
+      onConfirmar(selecionado);
     }
   }
 
@@ -255,34 +347,139 @@ export function FormularioVincularPortal({
       <div className="modal">
         <h3>Vincular ao Portal</h3>
         <p className="subtitulo">
-          <strong>{organizacao.legal_name}</strong> passará a resolver para este cliente do Portal.
+          <strong>{organizacao.legal_name}</strong> passará a resolver para o cliente do Portal que você
+          selecionar abaixo.
         </p>
 
-        <form onSubmit={enviar}>
-          <label htmlFor="portal-legacy-id">ID do cliente no Portal</label>
-          <input
-            id="portal-legacy-id"
-            inputMode="numeric"
-            value={valor}
-            onChange={(e) => setValor(e.target.value)}
-            required
-            style={{ width: "100%" }}
-          />
-          <p className="subtitulo">Número inteiro positivo — o <code>id</code> do cliente no Portal.</p>
-
-          <div className="aviso aviso-alerta" role="alert">
-            O vínculo é usado por <strong>todos os usuários do Portal desta empresa</strong>, e{" "}
-            <strong>não pode ser trocado nem revogado</strong> por esta tela. Confira o número antes de
-            confirmar.
+        {correspondenciaIndisponivel ? (
+          <div className="aviso aviso-erro" role="alert" data-testid="portal-catalogo-indisponivel">
+            O catálogo do Portal está <strong>indisponível</strong> neste servidor: a configuração da fonte não
+            está presente. Não é possível buscar nem sugerir clientes agora — peça à equipe de plataforma para
+            configurá-la.
           </div>
+        ) : (
+          <>
+            {correspondenciaCarregando && (
+              <p className="subtitulo" data-testid="portal-correspondencia-carregando">
+                Procurando o cliente do Portal pelo CNPJ desta empresa…
+              </p>
+            )}
 
-          <div className="acoes">
-            <button type="button" onClick={onCancelar} disabled={enviando}>Cancelar</button>
-            <button type="submit" className="primario" disabled={enviando || legacyId === null}>
-              {enviando ? "Vinculando…" : "Confirmar vínculo"}
-            </button>
-          </div>
-        </form>
+            {sugestao !== null && (
+              <div className="aviso aviso-ok" role="status" data-testid="portal-sugestao">
+                <p>
+                  O CNPJ desta empresa bate com <strong>exatamente um</strong> cliente do Portal:
+                </p>
+                <p>
+                  <strong>{sugestao.name}</strong>
+                  {sugestao.tradeName !== null && <> · {sugestao.tradeName}</>}
+                  {sugestao.documentMasked !== null && <> · CNPJ {sugestao.documentMasked}</>}
+                </p>
+                <button
+                  type="button"
+                  className="primario"
+                  disabled={enviando}
+                  onClick={() => onConfirmar(sugestao.legacyId)}
+                >
+                  {enviando ? "Vinculando…" : "Confirmar este cliente"}
+                </button>
+              </div>
+            )}
+
+            {correspondencia !== null && sugestao === null && (
+              <div className="aviso aviso-alerta" role="status" data-testid="portal-sem-sugestao">
+                {MOTIVOS_DA_CORRESPONDENCIA[correspondencia.status] ??
+                  "Não há correspondência automática. Busque e selecione o cliente do Portal."}
+              </div>
+            )}
+
+            <form onSubmit={(e) => { void buscar(e); }}>
+              <label htmlFor="portal-busca">Buscar cliente no Portal</label>
+              <input
+                id="portal-busca"
+                value={termo}
+                onChange={(e) => setTermo(e.target.value)}
+                placeholder="Nome, nome fantasia ou CNPJ"
+                style={{ width: "100%" }}
+              />
+              <p className="subtitulo">
+                Buscar por CNPJ compara o documento inteiro; buscar por nome apenas <strong>mostra</strong>{" "}
+                candidatos — a escolha é sempre sua.
+              </p>
+              <div className="barra">
+                <button type="submit" disabled={busca.carregando || termo.trim().length === 0}>
+                  {busca.carregando ? "Buscando…" : "Buscar"}
+                </button>
+              </div>
+            </form>
+
+            {busca.erro !== null && (
+              <div className="aviso aviso-erro" role="alert" data-testid="portal-busca-erro">{busca.erro}</div>
+            )}
+
+            {busca.buscou && busca.erro === null && busca.resultados.length === 0 && (
+              <div className="vazio" data-testid="portal-busca-vazia">
+                Nenhum cliente do Portal encontrado para esse termo.
+              </div>
+            )}
+
+            {busca.resultados.length > 0 && (
+              <div className="tabela-rolavel">
+                <table>
+                  <thead>
+                    <tr><th /><th>Cliente</th><th>Nome fantasia</th><th>CNPJ</th><th>Status</th></tr>
+                  </thead>
+                  <tbody>
+                    {busca.resultados.map((cliente) => (
+                      <tr key={cliente.legacyId}>
+                        <td>
+                          <input
+                            type="radio"
+                            name="portal-cliente"
+                            aria-label={`Selecionar ${cliente.name}`}
+                            checked={selecionado === cliente.legacyId}
+                            onChange={() => setSelecionado(cliente.legacyId)}
+                          />
+                        </td>
+                        <td>{cliente.name}</td>
+                        <td>{cliente.tradeName ?? "—"}</td>
+                        {/* Mascarado, sempre. A tela nunca recebe o
+                            documento inteiro do servidor. */}
+                        <td>{cliente.hasDocument ? cliente.documentMasked : "sem CNPJ"}</td>
+                        <td><Badge valor={cliente.active ? "ATIVO" : "INATIVO"} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {busca.total > busca.resultados.length && (
+              <p className="subtitulo">
+                Mostrando os primeiros {busca.resultados.length} de {busca.total}. Refine o termo — de
+                preferência pelo CNPJ.
+              </p>
+            )}
+          </>
+        )}
+
+        <div className="aviso aviso-alerta" role="alert">
+          O vínculo é usado por <strong>todos os usuários do Portal desta empresa</strong>, e{" "}
+          <strong>não pode ser trocado nem revogado</strong> por esta tela. Confira o cliente antes de
+          confirmar.
+        </div>
+
+        <div className="acoes">
+          <button type="button" onClick={onCancelar} disabled={enviando}>Cancelar</button>
+          <button
+            type="button"
+            className="primario"
+            disabled={enviando || selecionado === null}
+            onClick={confirmar}
+          >
+            {enviando ? "Vinculando…" : "Confirmar vínculo"}
+          </button>
+        </div>
       </div>
     </div>
   );

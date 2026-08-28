@@ -23,6 +23,23 @@ export const SOURCE_USER_COLUMNS: readonly string[] = Object.freeze([
 export const SOURCE_CLIENT_COLUMNS: readonly string[] = Object.freeze(["id", "name", "active"]);
 
 /**
+ * Projeção do CNPJ — SEPARADA da projeção do catálogo, e é essa
+ * separação que importa.
+ *
+ * `pctec_helpdesk.clients` tem a coluna `cnpj`, mas o principal
+ * read-only do Ingressa tem SELECT de COLUNA em `(id, name, active)`.
+ * Acrescentar `cnpj` a `SOURCE_CLIENT_COLUMNS` faria TODA listagem de
+ * empresas responder `ERROR 1143` e derrubaria a etapa 1 do assistente,
+ * que hoje funciona em DEV. Uma capacidade nova não pode quebrar a que
+ * já está em uso.
+ *
+ * Então a leitura do documento é uma consulta própria, isolada, cuja
+ * negativa de privilégio é tratada como "a fonte não fornece" em vez de
+ * como erro — ver `MariaDbHelpdeskReadOnlySource.readClientDocument`.
+ */
+export const SOURCE_CLIENT_DOCUMENT_COLUMNS: readonly string[] = Object.freeze(["id", "cnpj"]);
+
+/**
  * Termos que nunca podem aparecer no SQL da fonte — de autenticação,
  * de sessão e de recuperação de senha. A verificação é sobre o TEXTO da
  * query, e por isso pega tanto a coluna projetada quanto um filtro
@@ -140,6 +157,20 @@ export function buildUsersByIdsQuery(ids: readonly number[]): SourceQuery {
     `ORDER BY id`;
   assertReadOnlySourceQuery(sql);
   return { sql, params: [...ids] };
+}
+
+/**
+ * CNPJ de UMA empresa da origem.
+ *
+ * Projeção mínima: `id` para conferir a linha, `cnpj` porque é o que se
+ * quer. Nada mais entra — nem `name`, que não participa de decisão
+ * nenhuma neste caminho e cuja presença convidaria a "aproveitar" a
+ * consulta para um match por nome.
+ */
+export function buildClientDocumentQuery(clientId: number): SourceQuery {
+  const sql = `SELECT ${SOURCE_CLIENT_DOCUMENT_COLUMNS.join(", ")} FROM clients WHERE id = ? LIMIT 1`;
+  assertReadOnlySourceQuery(sql);
+  return { sql, params: [clientId] };
 }
 
 export function buildClientByIdQuery(clientId: number): SourceQuery {

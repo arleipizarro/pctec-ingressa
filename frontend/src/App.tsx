@@ -8,6 +8,7 @@ import { DashboardPage } from "./pages/DashboardPage.js";
 import { UsuariosPage } from "./pages/UsuariosPage.js";
 import { UsuarioDetalhePage } from "./pages/UsuarioDetalhePage.js";
 import { OrganizacoesPage } from "./pages/OrganizacoesPage.js";
+import { ReconciliacaoPortalPage } from "./pages/ReconciliacaoPortalPage.js";
 import { OrganizacaoDetalhePage } from "./pages/OrganizacaoDetalhePage.js";
 import { ImportacoesPage } from "./pages/ImportacoesPage.js";
 import { LoteDetalhePage } from "./pages/LoteDetalhePage.js";
@@ -54,6 +55,10 @@ export function App(): JSX.Element {
           <Route path="usuarios" element={<UsuariosPage />} />
           <Route path="usuarios/:publicId" element={<UsuarioDetalhePage />} />
           <Route path="organizacoes" element={<OrganizacoesPage />} />
+          {/* Rota estática ANTES da dinâmica não é ordem por acaso: o
+              React Router prioriza o segmento literal, mas deixar as
+              duas juntas torna a intenção legível para quem vier depois. */}
+          <Route path="organizacoes/reconciliacao-portal" element={<ReconciliacaoPortalPage />} />
           <Route path="organizacoes/:publicId" element={<OrganizacaoDetalhePage />} />
           <Route path="convites" element={<ConvitesPage />} />
           <Route path="auditoria" element={<AuditoriaPage />} />

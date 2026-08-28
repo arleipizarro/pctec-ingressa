@@ -4,6 +4,7 @@ import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
 import { FormularioNovaOrganizacao } from "../components/formulariosProvisionamento.js";
+import type { IntegracaoAposCriacao } from "../api.js";
 
 export function OrganizacoesPage(): JSX.Element {
   const [tipo, setTipo] = useState("");
@@ -30,6 +31,7 @@ export function OrganizacoesPage(): JSX.Element {
     type: string;
     legalName: string;
     tradeName?: string | undefined;
+    documentNumber?: string | undefined;
     parentBusinessGroupPublicId?: string | undefined;
   }): Promise<void> {
     setEnviando(true);
@@ -37,7 +39,13 @@ export function OrganizacoesPage(): JSX.Element {
     try {
       const criada = await api.createOrganization(payload);
       setCriando(false);
-      navegar(`/admin/organizacoes/${criada.publicId}`);
+      // O aviso viaja junto porque a organização JÁ existe e a tela de
+      // destino é a certa para agir. Sem ele, um vínculo que não
+      // aconteceu ficaria sem explicação: a seção do Portal mostraria
+      // "não vinculada" e ninguém saberia se ninguém tentou, se o CNPJ
+      // não bateu ou se o Portal estava fora.
+      const aviso = avisoDaIntegracao(criada.portalIntegration);
+      navegar(`/admin/organizacoes/${criada.publicId}`, aviso === null ? undefined : { state: { aviso } });
     } catch (falha) {
       setErroCriacao(falha instanceof ApiError ? falha.message : "Falha ao criar a organização.");
     } finally {
@@ -66,6 +74,10 @@ export function OrganizacoesPage(): JSX.Element {
         <button type="button" className="primario" onClick={() => { setErroCriacao(null); setCriando(true); }}>
           Nova organização
         </button>
+        {/* A reconciliação mora ao lado das organizações porque é sobre
+            elas: classificar as que já existem contra o catálogo do
+            Portal e vincular as que têm correspondência exata. */}
+        <Link to="/admin/organizacoes/reconciliacao-portal">Reconciliar com o Portal</Link>
       </div>
 
       {criando && (
@@ -112,4 +124,41 @@ export function OrganizacoesPage(): JSX.Element {
       </Estado>
     </>
   );
+}
+
+/**
+ * Traduz o desfecho da correspondência automática numa frase que diz o
+ * que fazer a seguir — ou `null` quando não há nada a dizer.
+ *
+ * `LINKED` e `ALREADY_LINKED` não geram aviso: a própria seção
+ * "Integração com o Portal" da tela de destino já mostra o vínculo, e
+ * repetir a informação em dois lugares faria as duas divergirem no dia
+ * em que uma delas mudasse.
+ */
+function avisoDaIntegracao(integracao: IntegracaoAposCriacao | undefined): string | null {
+  if (integracao === undefined) {
+    return null;
+  }
+  switch (integracao.status) {
+    case "LINKED":
+    case "ALREADY_LINKED":
+    case "NOT_A_COMPANY":
+      return null;
+    case "NOT_FOUND":
+      return "Empresa criada. Nenhum cliente do Portal tem este CNPJ — vincule selecionando o cliente abaixo.";
+    case "AMBIGUOUS":
+      return (
+        "Empresa criada. Mais de um cliente do Portal tem este CNPJ, então nada foi vinculado automaticamente " +
+        "— selecione o cliente correto abaixo."
+      );
+    case "DOCUMENT_MISSING_OR_INVALID":
+      return "Empresa criada sem CNPJ. O vínculo com o Portal depende de você selecionar o cliente abaixo.";
+    case "SOURCE_NOT_CONFIGURED":
+      return (
+        "Empresa criada. O catálogo do Portal está indisponível neste servidor, então a correspondência " +
+        "automática não chegou a ser tentada."
+      );
+    default:
+      return "Empresa criada. A correspondência automática com o Portal não pôde ser concluída — vincule manualmente.";
+  }
 }

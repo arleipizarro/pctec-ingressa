@@ -49,12 +49,21 @@ describe("conector read-only do Helpdesk", () => {
     const source = new MariaDbHelpdeskReadOnlySource(new ConexaoEspia());
     const metodos = Object.getOwnPropertyNames(Object.getPrototypeOf(source));
     // Lista fechada: o assistente (v0.10.x) acrescentou `readClients` e
-    // `readUsersByClientId`, ambos SELECT. Qualquer método novo que
-    // apareça aqui sem passar por esta linha quebra o teste — que é o
-    // ponto, porque é assim que um `execute` público entraria sem
-    // ninguém decidir que devia entrar.
+    // `readUsersByClientId`, e a correspondência com o Portal (v0.12.x)
+    // acrescentou `readClientDocument` — todos SELECT. Qualquer método
+    // novo que apareça aqui sem passar por esta linha quebra o teste —
+    // que é o ponto, porque é assim que um `execute` público entraria
+    // sem ninguém decidir que devia entrar.
     expect(metodos.sort()).toEqual(
-      ["constructor", "readClientById", "readClients", "readUsersByClientId", "readUsersByIds", "select"].sort()
+      [
+        "constructor",
+        "readClientById",
+        "readClientDocument",
+        "readClients",
+        "readUsersByClientId",
+        "readUsersByIds",
+        "select"
+      ].sort()
     );
     expect((source as unknown as Record<string, unknown>)["execute"]).toBeUndefined();
   });
@@ -111,5 +120,70 @@ describe("configuração da fonte", () => {
         DB_PASSWORD: "x"
       } as NodeJS.ProcessEnv)
     ).toThrow(MissingHelpdeskSourceConfigError);
+  });
+});
+
+/**
+ * Leitura do CNPJ da empresa de origem.
+ *
+ * O achado que dá razão a estes testes: `pctec_helpdesk.clients` TEM a
+ * coluna `cnpj` (`VARCHAR(20)`, no schema do Helpdesk), mas a
+ * credencial read-only do Ingressa tem SELECT de COLUNA em
+ * `(id, name, active)`. Pedir `cnpj` responde `ERROR 1143`. Ampliar o
+ * GRANT é decisão de quem opera; o código precisa se comportar
+ * corretamente antes e depois dela.
+ */
+class ConexaoQueFalha implements Queryable {
+  public constructor(private readonly erro: unknown) {}
+  public async execute(): Promise<[unknown, unknown]> {
+    throw this.erro;
+  }
+}
+
+function erroDeBanco(errno: number, message: string): Error & { errno: number } {
+  return Object.assign(new Error(message), { errno });
+}
+
+describe("conector read-only do Helpdesk — CNPJ da empresa", () => {
+  it("devolve o documento quando a fonte o fornece", async () => {
+    const conexao = new ConexaoEspia([{ id: 75, cnpj: "11.222.333/0001-81" }]);
+    const leitura = await new MariaDbHelpdeskReadOnlySource(conexao).readClientDocument(75);
+
+    expect(leitura).toEqual({ available: true, documentNumber: "11.222.333/0001-81" });
+    expect(conexao.sqls[0]?.trim().toUpperCase().startsWith("SELECT")).toBe(true);
+  });
+
+  it("distingue 'empresa sem CNPJ' de 'fonte não fornece'", async () => {
+    const semCnpj = new MariaDbHelpdeskReadOnlySource(new ConexaoEspia([{ id: 75, cnpj: null }]));
+    expect(await semCnpj.readClientDocument(75)).toEqual({ available: true, documentNumber: null });
+
+    const semPrivilegio = new MariaDbHelpdeskReadOnlySource(
+      new ConexaoQueFalha(
+        erroDeBanco(1143, "SELECT command denied to user 'x'@'localhost' for column 'cnpj' in table 'clients'")
+      )
+    );
+    expect(await semPrivilegio.readClientDocument(75)).toEqual({ available: false });
+  });
+
+  it("coluna inexistente também é 'não fornece'", async () => {
+    const source = new MariaDbHelpdeskReadOnlySource(
+      new ConexaoQueFalha(erroDeBanco(1054, "Unknown column 'cnpj' in 'field list'"))
+    );
+    expect(await source.readClientDocument(75)).toEqual({ available: false });
+  });
+
+  it("qualquer outro erro SOBE — falha de infraestrutura não é 'não fornece'", async () => {
+    const source = new MariaDbHelpdeskReadOnlySource(
+      new ConexaoQueFalha(erroDeBanco(2003, "connect ECONNREFUSED"))
+    );
+    await expect(source.readClientDocument(75)).rejects.toThrow("connect ECONNREFUSED");
+  });
+
+  it("a projeção do CNPJ não traz nome — nada convida a um match por nome", async () => {
+    const conexao = new ConexaoEspia([{ id: 75, cnpj: null }]);
+    await new MariaDbHelpdeskReadOnlySource(conexao).readClientDocument(75);
+
+    expect(conexao.sqls[0]).toContain("id, cnpj");
+    expect(conexao.sqls[0]).not.toContain("name");
   });
 });

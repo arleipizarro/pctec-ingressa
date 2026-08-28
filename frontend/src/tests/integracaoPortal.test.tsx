@@ -163,36 +163,69 @@ describe("seção Integração com o Portal — BUSINESS_GROUP", () => {
 // Criação do vínculo
 // ---------------------------------------------------------------------------
 
-describe("criação do vínculo", () => {
+describe("criação do vínculo — busca e seleção", () => {
+  const CLIENTE_71 = {
+    legacyId: 71,
+    name: "EMPRESA SINTETICA LTDA",
+    tradeName: "Sintética",
+    documentMasked: "**.***.333/0001-81",
+    hasDocument: true,
+    active: true
+  };
+  const CLIENTE_72 = {
+    legacyId: 72,
+    name: "EMPRESA SINTETICA FILIAL LTDA",
+    tradeName: null,
+    documentMasked: "**.***.333/0002-62",
+    hasDocument: true,
+    active: true
+  };
+
+  const SEM_CORRESPONDENCIA = {
+    organizationPublicId: fixtures.ORG_PUBLIC_ID,
+    status: "NOT_FOUND" as const,
+    hasDocument: true,
+    candidateCount: 0,
+    suggestion: null
+  };
+
+  function correspondencia(overrides: Record<string, unknown> = {}) {
+    return { ...SEM_CORRESPONDENCIA, ...overrides } as never;
+  }
+
+  function catalogo(items: readonly unknown[], total = items.length) {
+    return { items, total, limit: 10, offset: 0 } as never;
+  }
+
+  beforeEach(() => {
+    vi.spyOn(api, "organization").mockResolvedValue(
+      organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
+    );
+    vi.spyOn(api, "portalMatch").mockResolvedValue(correspondencia());
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([]));
+  });
+
   async function abrirVinculo() {
     await userEvent.click(await screen.findByRole("button", { name: "Vincular ao Portal" }));
     return screen.findByRole("dialog", { name: "Vincular ao Portal" });
   }
 
-  it("exige confirmação explícita e um inteiro positivo antes de habilitar", async () => {
-    vi.spyOn(api, "organization").mockResolvedValue(
-      organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
-    );
+  it("não existe mais campo cru de id do cliente — a escolha é por busca", async () => {
     renderizar();
     const dialogo = await abrirVinculo();
 
-    expect(within(dialogo).getByText(/todos os usuários do Portal desta empresa/i)).toBeInTheDocument();
-    const confirmar = within(dialogo).getByRole("button", { name: "Confirmar vínculo" });
-    expect(confirmar).toBeDisabled();
-
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "0");
-    expect(confirmar).toBeDisabled();
-
-    await userEvent.clear(within(dialogo).getByLabelText("ID do cliente no Portal"));
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
-    expect(confirmar).toBeEnabled();
+    expect(within(dialogo).queryByLabelText("ID do cliente no Portal")).not.toBeInTheDocument();
+    expect(within(dialogo).getByLabelText("Buscar cliente no Portal")).toBeInTheDocument();
   });
 
-  it("no sucesso, recarrega a tela e o estado passa a “vinculada” — sem reload da página", async () => {
-    const organization = vi
-      .spyOn(api, "organization")
-      .mockResolvedValueOnce(organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO }))
-      .mockResolvedValue(organizacao({ portal: fixtures.PORTAL_EMPRESA_VINCULADA }));
+  it("sugere o cliente quando o CNPJ bate com exatamente um, e ainda exige confirmação", async () => {
+    vi.spyOn(api, "portalMatch").mockResolvedValue(
+      correspondencia({
+        status: "EXACT_UNIQUE",
+        candidateCount: 1,
+        suggestion: { ...CLIENTE_71, documentMasked: "**.***.333/0001-81" }
+      })
+    );
     const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
@@ -205,7 +238,172 @@ describe("criação do vínculo", () => {
     renderizar();
     const dialogo = await abrirVinculo();
 
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
+    const sugestao = await within(dialogo).findByTestId("portal-sugestao");
+    expect(sugestao).toHaveTextContent("EMPRESA SINTETICA LTDA");
+    expect(sugestao).toHaveTextContent("**.***.333/0001-81");
+    // Nada foi escrito só por haver correspondência.
+    expect(vincular).not.toHaveBeenCalled();
+
+    await userEvent.click(within(sugestao).getByRole("button", { name: "Confirmar este cliente" }));
+    await waitFor(() => expect(vincular).toHaveBeenCalledWith(fixtures.ORG_PUBLIC_ID, 71));
+  });
+
+  it("sem correspondência automática, explica e manda buscar", async () => {
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    expect(await within(dialogo).findByTestId("portal-sem-sugestao")).toHaveTextContent(
+      /Nenhum cliente do Portal tem o CNPJ desta empresa/i
+    );
+  });
+
+  it("correspondência ambígua não sugere ninguém e diz por quê", async () => {
+    vi.spyOn(api, "portalMatch").mockResolvedValue(
+      correspondencia({ status: "AMBIGUOUS", candidateCount: 2 })
+    );
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    expect(await within(dialogo).findByTestId("portal-sem-sugestao")).toHaveTextContent(
+      /Mais de um cliente do Portal tem o CNPJ desta empresa/i
+    );
+    expect(within(dialogo).queryByTestId("portal-sugestao")).not.toBeInTheDocument();
+  });
+
+  it("organização sem CNPJ cai direto na seleção manual", async () => {
+    vi.spyOn(api, "portalMatch").mockResolvedValue(
+      correspondencia({ status: "DOCUMENT_MISSING_OR_INVALID", hasDocument: false })
+    );
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    expect(await within(dialogo).findByTestId("portal-sem-sugestao")).toHaveTextContent(
+      /não tem CNPJ cadastrado no Ingressa/i
+    );
+  });
+
+  it("busca por nome lista candidatos com CNPJ mascarado", async () => {
+    const buscar = vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71, CLIENTE_72]));
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+
+    expect(await within(dialogo).findByText("EMPRESA SINTETICA FILIAL LTDA")).toBeInTheDocument();
+    expect(within(dialogo).getByText("**.***.333/0001-81")).toBeInTheDocument();
+    expect(buscar).toHaveBeenCalledWith(expect.any(URLSearchParams));
+    expect(buscar.mock.calls[0]?.[0].get("q")).toBe("sintetica");
+  });
+
+  it("busca por CNPJ manda o documento como termo", async () => {
+    const buscar = vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "11.222.333/0001-81");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+
+    await waitFor(() => expect(buscar.mock.calls[0]?.[0].get("q")).toBe("11.222.333/0001-81"));
+  });
+
+  it("busca sem resultado diz que não encontrou — e não vincula nada", async () => {
+    const vincular = vi.spyOn(api, "linkPortalReference");
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "inexistente");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+
+    expect(await within(dialogo).findByTestId("portal-busca-vazia")).toBeInTheDocument();
+    expect(vincular).not.toHaveBeenCalled();
+  });
+
+  it("um resultado só NÃO vincula sozinho — a seleção é explícita", async () => {
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
+    const vincular = vi.spyOn(api, "linkPortalReference");
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA");
+
+    // Resultado único de busca TEXTUAL continua sendo coincidência de
+    // nome — e nome não é evidência nesta integração.
+    expect(within(dialogo).getByRole("button", { name: "Confirmar vínculo" })).toBeDisabled();
+    expect(vincular).not.toHaveBeenCalled();
+  });
+
+  it("seleção explícita habilita a confirmação e envia o legacyId escolhido", async () => {
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71, CLIENTE_72]));
+    const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+      publicId: "99999999-9999-4999-8999-999999999999",
+      organizationPublicId: fixtures.ORG_PUBLIC_ID,
+      systemCode: "PCTEC_PORTAL",
+      entityType: "clientes",
+      legacyId: 72,
+      status: "ACTIVE",
+      alreadyLinked: false
+    });
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+
+    const confirmar = within(dialogo).getByRole("button", { name: "Confirmar vínculo" });
+    expect(confirmar).toBeDisabled();
+
+    await userEvent.click(
+      await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA FILIAL LTDA")
+    );
+    expect(confirmar).toBeEnabled();
+
+    await userEvent.click(confirmar);
+    await waitFor(() => expect(vincular).toHaveBeenCalledWith(fixtures.ORG_PUBLIC_ID, 72));
+  });
+
+  it("o aviso de alcance irreversível continua no modal", async () => {
+    renderizar();
+    const dialogo = await abrirVinculo();
+    expect(within(dialogo).getByText(/todos os usuários do Portal desta empresa/i)).toBeInTheDocument();
+  });
+
+  it("fonte indisponível é dita como tal — nunca como “nada encontrado”", async () => {
+    vi.spyOn(api, "portalMatch").mockRejectedValue(
+      new ApiError(503, "PORTAL_CATALOG_SOURCE_NOT_CONFIGURED", "indisponível")
+    );
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    expect(await within(dialogo).findByTestId("portal-catalogo-indisponivel")).toHaveTextContent(
+      /configuração da fonte não está presente/i
+    );
+    expect(within(dialogo).queryByLabelText("Buscar cliente no Portal")).not.toBeInTheDocument();
+  });
+
+  it("no sucesso, recarrega a tela e o estado passa a “vinculada” — sem reload da página", async () => {
+    const organization = vi
+      .spyOn(api, "organization")
+      .mockResolvedValueOnce(organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO }))
+      .mockResolvedValue(organizacao({ portal: fixtures.PORTAL_EMPRESA_VINCULADA }));
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
+    const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+      publicId: "99999999-9999-4999-8999-999999999999",
+      organizationPublicId: fixtures.ORG_PUBLIC_ID,
+      systemCode: "PCTEC_PORTAL",
+      entityType: "clientes",
+      legacyId: 71,
+      status: "ACTIVE",
+      alreadyLinked: false
+    });
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA"));
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Empresa vinculada ao Portal."));
@@ -217,9 +415,7 @@ describe("criação do vínculo", () => {
   });
 
   it("repetição do mesmo vínculo é anunciada como idempotente, não como criação", async () => {
-    vi.spyOn(api, "organization").mockResolvedValue(
-      organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
-    );
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
     vi.spyOn(api, "linkPortalReference").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
@@ -232,43 +428,45 @@ describe("criação do vínculo", () => {
     renderizar();
     const dialogo = await abrirVinculo();
 
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA"));
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/já estava vinculada/i));
   });
 
   it.each([
-    [
-      409,
-      "PORTAL_REFERENCE_ALREADY_LINKED_DIFFERENT",
-      /já está vinculada a outro id de cliente/i
-    ],
-    [
-      409,
-      "ORGANIZATION_EXTERNAL_REFERENCE_ALREADY_EXISTS",
-      /já está vinculado a outra empresa/i
-    ],
-    // A frase precisa ser distinguível da dica do formulário, que também
-    // fala em "número inteiro positivo".
-    [422, "PORTAL_REFERENCE_LEGACY_ID_INVALID", /Informe o id do cliente no Portal como um número/i]
+    [409, "PORTAL_REFERENCE_ALREADY_LINKED_DIFFERENT", /já está vinculada a outro id de cliente/i],
+    [409, "ORGANIZATION_EXTERNAL_REFERENCE_ALREADY_EXISTS", /já está vinculado a outra empresa/i],
+    [409, "PORTAL_REFERENCE_AMBIGUOUS", /mais de um vínculo ativo com o Portal/i]
   ])("erro %s/%s vira frase compreensível, não o texto genérico do status", async (status, code, esperado) => {
-    vi.spyOn(api, "organization").mockResolvedValue(
-      organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
-    );
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
     vi.spyOn(api, "linkPortalReference").mockRejectedValue(
       new ApiError(status, code, "mensagem genérica do status")
     );
     renderizar();
     const dialogo = await abrirVinculo();
 
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA"));
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
 
-    // O modal fica aberto para a pessoa corrigir — e ele tem o próprio
-    // aviso. Por isso a asserção é sobre o texto, não sobre "o alert".
     expect(await screen.findByText(esperado)).toBeInTheDocument();
     expect(screen.queryByText("mensagem genérica do status")).not.toBeInTheDocument();
+  });
+
+  it("nenhuma resposta da tela mostra CNPJ inteiro", async () => {
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71, CLIENTE_72]));
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA");
+
+    expect(document.body.textContent ?? "").not.toMatch(/\b\d{14}\b/);
   });
 });
 
@@ -361,11 +559,25 @@ describe("novo usuário — cobertura do Portal", () => {
     expect(within(antes).getByRole("button", { name: "Criar usuário" })).toBeDisabled();
     await userEvent.click(within(antes).getByRole("button", { name: "Cancelar" }));
 
-    // Vincula.
+    // Vincula — pela sugestão automática, que é o caminho curto quando o
+    // CNPJ bate com exatamente um cliente do Portal.
+    vi.spyOn(api, "portalMatch").mockResolvedValue({
+      organizationPublicId: fixtures.ORG_PUBLIC_ID,
+      status: "EXACT_UNIQUE",
+      hasDocument: true,
+      candidateCount: 1,
+      suggestion: {
+        legacyId: 71,
+        name: "CLIENTE SINTETICO",
+        tradeName: null,
+        documentMasked: "**.***.333/0001-81",
+        active: true
+      }
+    } as never);
     await userEvent.click(screen.getByRole("button", { name: "Vincular ao Portal" }));
     const vinculo = await screen.findByRole("dialog", { name: "Vincular ao Portal" });
-    await userEvent.type(within(vinculo).getByLabelText("ID do cliente no Portal"), "71");
-    await userEvent.click(within(vinculo).getByRole("button", { name: "Confirmar vínculo" }));
+    const sugestao = await within(vinculo).findByTestId("portal-sugestao");
+    await userEvent.click(within(sugestao).getByRole("button", { name: "Confirmar este cliente" }));
     await waitFor(() =>
       expect(screen.getByTestId("portal-estado-empresa")).toHaveTextContent(/vinculada/i)
     );
@@ -476,6 +688,19 @@ describe("cadastro ambíguo", () => {
     vi.spyOn(api, "organization").mockResolvedValue(
       organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO })
     );
+    vi.spyOn(api, "portalMatch").mockResolvedValue({
+      organizationPublicId: fixtures.ORG_PUBLIC_ID,
+      status: "EXACT_UNIQUE",
+      hasDocument: true,
+      candidateCount: 1,
+      suggestion: {
+        legacyId: 71,
+        name: "CLIENTE SINTETICO",
+        tradeName: null,
+        documentMasked: "**.***.333/0001-81",
+        active: true
+      }
+    } as never);
     vi.spyOn(api, "linkPortalReference").mockRejectedValue(
       new ApiError(409, "PORTAL_REFERENCE_AMBIGUOUS", "mensagem genérica do status")
     );
@@ -483,8 +708,10 @@ describe("cadastro ambíguo", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Vincular ao Portal" }));
     const dialogo = await screen.findByRole("dialog", { name: "Vincular ao Portal" });
 
-    await userEvent.type(within(dialogo).getByLabelText("ID do cliente no Portal"), "71");
-    await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
+    // Mesmo pela sugestão automática, a recusa do servidor prevalece: a
+    // correspondência por CNPJ não é permissão para escrever.
+    const sugestao = await within(dialogo).findByTestId("portal-sugestao");
+    await userEvent.click(within(sugestao).getByRole("button", { name: "Confirmar este cliente" }));
 
     expect(await screen.findByText(/mais de um vínculo ativo com o Portal/i)).toBeInTheDocument();
     expect(screen.queryByText("mensagem genérica do status")).not.toBeInTheDocument();
