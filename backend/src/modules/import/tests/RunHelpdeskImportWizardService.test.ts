@@ -15,6 +15,7 @@ import {
   WizardApproverNotEligibleError,
   WizardBatchContainsUnsupportedActionError,
   WizardSourceClientNotFoundError,
+  WIZARD_PORTAL_LINK_UNEXPECTED_ERROR,
   type RunHelpdeskImportWizardDeps,
   type WizardApplyWriter
 } from "../application/RunHelpdeskImportWizardService.js";
@@ -34,6 +35,7 @@ import {
 
 const APROVADOR = "bbbbbbb1-0000-4000-8000-000000000001";
 const NOVA_ORG = "bbbbbbb2-0000-4000-8000-000000000002";
+const CORRELACAO = "bbbbbbb3-0000-4000-8000-000000000003";
 const USUARIOS: readonly HelpdeskUserRecord[] = [
   usuario({ id: 999911 }),
   usuario({ id: 999912, name: "Externo Sintetico Dois", email: "externo.dois.999901@example.invalid" })
@@ -170,6 +172,7 @@ function pedidoApply(overrides: Record<string, unknown> = {}) {
     actorIdentityPublicId: APROVADOR,
     dryRunBatchPublicId: "lote-0",
     confirmation: WIZARD_APPLY_CONFIRMATION,
+    correlationId: CORRELACAO,
     ...overrides
   };
 }
@@ -682,17 +685,105 @@ describe("assistente — vínculo com o Portal depois do APPLY", () => {
     });
   });
 
-  it("o importador não manda CNPJ nem nada que decida correspondência — só o publicId e o ator", async () => {
+  it("o importador manda o publicId, o ator e a correlação — e nada que decida correspondência", async () => {
     const autoLink = autoLinkFake();
     const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico }, { status: "ACTIVE" });
 
     await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
 
     // Se o importador tivesse cópia da regra, ela apareceria aqui como
-    // um documento, um candidato ou um `legacyId` calculado por ele.
-    expect(Object.keys(autoLink.chamadas[0] ?? {}).sort()).toEqual(["actorPublicId", "organizationPublicId"]);
+    // um documento, um candidato ou um `legacyId` calculado por ele. A
+    // correlação não é decisão: é a mesma requisição, transportada.
+    expect(Object.keys(autoLink.chamadas[0] ?? {}).sort()).toEqual([
+      "actorPublicId",
+      "correlationId",
+      "organizationPublicId"
+    ]);
     expect(autoLink.chamadas[0]?.["actorPublicId"]).toBe(APROVADOR);
+    expect(autoLink.chamadas[0]?.["organizationPublicId"]).toBe(NOVA_ORG);
     expect(JSON.stringify(autoLink.chamadas[0])).not.toMatch(/\d{14}/);
+  });
+
+  it("o correlationId da requisição chega ao vínculo — o lote e o vínculo são a MESMA requisição", async () => {
+    const autoLink = autoLinkFake();
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(autoLink.chamadas[0]?.["correlationId"]).toBe(CORRELACAO);
+  });
+
+  it("sem correlação na requisição, o campo desce como `undefined` — nunca inventado", async () => {
+    const autoLink = autoLinkFake();
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply({ correlationId: undefined }));
+
+    expect(autoLink.chamadas[0]?.["correlationId"]).toBeUndefined();
+  });
+
+  /**
+   * A fronteira pós-commit.
+   *
+   * O contrato TypeScript do port promete uma Promise resolvida, não
+   * "nunca lança": um port injetado, um bug futuro ou um erro fora do
+   * catch interno do AutoLink lançam. Quando isso acontece o APPLY JÁ
+   * ESTÁ COMITADO — e a importação válida não pode virar um lote aberto,
+   * um lote FAILED ou um 500.
+   */
+  it("exceção LANÇADA pelo vínculo não derruba a resposta nem deixa o lote aberto", async () => {
+    const execute = vi.fn(async () => {
+      throw new Error(
+        "SELECT id FROM pctecdb.clientes WHERE cnpj = '11222333000181' — " +
+          "connect ECONNREFUSED 10.0.0.9:3306 user=portal_ro password=SenhaSuperSecreta"
+      );
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: { execute } });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    // A chamada resolve normalmente e o lote FECHA.
+    expect(resultado.status).toBe("COMPLETED");
+    expect(bancada.complete).toHaveBeenCalledTimes(1);
+    // O lote descreve a IMPORTAÇÃO, que deu certo. O vínculo é outro
+    // fato, e ele tem campo próprio para dizer que não deu.
+    expect(bancada.fail).not.toHaveBeenCalled();
+    expect(resultado.organizationPublicId).toBe(NOVA_ORG);
+    expect(resultado.portalIntegration).toEqual({
+      organizationPublicId: NOVA_ORG,
+      status: "FAILED",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: WIZARD_PORTAL_LINK_UNEXPECTED_ERROR
+    });
+  });
+
+  it("nenhum trecho da exceção original é serializado na resposta", async () => {
+    const execute = vi.fn(async () => {
+      throw new Error(
+        "SELECT id FROM pctecdb.clientes WHERE cnpj = '11222333000181' — " +
+          "connect ECONNREFUSED 10.0.0.9:3306 user=portal_ro password=SenhaSuperSecreta"
+      );
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: { execute } });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    const serializado = JSON.stringify(resultado).toLowerCase();
+
+    for (const proibido of [
+      "select ",
+      "pctecdb",
+      "clientes",
+      "econnrefused",
+      "10.0.0.9",
+      "3306",
+      "portal_ro",
+      "password",
+      "senhasupersecreta"
+    ]) {
+      expect(serializado).not.toContain(proibido);
+    }
+    expect(serializado).not.toMatch(/\d{14}/);
   });
 
   it.each([

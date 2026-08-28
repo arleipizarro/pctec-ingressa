@@ -2,6 +2,14 @@ import type { Queryable } from "../../../shared/database/Queryable.js";
 import type { OrganizationRepository } from "../../organization/domain/OrganizationRepository.js";
 import { PublicId } from "../../organization/domain/value-objects/PublicId.js";
 import type { LinkPortalOrganizationReferenceService } from "../../organization/application/LinkPortalOrganizationReferenceService.js";
+import type { OrganizationExternalReferenceRepository } from "../../organization/domain/OrganizationExternalReferenceRepository.js";
+import { SystemCode } from "../../organization/domain/value-objects/SystemCode.js";
+import { EntityType } from "../../organization/domain/value-objects/EntityType.js";
+import {
+  PORTAL_REFERENCE_ENTITY_TYPE,
+  PORTAL_REFERENCE_SYSTEM_CODE
+} from "../../organization/domain/value-objects/PortalReferenceCodes.js";
+import { PortalReferenceAmbiguousError } from "../../organization/domain/errors/PortalOrganizationReferenceErrors.js";
 import { isDomainError } from "../../../shared/http/mapDomainErrorToHttp.js";
 import type { MatchPortalClientByDocumentService } from "./MatchPortalClientByDocumentService.js";
 import type { PortalClientMatchStatus } from "../domain/PortalClientMatch.js";
@@ -68,19 +76,57 @@ export const PORTAL_AUTO_LINK_SOURCE_ERROR = "PORTAL_CATALOG_SOURCE_ERROR";
  * criaria um segundo caminho de escrita sem o bloqueio, que é
  * exatamente o buraco que o PR anterior fechou.
  *
+ * ## O vínculo existente tem precedência sobre o matching
+ *
+ * Antes de perguntar qualquer coisa à fonte, este serviço lê as
+ * referências `PCTEC_PORTAL`/`clientes` ACTIVE que a organização já
+ * tem. Uma organização já vinculada é um FATO do Ingressa, e ele não
+ * depende do CNPJ estar cadastrado aqui nem de o cliente continuar
+ * ativo lá: perguntar ao Portal primeiro fazia uma empresa vinculada e
+ * sem CNPJ ser reportada como `DOCUMENT_MISSING_OR_INVALID`, e uma
+ * empresa vinculada cujo cliente foi desativado no Portal ser reportada
+ * como `INACTIVE_ONLY` — os dois convidando a "resolver" um vínculo que
+ * já existe e está correto.
+ *
+ * A leitura é uma consulta comum, fora de transação, e ela NÃO decide
+ * escrita nenhuma: no caminho `ALREADY_LINKED` nada é escrito, e no
+ * caminho "nenhuma referência" quem decide continua sendo o
+ * `LinkPortalOrganizationReferenceService`, que relê sob o
+ * `SELECT ... FOR UPDATE`. Por isso ela não enfraquece a atomicidade —
+ * uma referência criada por um concorrente entre esta leitura e aquele
+ * bloqueio é vista lá, e a recusa correta (`alreadyLinked` ou
+ * `PORTAL_REFERENCE_ALREADY_LINKED_DIFFERENT`) continua saindo de lá.
+ *
+ * Mais de uma ACTIVE é o estado ambíguo que o CLI genérico ainda
+ * alcança: recusar com `PORTAL_REFERENCE_AMBIGUOUS` é a única saída que
+ * não escolhe por conta própria — e é por isso que a leitura é a lista
+ * inteira, nunca um `LIMIT 1`.
+ *
  * ## Fail-closed em todos os eixos
  *
+ * - já vinculada → **não consulta a fonte** e **não chama** o vínculo;
  * - matching não-único → **não chama** o serviço de vínculo;
  * - BUSINESS_GROUP → **não chama**, e nem consulta a fonte;
  * - erro de qualquer natureza → resultado `FAILED` com código, e a
  *   organização segue intacta. Nada é inventado, nada é apagado.
  */
 export class AutoLinkPortalOrganizationReferenceService {
+  private readonly systemCode = SystemCode.create(PORTAL_REFERENCE_SYSTEM_CODE);
+  private readonly entityType = EntityType.create(PORTAL_REFERENCE_ENTITY_TYPE);
+
   public constructor(
     private readonly organizationRepositoryFactory: (connection: Queryable) => OrganizationRepository,
     private readonly connection: Queryable,
     private readonly matchService: MatchPortalClientByDocumentService,
-    private readonly linkService: LinkPortalOrganizationReferenceService
+    private readonly linkService: LinkPortalOrganizationReferenceService,
+    /**
+     * Leitura das referências que a organização JÁ tem. O mesmo
+     * contrato de domínio que a leitura administrativa e o serviço de
+     * vínculo usam — nenhum SQL próprio nasce aqui.
+     */
+    private readonly organizationExternalReferenceRepositoryFactory: (
+      connection: Queryable
+    ) => OrganizationExternalReferenceRepository
   ) {}
 
   public async execute(request: {
@@ -98,6 +144,32 @@ export class AutoLinkPortalOrganizationReferenceService {
       // fonte para descobrir algo que o modelo já responde.
       if (organizacao.getType().isBusinessGroup()) {
         return { ...vazio(), status: "NOT_A_COMPANY" };
+      }
+
+      // Vínculo existente ANTES da fonte: já vinculada é um fato do
+      // Ingressa, e ele não depende do CNPJ nem da situação atual do
+      // cliente no Portal.
+      const ativas = await this.organizationExternalReferenceRepositoryFactory(
+        this.connection
+      ).findAllActiveByOrganizationSystemCodeAndEntityType(publicId, this.systemCode, this.entityType);
+      if (ativas.length > 1) {
+        // Recusar, nunca escolher: qual das duas citar já seria a
+        // escolha que este erro existe para não fazer.
+        throw new PortalReferenceAmbiguousError(publicId.toString(), ativas.length);
+      }
+      const jaVinculada = ativas[0];
+      if (jaVinculada !== undefined) {
+        return {
+          status: "ALREADY_LINKED",
+          legacyId: jaVinculada.getLegacyId().toNumber(),
+          referencePublicId: jaVinculada.getPublicId().toString(),
+          // A fonte não foi consultada: afirmar nome ou documento aqui
+          // seria inventar o que ninguém perguntou.
+          clientName: null,
+          clientDocumentMasked: null,
+          candidateCount: 0,
+          reasonCode: null
+        };
       }
 
       const documento = organizacao.getDocumentNumber()?.normalized();
