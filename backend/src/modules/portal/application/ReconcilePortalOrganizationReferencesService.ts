@@ -142,6 +142,7 @@ export class ReconcilePortalOrganizationReferencesService {
       EXACT_UNIQUE: 0,
       NOT_FOUND: 0,
       AMBIGUOUS: 0,
+      INACTIVE_ONLY: 0,
       DOCUMENT_MISSING_OR_INVALID: 0,
       ALREADY_LINKED: 0
     };

@@ -30,6 +30,7 @@ const ORG_UNICA = "aaaaaaaa-1111-4111-8111-111111111111";
 const ORG_AMBIGUA = "cccccccc-3333-4333-8333-333333333333";
 const ORG_SEM_DOC = "dddddddd-4444-4444-8444-444444444444";
 const ORG_VINCULADA = "eeeeeeee-5555-4555-8555-555555555555";
+const ORG_INATIVA = "ffffffff-6666-4666-8666-666666666666";
 
 const ITENS = [
   {
@@ -66,6 +67,17 @@ const ITENS = [
     suggestedClientDocumentMasked: null
   },
   {
+    organizationPublicId: ORG_INATIVA,
+    legalName: "SO INATIVO LTDA",
+    tradeName: null,
+    status: "INACTIVE_ONLY",
+    hasDocument: true,
+    candidateCount: 1,
+    suggestedLegacyId: null,
+    suggestedClientName: null,
+    suggestedClientDocumentMasked: null
+  },
+  {
     organizationPublicId: ORG_VINCULADA,
     legalName: "JA VINCULADA LTDA",
     tradeName: null,
@@ -85,10 +97,11 @@ function dryRun(overrides: Record<string, unknown> = {}) {
       EXACT_UNIQUE: 1,
       NOT_FOUND: 0,
       AMBIGUOUS: 1,
+      INACTIVE_ONLY: 1,
       DOCUMENT_MISSING_OR_INVALID: 1,
       ALREADY_LINKED: 1
     },
-    total: 4,
+    total: 5,
     limit: 50,
     offset: 0,
     eligibleCount: 1,
@@ -151,6 +164,15 @@ describe("reconciliação — dry-run", () => {
     renderizar();
     await screen.findByText("SEM DOCUMENTO LTDA");
     expect(screen.getByText("sem CNPJ")).toBeInTheDocument();
+  });
+
+  it("organização cujo CNPJ só existe em cliente inativo tem estado próprio e não é selecionável", async () => {
+    renderizar();
+    await screen.findByText("SO INATIVO LTDA");
+
+    expect(screen.getByTestId("contagem-INACTIVE_ONLY")).toHaveTextContent("1");
+    expect(screen.getByText(/só em cliente inativo/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Selecionar SO INATIVO LTDA")).not.toBeInTheDocument();
   });
 
   it("fonte indisponível é dita como tal", async () => {
@@ -261,6 +283,7 @@ describe("reconciliação — execução", () => {
           EXACT_UNIQUE: 0,
           NOT_FOUND: 0,
           AMBIGUOUS: 1,
+          INACTIVE_ONLY: 1,
           DOCUMENT_MISSING_OR_INVALID: 1,
           ALREADY_LINKED: 1
         },

@@ -50,10 +50,22 @@ export function FormularioNovaOrganizacao({
 
   const ehEmpresa = type === "COMPANY";
   const digitosDoCnpj = documentNumber.replace(/\D/g, "");
-  const cnpjIncompleto = digitosDoCnpj.length > 0 && digitosDoCnpj.length !== 14;
+  // Só bloqueia onde o campo existe. Em BUSINESS_GROUP o CNPJ nem é
+  // exibido nem enviado, e um valor deixado para trás ao trocar o tipo
+  // não pode travar um formulário que já não o mostra.
+  const cnpjIncompleto = ehEmpresa && digitosDoCnpj.length > 0 && digitosDoCnpj.length !== 14;
 
   function enviar(evento: FormEvent): void {
     evento.preventDefault();
+    // Campo preenchido e incompleto NÃO cai fora em silêncio.
+    //
+    // Descartar o documento aqui criaria a empresa sem CNPJ enquanto a
+    // pessoa acredita tê-lo informado — e o efeito só apareceria depois,
+    // como um vínculo com o Portal que nunca acontece. Vazio segue
+    // válido; preenchido tem que estar completo.
+    if (cnpjIncompleto) {
+      return;
+    }
     onConfirmar({
       type,
       legalName: legalName.trim(),
@@ -130,9 +142,9 @@ export function FormularioNovaOrganizacao({
                 seleção na tela dela.
               </p>
               {cnpjIncompleto && (
-                <div className="aviso aviso-alerta" role="status">
-                  CNPJ tem 14 dígitos. Enquanto estiver incompleto, ele não será enviado e a empresa nascerá sem
-                  documento.
+                <div className="aviso aviso-erro" role="alert" data-testid="cnpj-incompleto">
+                  CNPJ tem 14 dígitos — este tem {digitosDoCnpj.length}. Complete o documento ou apague o campo
+                  para criar a empresa sem CNPJ.
                 </div>
               )}
             </>
@@ -155,14 +167,19 @@ export function FormularioNovaOrganizacao({
                 ))}
               </select>
               <p className="subtitulo">
-                Opcional. A empresa e o vínculo são gravados juntos: se o vínculo falhar, a empresa não é criada.
+                Opcional. A empresa e sua associação ao grupo são gravadas na mesma transação. A integração com
+                o Portal acontece depois e não desfaz a criação da empresa.
               </p>
             </>
           )}
 
           <div className="acoes">
             <button type="button" onClick={onCancelar} disabled={enviando}>Cancelar</button>
-            <button type="submit" className="primario" disabled={enviando || legalName.trim().length === 0}>
+            <button
+              type="submit"
+              className="primario"
+              disabled={enviando || legalName.trim().length === 0 || cnpjIncompleto}
+            >
               {enviando ? "Criando…" : "Criar organização"}
             </button>
           </div>

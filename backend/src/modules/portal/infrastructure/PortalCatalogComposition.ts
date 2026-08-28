@@ -12,12 +12,14 @@ import { SearchPortalClientCatalogService } from "../application/SearchPortalCli
 import { GetPortalOrganizationMatchService } from "../application/GetPortalOrganizationMatchService.js";
 import { AutoLinkPortalOrganizationReferenceService } from "../application/AutoLinkPortalOrganizationReferenceService.js";
 import { ReconcilePortalOrganizationReferencesService } from "../application/ReconcilePortalOrganizationReferencesService.js";
+import { ConfirmPortalClientSelectionService } from "../application/ConfirmPortalClientSelectionService.js";
 
 export interface PortalCatalogComposition {
   readonly catalogService: SearchPortalClientCatalogService;
   readonly matchService: GetPortalOrganizationMatchService;
   readonly autoLinkService: AutoLinkPortalOrganizationReferenceService;
   readonly reconciliationService: ReconcilePortalOrganizationReferencesService;
+  readonly confirmSelectionService: ConfirmPortalClientSelectionService;
   readonly sourcePool: Pool;
 }
 
@@ -73,6 +75,10 @@ export function composePortalCatalog(
       matchByDocument,
       autoLinkService
     ),
+    // Sobre a MESMA fonte e o MESMO serviço de vínculo: a releitura de
+    // confirmação e a busca precisam enxergar o mesmo Portal, e a
+    // escrita precisa ser a mesma do vínculo manual.
+    confirmSelectionService: new ConfirmPortalClientSelectionService(source, linkService),
     sourcePool
   };
 }

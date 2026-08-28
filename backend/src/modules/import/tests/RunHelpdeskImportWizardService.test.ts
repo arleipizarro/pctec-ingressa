@@ -596,3 +596,258 @@ describe("assistente — CNPJ da origem", () => {
     expect(fonte.idsConsultados).toEqual([]);
   });
 });
+
+/**
+ * Vínculo com o Portal DEPOIS do APPLY.
+ *
+ * O que estes testes protegem, em uma frase: a importação e o vínculo
+ * são dois fatos, nessa ordem, e o segundo não pode desfazer o primeiro.
+ *
+ * E uma invariante estrutural: **o importador não sabe fazer
+ * correspondência**. Ele não recebe CNPJ, não recebe catálogo e não
+ * decide nada sobre "exato", "único" ou "ativo" — ele passa o
+ * `publicId` da organização a quem sabe, e traduz a resposta para o
+ * vocabulário do lote.
+ */
+describe("assistente — vínculo com o Portal depois do APPLY", () => {
+  type RespostaDoAutoLink = {
+    readonly status: string;
+    readonly legacyId: number | null;
+    readonly referencePublicId: string | null;
+    readonly reasonCode: string | null;
+  };
+
+  const VINCULADO: RespostaDoAutoLink = {
+    status: "LINKED",
+    legacyId: 71,
+    referencePublicId: "cccccccc-0000-4000-8000-000000000003",
+    reasonCode: null
+  };
+
+  function autoLinkFake(resposta: RespostaDoAutoLink = VINCULADO) {
+    const chamadas: Record<string, unknown>[] = [];
+    const execute = vi.fn(async (pedido: Record<string, unknown>) => {
+      chamadas.push(pedido);
+      return resposta;
+    });
+    return { execute, chamadas, servico: { execute } };
+  }
+
+  it("cria a organização, conclui o APPLY e SÓ ENTÃO vincula", async () => {
+    let bancada: ReturnType<typeof montar>;
+    let ordemNoMomentoDoVinculo: string[] = [];
+    const execute = vi.fn(async () => {
+      ordemNoMomentoDoVinculo = [...bancada.ordemDeChamadas];
+      return VINCULADO;
+    });
+    bancada = montar(alvo(), { portalAutoLinkService: { execute } });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    // A organização já estava escrita (e comitada, na transação do
+    // writer) quando o Portal foi consultado. A consulta acontece numa
+    // conexão diferente, para um banco diferente: nenhuma transação
+    // atravessa Helpdesk, Portal e Ingressa.
+    expect(ordemNoMomentoDoVinculo).toContain("writeOrganization");
+    expect(resultado.portalIntegration).toMatchObject({ status: "LINKED", legacyId: 71 });
+  });
+
+  it("o vínculo é pedido DEPOIS de todo o APPLY — inclusive dos usuários", async () => {
+    let bancada: ReturnType<typeof montar>;
+    let ordemNoMomentoDoVinculo: string[] = [];
+    const execute = vi.fn(async () => {
+      ordemNoMomentoDoVinculo = [...bancada.ordemDeChamadas];
+      return VINCULADO;
+    });
+    bancada = montar(alvo(), { portalAutoLinkService: { execute } });
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(ordemNoMomentoDoVinculo.filter((p) => p.startsWith("writeUser")).length).toBeGreaterThan(0);
+  });
+
+  it("cliente ativo e exato produz UMA única chamada de vínculo", async () => {
+    const autoLink = autoLinkFake();
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(autoLink.execute).toHaveBeenCalledTimes(1);
+    expect(resultado.portalIntegration).toEqual({
+      organizationPublicId: NOVA_ORG,
+      status: "LINKED",
+      legacyId: 71,
+      referencePublicId: "cccccccc-0000-4000-8000-000000000003",
+      reasonCode: null
+    });
+  });
+
+  it("o importador não manda CNPJ nem nada que decida correspondência — só o publicId e o ator", async () => {
+    const autoLink = autoLinkFake();
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico }, { status: "ACTIVE" });
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    // Se o importador tivesse cópia da regra, ela apareceria aqui como
+    // um documento, um candidato ou um `legacyId` calculado por ele.
+    expect(Object.keys(autoLink.chamadas[0] ?? {}).sort()).toEqual(["actorPublicId", "organizationPublicId"]);
+    expect(autoLink.chamadas[0]?.["actorPublicId"]).toBe(APROVADOR);
+    expect(JSON.stringify(autoLink.chamadas[0])).not.toMatch(/\d{14}/);
+  });
+
+  it.each([
+    ["INACTIVE_ONLY", "PENDING_INACTIVE"],
+    ["NOT_FOUND", "PENDING_NOT_FOUND"],
+    ["AMBIGUOUS", "PENDING_AMBIGUOUS"],
+    ["DOCUMENT_MISSING_OR_INVALID", "PENDING_DOCUMENT"]
+  ])("%s deixa o vínculo PENDENTE e o lote COMPLETED", async (doAutoLink, noLote) => {
+    const autoLink = autoLinkFake({
+      status: doAutoLink,
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: null
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.status).toBe("COMPLETED");
+    expect(resultado.portalIntegration?.status).toBe(noLote);
+    expect(resultado.portalIntegration?.referencePublicId).toBeNull();
+    // A organização importada permanece — o vínculo é outro fato.
+    expect(resultado.organizationPublicId).toBe(NOVA_ORG);
+  });
+
+  it("cliente inativo NÃO vincula", async () => {
+    const autoLink = autoLinkFake({
+      status: "INACTIVE_ONLY",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: null
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.portalIntegration).toMatchObject({
+      status: "PENDING_INACTIVE",
+      legacyId: null,
+      referencePublicId: null
+    });
+  });
+
+  it("fonte não configurada não falha a importação — e diz que ninguém perguntou", async () => {
+    // `portalAutoLinkService` ausente é o estado de um processo sem
+    // `portal-source.env`.
+    const bancada = montar(alvo());
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.status).toBe("COMPLETED");
+    expect(resultado.organizationPublicId).toBe(NOVA_ORG);
+    expect(resultado.portalIntegration).toEqual({
+      organizationPublicId: NOVA_ORG,
+      status: "SOURCE_NOT_CONFIGURED",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: null
+    });
+  });
+
+  it("falha técnica do Portal não desfaz a organização nem marca o lote como FAILED", async () => {
+    const autoLink = autoLinkFake({
+      status: "FAILED",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: "PORTAL_CATALOG_SOURCE_ERROR"
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.status).toBe("COMPLETED");
+    expect(bancada.fail).not.toHaveBeenCalled();
+    expect(resultado.organizationPublicId).toBe(NOVA_ORG);
+    expect(resultado.portalIntegration).toMatchObject({
+      status: "FAILED",
+      reasonCode: "PORTAL_CATALOG_SOURCE_ERROR"
+    });
+  });
+
+  it("`FAILED` sem código de origem não vira beco sem saída", async () => {
+    const autoLink = autoLinkFake({
+      status: "NOT_A_COMPANY",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: null
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.portalIntegration).toMatchObject({ status: "FAILED", reasonCode: "NOT_A_COMPANY" });
+  });
+
+  it("reexecução é idempotente: já vinculada responde ALREADY_LINKED, sem nova escrita", async () => {
+    const autoLink = autoLinkFake({
+      status: "ALREADY_LINKED",
+      legacyId: 71,
+      referencePublicId: "cccccccc-0000-4000-8000-000000000003",
+      reasonCode: null
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(resultado.portalIntegration).toMatchObject({ status: "ALREADY_LINKED", legacyId: 71 });
+  });
+
+  it("organização JÁ EXISTENTE resolvida pelo APPLY também é vinculada", async () => {
+    const autoLink = autoLinkFake();
+    // Nada é escrito para a organização: ela já existe e foi resolvida
+    // pela referência externa do Helpdesk. Ainda assim ela pode não ter
+    // referência do PORTAL — e é justamente esse o caso que a
+    // reconciliação existia para cobrir.
+    const bancada = montar(alvo({ resolvedOrganization: organizacaoJaVinculada() }), {
+      portalAutoLinkService: autoLink.servico
+    });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(bancada.ordemDeChamadas).not.toContain("writeOrganization");
+    expect(autoLink.chamadas[0]?.["organizationPublicId"]).toBe(ORG_PUBLIC_ID);
+    expect(resultado.portalIntegration?.organizationPublicId).toBe(ORG_PUBLIC_ID);
+  });
+
+  it("DRY_RUN nunca vincula — e o campo diz `null` em vez de inventar um estado", async () => {
+    const autoLink = autoLinkFake();
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute({
+      mode: "DRY_RUN",
+      selection: selecao(),
+      actorIdentityPublicId: APROVADOR
+    });
+
+    expect(autoLink.execute).not.toHaveBeenCalled();
+    expect(resultado.portalIntegration).toBeNull();
+  });
+
+  it("nenhum documento, credencial ou detalhe de driver entra no resultado da integração", async () => {
+    const autoLink = autoLinkFake({
+      status: "FAILED",
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: "PORTAL_CATALOG_SOURCE_ERROR"
+    });
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink.servico });
+
+    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    const serializado = JSON.stringify(resultado.portalIntegration).toLowerCase();
+
+    for (const proibido of ["senha", "password", "secret", "select ", "mysql", "mariadb", "econnrefused", "3306"]) {
+      expect(serializado).not.toContain(proibido);
+    }
+    expect(serializado).not.toMatch(/\d{14}/);
+  });
+});

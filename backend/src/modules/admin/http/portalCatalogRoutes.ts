@@ -3,6 +3,7 @@ import type { RequestWithAuthorization } from "../../authorization/http/requireA
 import type { SearchPortalClientCatalogService } from "../../portal/application/SearchPortalClientCatalogService.js";
 import type { GetPortalOrganizationMatchService } from "../../portal/application/GetPortalOrganizationMatchService.js";
 import type { ReconcilePortalOrganizationReferencesService } from "../../portal/application/ReconcilePortalOrganizationReferencesService.js";
+import type { ConfirmPortalClientSelectionService } from "../../portal/application/ConfirmPortalClientSelectionService.js";
 import { PORTAL_RECONCILIATION_CONFIRMATION } from "../../portal/application/ReconcilePortalOrganizationReferencesService.js";
 import { createRequireSafeOrigin } from "../../security/http/requireSafeOrigin.js";
 
@@ -10,6 +11,12 @@ export interface PortalCatalogApiDeps {
   readonly catalogService: SearchPortalClientCatalogService;
   readonly matchService: GetPortalOrganizationMatchService;
   readonly reconciliationService: ReconcilePortalOrganizationReferencesService;
+  /**
+   * Confirmação do cliente escolhido no catálogo, com releitura
+   * obrigatória da fonte. É o caminho da tela nova — distinto do
+   * vínculo operacional por identificador conhecido do PR #19.
+   */
+  readonly confirmSelectionService: ConfirmPortalClientSelectionService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -100,6 +107,49 @@ export function createPortalCatalogRoutes(deps: PortalCatalogApiDeps, allowedOri
         return;
       }
       res.status(200).json(await deps.matchService.execute(publicId));
+    })
+  );
+
+  /**
+   * Confirmação de um cliente escolhido no catálogo.
+   *
+   * **Não é a rota do PR #19, e a diferença é deliberada.**
+   *
+   * | rota | quando | consulta o Portal? |
+   * |---|---|---|
+   * | `POST /admin/organizations/:id/portal-reference` | vínculo **operacional**, por `legacyId` já conhecido | não — e é isso que a mantém utilizável com a fonte fora |
+   * | esta | vínculo **confirmado a partir do catálogo** | sim, relê o cliente antes de escrever |
+   *
+   * Quando o `legacyId` veio de uma lista que esta própria API montou,
+   * aceitá-lo de volta sem reconferir é tratar a resposta anterior como
+   * autoridade. Entre a busca e o clique o cliente pode ter sido
+   * desativado ou removido — e é nessa janela que um vínculo
+   * irreversível nasceria para um cadastro que já não serve.
+   *
+   * O corpo carrega **só `legacyId`**. Nome, CNPJ, status e qualquer
+   * outro dado comercial que venham junto são descartados aqui, na
+   * fronteira: o contrato do serviço não tem onde recebê-los.
+   * `systemCode` e `entityType` seguem fixos no servidor.
+   *
+   * 201 ao criar; 200 quando o vínculo idêntico já existia.
+   */
+  router.post(
+    "/organizations/:publicId/link",
+    origemSegura,
+    envolver(async (req, res) => {
+      const publicId = req.params["publicId"];
+      if (typeof publicId !== "string" || !UUID.test(publicId)) {
+        erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "publicId inválido.");
+        return;
+      }
+      const corpo = (req.body ?? {}) as Record<string, unknown>;
+      const resultado = await deps.confirmSelectionService.execute({
+        organizationPublicId: publicId,
+        legacyId: corpo["legacyId"],
+        actorPublicId: ator(req),
+        correlationId: req.correlationId
+      });
+      res.status(resultado.alreadyLinked ? 200 : 201).json(resultado);
     })
   );
 

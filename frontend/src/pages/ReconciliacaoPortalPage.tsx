@@ -14,11 +14,15 @@ import type {
  * O que cada estado significa para quem opera — e o que fazer com ele.
  */
 const EXPLICACAO: Readonly<Record<EstadoDaReconciliacao, string>> = {
-  EXACT_UNIQUE: "O CNPJ bate com exatamente um cliente do Portal. É o único estado que a execução escreve.",
-  NOT_FOUND: "Nenhum cliente do Portal tem este CNPJ. Vincule pela tela da empresa, selecionando o cliente.",
+  EXACT_UNIQUE:
+    "O CNPJ bate com exatamente um cliente ATIVO do Portal. É o único estado que a execução escreve.",
+  NOT_FOUND: "Nenhum cliente do Portal tem este CNPJ. Cadastre a empresa no Portal, ou selecione outro cliente.",
   AMBIGUOUS:
-    "Mais de um cliente do Portal tem este CNPJ. Nada é escolhido automaticamente — corrija a duplicidade no " +
-    "Portal ou selecione manualmente na tela da empresa.",
+    "Mais de um cliente ATIVO do Portal tem este CNPJ. Nada é escolhido automaticamente — corrija a " +
+    "duplicidade no Portal ou selecione manualmente na tela da empresa.",
+  INACTIVE_ONLY:
+    "O CNPJ existe no Portal, mas só em cliente inativo. Reative o cadastro lá — cadastrar de novo criaria a " +
+    "duplicidade que vira ambiguidade.",
   DOCUMENT_MISSING_OR_INVALID:
     "A empresa não tem CNPJ cadastrado no Ingressa. Sem documento não há correspondência — a seleção é manual.",
   ALREADY_LINKED: "Já vinculada ao Portal. A reconciliação não toca em vínculo existente."
@@ -28,6 +32,7 @@ const ORDEM: readonly EstadoDaReconciliacao[] = [
   "EXACT_UNIQUE",
   "NOT_FOUND",
   "AMBIGUOUS",
+  "INACTIVE_ONLY",
   "DOCUMENT_MISSING_OR_INVALID",
   "ALREADY_LINKED"
 ];

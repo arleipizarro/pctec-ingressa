@@ -11,9 +11,9 @@ import type { AuditEventRepository } from "../../audit/domain/AuditEventReposito
 import type { AuditEvent } from "../../audit/domain/AuditEvent.js";
 import type { UnitOfWork } from "../../../shared/database/UnitOfWork.js";
 import type { Queryable } from "../../../shared/database/Queryable.js";
-import type { PublicId } from "../domain/value-objects/PublicId.js";
+import { PublicId } from "../domain/value-objects/PublicId.js";
 import type { OrganizationType } from "../domain/value-objects/OrganizationType.js";
-import type { DocumentNumber } from "../domain/value-objects/DocumentNumber.js";
+import { DocumentNumberInvalidError, type DocumentNumber } from "../domain/value-objects/DocumentNumber.js";
 import { OrganizationRelationshipParentMustBeBusinessGroupError } from "../domain/errors/OrganizationRelationshipErrors.js";
 import {
   OrganizationParentNotActiveError,
@@ -278,5 +278,55 @@ describe("ProvisionOrganizationService — recusas antes de escrever", () => {
         actorPublicId: ACTOR
       })
     ).rejects.toBeInstanceOf(OrganizationRelationshipParentMustBeBusinessGroupError);
+  });
+
+  /**
+   * O CNPJ passou a ter campo na tela — e a tela não é a autoridade
+   * sobre ele.
+   */
+  describe("documentNumber", () => {
+    it("é transportado até a Organization criada", async () => {
+      const { organizacoes, service } = montar();
+
+      const criada = await service.execute({
+        type: "COMPANY",
+        legalName: "Empresa Com CNPJ",
+        documentNumber: "11.222.333/0001-81",
+        actorPublicId: ACTOR
+      });
+
+      const persistida = await organizacoes.findByPublicId(PublicId.fromString(criada.publicId));
+      // Normalizado na persistência, como manda o Value Object.
+      expect(persistida?.getDocumentNumber()?.normalized()).toBe("11222333000181");
+    });
+
+    it("documento inválido é RECUSADO pelo servidor, mesmo que a tela deixe passar", async () => {
+      const { organizacoes, service } = montar();
+
+      await expect(
+        service.execute({
+          type: "COMPANY",
+          legalName: "Empresa Com CNPJ Torto",
+          documentNumber: "11222333",
+          actorPublicId: ACTOR
+        })
+      ).rejects.toBeInstanceOf(DocumentNumberInvalidError);
+
+      // Recusa ANTES de escrever: nenhuma empresa meio-criada.
+      expect(organizacoes.stored.size).toBe(0);
+    });
+
+    it("ausente continua criando normalmente — o documento nunca foi obrigatório", async () => {
+      const { organizacoes, service } = montar();
+
+      const criada = await service.execute({
+        type: "COMPANY",
+        legalName: "Empresa Sem CNPJ",
+        actorPublicId: ACTOR
+      });
+
+      const persistida = await organizacoes.findByPublicId(PublicId.fromString(criada.publicId));
+      expect(persistida?.getDocumentNumber()).toBeUndefined();
+    });
   });
 });

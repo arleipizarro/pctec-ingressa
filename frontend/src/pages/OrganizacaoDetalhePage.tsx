@@ -140,22 +140,33 @@ export function OrganizacaoDetalhePage(): JSX.Element {
   }
 
   /**
-   * Vínculo com o Portal.
+   * Vínculo com o Portal, a partir de um cliente escolhido no catálogo.
    *
-   * Passa por `executar()` de propósito: no sucesso, o `recarregar()`
-   * traz a cobertura nova do servidor — e é isso que faz a seção e o
-   * formulário de usuário mudarem de estado sem recarregar a página
-   * inteira. Recalcular a cobertura localmente daria a mesma tela por um
-   * segundo e divergiria do servidor no seguinte.
+   * Usa `confirmPortalSelection`, e **não** `linkPortalReference`. A
+   * diferença é o ponto desta tela: o `legacyId` daqui veio de uma lista
+   * que o próprio servidor montou, e devolvê-lo sem que ele seja
+   * reconferido trataria a resposta anterior como autoridade. Entre a
+   * busca e o clique o cliente pode ter sido desativado ou removido no
+   * Portal — a rota de confirmação relê a fonte e recusa nesses casos.
    *
-   * A mensagem de erro vem do `code`, não do status: o único 409 desta
-   * operação não é "o registro mudou", que é o texto genérico.
+   * `linkPortalReference` continua existindo para o vínculo operacional
+   * por identificador já conhecido, que funciona mesmo com a fonte fora
+   * do ar. Ela não é o caminho de uma seleção feita no catálogo.
+   *
+   * No sucesso, `recarregar()` traz a cobertura nova do servidor — é
+   * isso que faz a seção e o formulário de usuário mudarem de estado sem
+   * recarregar a página inteira. Recalcular a cobertura localmente daria
+   * a mesma tela por um segundo e divergiria do servidor no seguinte.
+   *
+   * A mensagem de erro vem do `code`, não do status: "este cliente foi
+   * inativado" e "o registro mudou desde que a tela carregou" são os
+   * dois 409, e só o código os distingue.
    */
   async function vincularAoPortal(legacyId: number): Promise<void> {
     setEnviando(true);
     setMensagem(null);
     try {
-      const resultado = await api.linkPortalReference(publicId, legacyId);
+      const resultado = await api.confirmPortalSelection(publicId, legacyId);
       setMensagem({
         tipo: "ok",
         texto: resultado.alreadyLinked

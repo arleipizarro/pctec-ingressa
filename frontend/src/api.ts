@@ -209,6 +209,22 @@ export const api = {
    */
   portalMatch: (publicId: string) =>
     requisitar<CorrespondenciaDoPortal>(`/admin/portal-catalog/organizations/${publicId}/match`),
+  /**
+   * Confirma o cliente SELECIONADO no catálogo.
+   *
+   * Rota diferente de `linkPortalReference`, e a diferença importa: esta
+   * relê o cliente na fonte imediatamente antes de escrever, e recusa se
+   * ele tiver sido desativado ou removido entre a busca e o clique.
+   *
+   * O corpo carrega só `legacyId`. Nome, CNPJ e status que a tela exibiu
+   * NÃO são enviados — o servidor os relê, e é assim que a tela não
+   * consegue afirmar nada sobre o cliente que escolheu.
+   */
+  confirmPortalSelection: (publicId: string, legacyId: number) =>
+    requisitar<ReferenciaPortalConfirmada>(`/admin/portal-catalog/organizations/${publicId}/link`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId })
+    }),
   /** Reconciliação — dry-run. É GET porque não escreve nada. */
   portalReconciliationDryRun: (params: URLSearchParams) =>
     requisitar<ReconciliacaoDoPortal>(`/admin/portal-catalog/reconciliation/dry-run?${params.toString()}`),
@@ -680,6 +696,7 @@ export type EstadoDaCorrespondencia =
   | "EXACT_UNIQUE"
   | "NOT_FOUND"
   | "AMBIGUOUS"
+  | "INACTIVE_ONLY"
   | "DOCUMENT_MISSING_OR_INVALID"
   | "NOT_A_COMPANY";
 
@@ -702,6 +719,7 @@ export type EstadoDaReconciliacao =
   | "EXACT_UNIQUE"
   | "NOT_FOUND"
   | "AMBIGUOUS"
+  | "INACTIVE_ONLY"
   | "DOCUMENT_MISSING_OR_INVALID"
   | "ALREADY_LINKED";
 
@@ -777,6 +795,16 @@ export interface ReferenciaPortalVinculada {
   readonly status: string;
   /** `true` quando o vínculo idêntico já existia e nada foi criado. */
   readonly alreadyLinked: boolean;
+}
+
+/**
+ * Resultado da confirmação pelo catálogo — a referência criada, mais o
+ * cliente **relido da fonte** (nunca o que a tela exibiu).
+ */
+export interface ReferenciaPortalConfirmada extends ReferenciaPortalVinculada {
+  readonly clientName: string;
+  /** Sempre mascarado. */
+  readonly clientDocumentMasked: string | null;
 }
 
 export interface OrganizacaoDetalhe extends Organizacao {
