@@ -1,10 +1,10 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type {
-  HelpdeskClientDocumentRead,
   HelpdeskClientRecord,
   HelpdeskSourceReader,
   HelpdeskUserRecord
 } from "../../domain/pilot/HelpdeskSourcePort.js";
+import { HelpdeskUserSourceUnavailableError } from "../../domain/errors/HelpdeskUserSourceErrors.js";
 import type {
   HelpdeskCatalogPage,
   HelpdeskCatalogQuery,
@@ -13,37 +13,33 @@ import type {
 import {
   assertReadOnlySourceQuery,
   buildClientByIdQuery,
-  buildClientDocumentQuery,
   buildClientsCatalogCountQuery,
-  buildClientsCatalogQuery,
-  buildUsersByClientIdQuery,
-  buildUsersByIdsQuery
+  buildClientsCatalogQuery
 } from "./HelpdeskSourceQueries.js";
-
-interface UserRow {
-  readonly id: number;
-  readonly name: string;
-  readonly email: string;
-  readonly role: string;
-  readonly active: number | boolean | null;
-  readonly client_id: number | null;
-}
 
 interface ClientRow {
   readonly id: number;
-  readonly name: string;
-  readonly active: number | boolean | null;
+  readonly nome: string;
+  readonly tipo_doc: string | null;
+  readonly documento: string | null;
+  readonly ativo: number | boolean | null;
 }
 
 /**
  * Conector READ-ONLY do Helpdesk.
  *
+ * Lê o REGISTRO AUTORITATIVO de empresas, no schema apontado por
+ * `HELPDESK_REGISTRY_DB_NAME` — o mesmo de onde o próprio Helpdesk lê.
+ * Não consulta a tabela local de empresas nem a de usuários: as duas
+ * deixaram de ser autoridade, e a de usuários deixou de existir. Ver
+ * `HelpdeskUserSourceUnavailableError`.
+ *
  * Três camadas independentes impedem escrita, e nenhuma delas confia nas
  * outras:
  *
- *  1. O principal MariaDB tem SELECT de COLUNA em `users` e `clients`.
- *     Não há INSERT/UPDATE/DELETE para conceder, nem `SELECT *` que
- *     funcione.
+ *  1. O principal MariaDB tem SELECT de COLUNA nas cinco colunas do
+ *     cadastro. Não há INSERT/UPDATE/DELETE para conceder, nem
+ *     `SELECT *` que funcione.
  *  2. `assertReadOnlySourceQuery` recusa qualquer SQL que não seja um
  *     SELECT único sobre as colunas permitidas.
  *  3. Esta classe não expõe método de escrita. Não existe `execute`
@@ -54,16 +50,26 @@ interface ClientRow {
  * precise lembrar o que significa.
  */
 export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, HelpdeskCatalogReader {
-  public constructor(private readonly connection: Queryable) {}
+  public constructor(
+    private readonly connection: Queryable,
+    /** Vem da configuração validada — nunca de constante no código. */
+    private readonly registryDatabase: string
+  ) {}
 
-  public async readUsersByIds(ids: readonly number[]): Promise<readonly HelpdeskUserRecord[]> {
-    const { sql, params } = buildUsersByIdsQuery(ids);
-    const rows = await this.select<UserRow>(sql, params);
-    return rows.map(toUser);
+  /**
+   * RECUSA — a fonte de usuários não está disponível.
+   *
+   * Não é uma lista vazia, e a diferença é o ponto inteiro desta fatia:
+   * `[]` afirmaria que a origem foi consultada e não tem ninguém. Ver
+   * `HelpdeskUserSourceUnavailableError` para o porquê de a recusa
+   * morar aqui, na fronteira, e não em cada chamador.
+   */
+  public async readUsersByIds(_ids: readonly number[]): Promise<readonly HelpdeskUserRecord[]> {
+    throw new HelpdeskUserSourceUnavailableError();
   }
 
   public async readClientById(clientId: number): Promise<HelpdeskClientRecord | undefined> {
-    const { sql, params } = buildClientByIdQuery(clientId);
+    const { sql, params } = buildClientByIdQuery(this.registryDatabase, clientId);
     const rows = await this.select<ClientRow>(sql, params);
     const row = rows[0];
     return row === undefined ? undefined : toClient(row);
@@ -78,8 +84,8 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
    * inconsistente. O custo é uma ida a mais a um banco read-only.
    */
   public async readClients(query: HelpdeskCatalogQuery): Promise<HelpdeskCatalogPage<HelpdeskClientRecord>> {
-    const pagina = buildClientsCatalogQuery(query);
-    const contagem = buildClientsCatalogCountQuery({ q: query.q });
+    const pagina = buildClientsCatalogQuery(this.registryDatabase, query);
+    const contagem = buildClientsCatalogCountQuery(this.registryDatabase, { q: query.q });
 
     const rows = await this.select<ClientRow>(pagina.sql, pagina.params);
     const totais = await this.select<{ total: number | string }>(contagem.sql, contagem.params);
@@ -92,47 +98,9 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
     };
   }
 
-  /**
-   * CNPJ da empresa de origem — ou a admissão de que a fonte não o
-   * fornece.
-   *
-   * A negativa de privilégio de COLUNA (`ERROR 1143`) é tratada como
-   * resposta, não como falha, e é a única exceção que este conector
-   * engole. O motivo é preciso: hoje o principal read-only tem SELECT
-   * em `(id, name, active)` de `clients`, então pedir `cnpj` responde
-   * 1143 em DEV e em PRD. Deixar esse erro subir faria o APPLY inteiro
-   * do assistente falhar por causa de um campo opcional que a operação
-   * nunca teve.
-   *
-   * `1054` (coluna inexistente) recebe o mesmo tratamento pelo mesmo
-   * motivo: nas duas situações a resposta correta é "esta fonte não
-   * fornece CNPJ", e o efeito prático é idêntico — a organização é
-   * criada sem documento e o vínculo com o Portal fica pendente de
-   * seleção administrativa.
-   *
-   * **Qualquer outro erro sobe.** Conexão recusada, timeout ou tabela
-   * ausente não são "a fonte não fornece": são falhas, e mascará-las
-   * transformaria um problema de infraestrutura numa importação
-   * silenciosamente incompleta.
-   */
-  public async readClientDocument(clientId: number): Promise<HelpdeskClientDocumentRead> {
-    const { sql, params } = buildClientDocumentQuery(clientId);
-    try {
-      const rows = await this.select<{ id: number; cnpj: string | null }>(sql, params);
-      const row = rows[0];
-      return { available: true, documentNumber: row?.cnpj ?? null };
-    } catch (erro) {
-      if (ehNegativaDeColuna(erro)) {
-        return { available: false };
-      }
-      throw erro;
-    }
-  }
-
-  public async readUsersByClientId(clientId: number): Promise<readonly HelpdeskUserRecord[]> {
-    const { sql, params } = buildUsersByClientIdQuery(clientId);
-    const rows = await this.select<UserRow>(sql, params);
-    return rows.map(toUser);
+  /** RECUSA, pelo mesmo motivo de `readUsersByIds`. */
+  public async readUsersByClientId(_clientId: number): Promise<readonly HelpdeskUserRecord[]> {
+    throw new HelpdeskUserSourceUnavailableError();
   }
 
   /** Único ponto de execução da classe — e ele revalida o SQL. */
@@ -143,19 +111,37 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
   }
 }
 
-function toUser(row: UserRow): HelpdeskUserRecord {
-  return {
-    id: Number(row.id),
-    name: row.name,
-    email: row.email,
-    role: row.role,
-    active: toBoolean(row.active),
-    clientId: row.client_id === null ? null : Number(row.client_id)
-  };
+/**
+ * Documento utilizável, ou `null`. Nunca um valor "quase".
+ *
+ * Três recusas, e todas produzem o MESMO `null` de propósito — o
+ * consumidor não tem decisão diferente a tomar entre elas:
+ *
+ *  - `tipo_doc` diferente de `cnpj`: a coluna guarda CPF na mesma
+ *    string. Aceitar um CPF aqui o ofereceria à correspondência
+ *    automática com o Portal, que casa empresas — uma pessoa física
+ *    entraria como candidata a empresa;
+ *  - documento ausente ou vazio;
+ *  - documento que, sem máscara, não tem exatamente 14 dígitos. O
+ *    cadastro é `varchar(18)` e aceita máscara; 13 ou 15 dígitos é dado
+ *    corrompido, e completar ou truncar seria inventar o CNPJ de
+ *    alguém.
+ */
+function normalizarDocumento(tipoDoc: string | null, documento: string | null): string | null {
+  if (tipoDoc?.trim().toLowerCase() !== "cnpj") {
+    return null;
+  }
+  const digitos = (documento ?? "").replace(/\D/g, "");
+  return digitos.length === 14 ? digitos : null;
 }
 
 function toClient(row: ClientRow): HelpdeskClientRecord {
-  return { id: Number(row.id), name: row.name, active: toBoolean(row.active) };
+  return {
+    id: Number(row.id),
+    name: row.nome,
+    active: toBoolean(row.ativo),
+    documentNumber: normalizarDocumento(row.tipo_doc, row.documento)
+  };
 }
 
 function toBoolean(value: number | boolean | null): boolean {
@@ -163,19 +149,4 @@ function toBoolean(value: number | boolean | null): boolean {
     return value;
   }
   return value === 1;
-}
-
-/**
- * Erros do driver que significam "esta credencial não enxerga a
- * coluna".
- *
- * `1143` = `ER_COLUMNACCESS_DENIED_ERROR` (privilégio de coluna);
- * `1054` = `ER_BAD_FIELD_ERROR` (coluna inexistente). Comparados por
- * NÚMERO, não pela mensagem: a mensagem muda com locale e versão do
- * servidor, e ela carrega o nome do usuário de banco — nada que se
- * queira dentro de um `includes()`.
- */
-function ehNegativaDeColuna(erro: unknown): boolean {
-  const errno = (erro as { errno?: unknown } | null)?.errno;
-  return errno === 1143 || errno === 1054;
 }

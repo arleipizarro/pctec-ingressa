@@ -3,41 +3,31 @@ import { DomainError } from "../../../../shared/errors/DomainError.js";
 /**
  * Colunas que a fonte pode projetar. Lista fechada, em ordem fixa.
  *
- * A tabela `users` do Helpdesk guarda `password`, `reset_token` e
- * `reset_expires` na MESMA linha do cadastro. Não existe `SELECT *` em
- * lugar nenhum deste conector — e o principal MariaDB da fonte tem
- * privilégio de COLUNA, então nem com um bug essas colunas sairiam do
- * banco. Duas travas independentes, porque a consequência de furar as
- * duas é irreversível: segredo copiado para `import_batch_items` não
- * volta atrás.
+ * São as do REGISTRO AUTORITATIVO de empresas — `clientes` no schema
+ * apontado por `HELPDESK_REGISTRY_DB_NAME`. É de lá que o próprio
+ * Helpdesk lê (`routes/clients.js`, pool `pctecdb`), e nenhuma delas é
+ * de autenticação: o registro guarda cadastro, não credencial.
+ *
+ * `documento` entra na projeção PRINCIPAL, e essa é a mudança que
+ * elimina a consulta separada que existia antes. A separação nascera de
+ * um problema que não existe mais: a projeção antiga vinha de
+ * `pctec_helpdesk.clients`, cujo GRANT de coluna não incluía `cnpj`, e
+ * pedir o documento junto derrubaria toda a listagem com `ERROR 1143`.
+ * No registro autoritativo o documento é parte do cadastro como
+ * qualquer outro campo, então pedir duas vezes seria só uma ida a mais
+ * ao banco para responder à mesma pergunta.
+ *
+ * `tipo_doc` vem junto porque sem ele `documento` é ambíguo: a mesma
+ * coluna guarda CPF e CNPJ, e tratar os dois como iguais faria uma
+ * pessoa física virar candidata a correspondência de empresa.
  */
-export const SOURCE_USER_COLUMNS: readonly string[] = Object.freeze([
+export const SOURCE_CLIENT_COLUMNS: readonly string[] = Object.freeze([
   "id",
-  "name",
-  "email",
-  "role",
-  "active",
-  "client_id"
+  "nome",
+  "tipo_doc",
+  "documento",
+  "ativo"
 ]);
-
-export const SOURCE_CLIENT_COLUMNS: readonly string[] = Object.freeze(["id", "name", "active"]);
-
-/**
- * Projeção do CNPJ — SEPARADA da projeção do catálogo, e é essa
- * separação que importa.
- *
- * `pctec_helpdesk.clients` tem a coluna `cnpj`, mas o principal
- * read-only do Ingressa tem SELECT de COLUNA em `(id, name, active)`.
- * Acrescentar `cnpj` a `SOURCE_CLIENT_COLUMNS` faria TODA listagem de
- * empresas responder `ERROR 1143` e derrubaria a etapa 1 do assistente,
- * que hoje funciona em DEV. Uma capacidade nova não pode quebrar a que
- * já está em uso.
- *
- * Então a leitura do documento é uma consulta própria, isolada, cuja
- * negativa de privilégio é tratada como "a fonte não fornece" em vez de
- * como erro — ver `MariaDbHelpdeskReadOnlySource.readClientDocument`.
- */
-export const SOURCE_CLIENT_DOCUMENT_COLUMNS: readonly string[] = Object.freeze(["id", "cnpj"]);
 
 /**
  * Termos que nunca podem aparecer no SQL da fonte — de autenticação,
@@ -140,41 +130,29 @@ export interface SourceQuery {
 }
 
 /**
- * Usuários por id — placeholders sempre parametrizados, nunca
- * interpolados. Os ids vêm de constante do código, mas a query é escrita
- * como se viessem de fora: é assim que ela continua correta quando um
- * dia vierem.
- */
-export function buildUsersByIdsQuery(ids: readonly number[]): SourceQuery {
-  if (ids.length === 0) {
-    throw new ForbiddenSourceQueryError("nenhum id de escopo informado — a fonte nunca é lida por inteiro.");
-  }
-  const placeholders = ids.map(() => "?").join(", ");
-  const sql =
-    `SELECT ${SOURCE_USER_COLUMNS.join(", ")} ` +
-    `FROM users ` +
-    `WHERE id IN (${placeholders}) ` +
-    `ORDER BY id`;
-  assertReadOnlySourceQuery(sql);
-  return { sql, params: [...ids] };
-}
-
-/**
- * CNPJ de UMA empresa da origem.
+ * Schema autoritativo, qualificado e revalidado no ponto de montagem.
  *
- * Projeção mínima: `id` para conferir a linha, `cnpj` porque é o que se
- * quer. Nada mais entra — nem `name`, que não participa de decisão
- * nenhuma neste caminho e cuja presença convidaria a "aproveitar" a
- * consulta para um match por nome.
+ * O nome já foi validado no carregamento da configuração. É validado de
+ * novo aqui, e a repetição é deliberada: este é o único lugar do
+ * conector em que um valor de configuração entra no TEXTO do SQL, e uma
+ * segunda instância desta função pode ser construída em teste, em CLI
+ * ou num futuro caminho de composição que não passe pelo loader. A
+ * checagem custa uma regex e fecha a porta em todos eles.
+ *
+ * Crases também: elas não substituem a validação (uma crase dentro do
+ * nome escaparia do identificador), mas fazem o nome válido continuar
+ * válido se um dia contiver algo que o parser trate como palavra
+ * reservada.
  */
-export function buildClientDocumentQuery(clientId: number): SourceQuery {
-  const sql = `SELECT ${SOURCE_CLIENT_DOCUMENT_COLUMNS.join(", ")} FROM clients WHERE id = ? LIMIT 1`;
-  assertReadOnlySourceQuery(sql);
-  return { sql, params: [clientId] };
+export function qualificarRegistro(registryDatabase: string, tabela: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_$]{0,63}$/.test(registryDatabase)) {
+    throw new ForbiddenSourceQueryError("schema autoritativo inválido — a consulta não foi montada.");
+  }
+  return `\`${registryDatabase}\`.${tabela}`;
 }
 
-export function buildClientByIdQuery(clientId: number): SourceQuery {
-  const sql = `SELECT ${SOURCE_CLIENT_COLUMNS.join(", ")} FROM clients WHERE id = ? LIMIT 1`;
+export function buildClientByIdQuery(registryDatabase: string, clientId: number): SourceQuery {
+  const sql = `SELECT ${SOURCE_CLIENT_COLUMNS.join(", ")} FROM ${qualificarRegistro(registryDatabase, "clientes")} WHERE id = ? LIMIT 1`;
   assertReadOnlySourceQuery(sql);
   return { sql, params: [clientId] };
 }
@@ -214,43 +192,27 @@ function normalizarBusca(q: string | undefined): string | undefined {
 }
 
 /** Empresas do Helpdesk, paginadas — a base inteira nunca sai de uma vez. */
-export function buildClientsCatalogQuery(query: CatalogPageQuery): SourceQuery {
+export function buildClientsCatalogQuery(registryDatabase: string, query: CatalogPageQuery): SourceQuery {
   const busca = normalizarBusca(query.q);
-  const where = busca === undefined ? "" : "WHERE name LIKE ? ";
+  const where = busca === undefined ? "" : "WHERE nome LIKE ? ";
   const sql =
     `SELECT ${SOURCE_CLIENT_COLUMNS.join(", ")} ` +
-    `FROM clients ` +
+    `FROM ${qualificarRegistro(registryDatabase, "clientes")} ` +
     where +
-    `ORDER BY name, id ` +
+    `ORDER BY nome, id ` +
     `LIMIT ? OFFSET ?`;
   assertReadOnlySourceQuery(sql);
   const params = busca === undefined ? [query.limit, query.offset] : [busca, query.limit, query.offset];
   return { sql, params };
 }
 
-export function buildClientsCatalogCountQuery(query: Pick<CatalogPageQuery, "q">): SourceQuery {
+export function buildClientsCatalogCountQuery(
+  registryDatabase: string,
+  query: Pick<CatalogPageQuery, "q">
+): SourceQuery {
   const busca = normalizarBusca(query.q);
-  const where = busca === undefined ? "" : "WHERE name LIKE ?";
-  const sql = `SELECT COUNT(id) AS total FROM clients ${where}`.trim();
+  const where = busca === undefined ? "" : "WHERE nome LIKE ?";
+  const sql = `SELECT COUNT(id) AS total FROM ${qualificarRegistro(registryDatabase, "clientes")} ${where}`.trim();
   assertReadOnlySourceQuery(sql);
   return { sql, params: busca === undefined ? [] : [busca] };
-}
-
-/**
- * Usuários de UMA empresa — todos os papéis, de propósito.
- *
- * Filtrar `role = 'cliente'` aqui esconderia do ADMIN que existe um
- * interno vinculado àquela empresa, e a tela passaria a mentir por
- * omissão: quem opera veria "3 usuários" onde a origem tem 4 e nunca
- * saberia por que o quarto não aparece. Quem recusa o interno é o
- * planner, com `SOURCE_USER_NOT_EXTERNAL_ROLE` registrado no lote.
- */
-export function buildUsersByClientIdQuery(clientId: number): SourceQuery {
-  const sql =
-    `SELECT ${SOURCE_USER_COLUMNS.join(", ")} ` +
-    `FROM users ` +
-    `WHERE client_id = ? ` +
-    `ORDER BY id`;
-  assertReadOnlySourceQuery(sql);
-  return { sql, params: [clientId] };
 }

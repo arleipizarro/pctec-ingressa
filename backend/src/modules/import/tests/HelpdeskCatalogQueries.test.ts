@@ -2,36 +2,39 @@ import { describe, expect, it } from "vitest";
 import {
   buildClientsCatalogCountQuery,
   buildClientsCatalogQuery,
-  buildUsersByClientIdQuery,
   ForbiddenSourceQueryError,
-  SOURCE_CLIENT_COLUMNS,
-  SOURCE_USER_COLUMNS
+  SOURCE_CLIENT_COLUMNS
 } from "../infrastructure/source/HelpdeskSourceQueries.js";
 
+const REGISTRO = "pctecdb";
+
 /**
- * As 9 colunas que o principal read-only da fonte de fato concede:
- * `users(id, name, email, role, active, client_id)` e
- * `clients(id, name, active)`. Nenhuma consulta do catálogo pode
- * projetar nada fora disto — e a lista está aqui, literal, para que
- * ampliar a projeção exija editar este teste junto.
+ * As colunas que o principal read-only precisa receber no registro
+ * AUTORITATIVO: `clientes(id, nome, tipo_doc, documento, ativo)`.
+ * Nenhuma consulta do catálogo pode projetar nada fora disto — e a
+ * lista está aqui, literal, para que ampliar a projeção exija editar
+ * este teste junto.
+ *
+ * Não há colunas de `users` nesta lista, e a ausência é o ponto: o
+ * catálogo deixou de consultar usuários. Ver
+ * `HelpdeskUserSourceUnavailableError`.
  */
-const COLUNAS_CONCEDIDAS = new Set(["id", "name", "email", "role", "active", "client_id"]);
+const COLUNAS_CONCEDIDAS = new Set(["id", "nome", "tipo_doc", "documento", "ativo"]);
 
 describe("catálogo do Helpdesk — SQL", () => {
-  it("a página de empresas projeta só as colunas de `clients`", () => {
-    const { sql, params } = buildClientsCatalogQuery({ limit: 25, offset: 0 });
+  it("a página de empresas projeta só as colunas do registro autoritativo", () => {
+    const { sql, params } = buildClientsCatalogQuery(REGISTRO, { limit: 25, offset: 0 });
 
     expect(sql).toContain(SOURCE_CLIENT_COLUMNS.join(", "));
-    expect(sql).toContain("FROM clients");
+    expect(sql).toContain("FROM `pctecdb`.clientes");
     expect(sql).toContain("LIMIT ? OFFSET ?");
     expect(params).toEqual([25, 0]);
   });
 
   it("nenhuma consulta do catálogo projeta coluna fora do grant read-only", () => {
     const sqls = [
-      buildClientsCatalogQuery({ limit: 10, offset: 0 }).sql,
-      buildClientsCatalogCountQuery({}).sql,
-      buildUsersByClientIdQuery(75).sql
+      buildClientsCatalogQuery(REGISTRO, { limit: 10, offset: 0 }).sql,
+      buildClientsCatalogCountQuery(REGISTRO, {}).sql
     ];
     for (const sql of sqls) {
       const projecao = sql.slice(sql.toUpperCase().indexOf("SELECT") + 6, sql.toUpperCase().indexOf(" FROM "));
@@ -45,49 +48,33 @@ describe("catálogo do Helpdesk — SQL", () => {
   });
 
   it("a busca por nome é parametrizada — nunca interpolada", () => {
-    const { sql, params } = buildClientsCatalogQuery({ q: "sintetica", limit: 25, offset: 0 });
+    const { sql, params } = buildClientsCatalogQuery(REGISTRO, { q: "sintetica", limit: 25, offset: 0 });
 
-    expect(sql).toContain("WHERE name LIKE ?");
+    expect(sql).toContain("WHERE nome LIKE ?");
     expect(sql).not.toContain("sintetica");
     expect(params[0]).toBe("%sintetica%");
   });
 
   it("coringas de LIKE na busca são escapados — `%` não lista a base inteira", () => {
-    const { params } = buildClientsCatalogQuery({ q: "100%_a", limit: 25, offset: 0 });
+    const { params } = buildClientsCatalogQuery(REGISTRO, { q: "100%_a", limit: 25, offset: 0 });
     expect(params[0]).toBe("%100\\%\\_a%");
   });
 
   it("busca vazia ou só espaços não vira filtro", () => {
-    expect(buildClientsCatalogQuery({ q: "   ", limit: 25, offset: 0 }).sql).not.toContain("WHERE");
-    expect(buildClientsCatalogCountQuery({ q: "" }).params).toEqual([]);
+    expect(buildClientsCatalogQuery(REGISTRO, { q: "   ", limit: 25, offset: 0 }).sql).not.toContain("WHERE");
+    expect(buildClientsCatalogCountQuery(REGISTRO, { q: "" }).params).toEqual([]);
   });
 
   it("a contagem usa COUNT(id) e passa pela guarda — `SELECT *` continua proibido", () => {
-    const { sql } = buildClientsCatalogCountQuery({});
+    const { sql } = buildClientsCatalogCountQuery(REGISTRO, {});
     expect(sql).toContain("COUNT(id)");
     expect(sql).not.toMatch(/select\s+\*/i);
   });
 
-  it("usuários por empresa filtram por client_id parametrizado", () => {
-    const { sql, params } = buildUsersByClientIdQuery(999901);
-
-    expect(sql).toContain(SOURCE_USER_COLUMNS.join(", "));
-    expect(sql).toContain("WHERE client_id = ?");
-    expect(params).toEqual([999901]);
-    expect(sql).not.toContain("999901");
-  });
-
-  it("a consulta de usuários por empresa NÃO filtra papel — a tela precisa ver o interno", () => {
-    // Esconder o interno faria a tela mentir por omissão. Quem o recusa
-    // é o planner, com motivo registrado no lote.
-    expect(buildUsersByClientIdQuery(75).sql).not.toContain("role =");
-  });
-
   it("nenhuma consulta do catálogo toca chamado, fila, equipe ou grupo", () => {
     const sqls = [
-      buildClientsCatalogQuery({ q: "x", limit: 1, offset: 0 }).sql,
-      buildClientsCatalogCountQuery({ q: "x" }).sql,
-      buildUsersByClientIdQuery(1).sql
+      buildClientsCatalogQuery(REGISTRO, { q: "x", limit: 1, offset: 0 }).sql,
+      buildClientsCatalogCountQuery(REGISTRO, { q: "x" }).sql
     ].join(" ").toLowerCase();
 
     for (const proibido of ["ticket", "queue", "fila", "team", "equipe", "grupo", "client_group", "atendimento"]) {
@@ -97,8 +84,8 @@ describe("catálogo do Helpdesk — SQL", () => {
 
   it("nenhuma consulta do catálogo toca campo de autenticação", () => {
     const sqls = [
-      buildClientsCatalogQuery({ limit: 1, offset: 0 }).sql,
-      buildUsersByClientIdQuery(1).sql
+      buildClientsCatalogQuery(REGISTRO, { limit: 1, offset: 0 }).sql,
+      buildClientsCatalogCountQuery(REGISTRO, {}).sql
     ].join(" ").toLowerCase();
 
     for (const proibido of ["password", "token", "hash", "salt", "reset_expires", "last_login", "session"]) {
@@ -108,10 +95,10 @@ describe("catálogo do Helpdesk — SQL", () => {
 
   it("a guarda continua recusando SQL que não seja SELECT único", () => {
     // Prova que as consultas novas passam pelo MESMO portão do piloto.
-    expect(() => buildClientsCatalogQuery({ q: "a; DROP TABLE users", limit: 1, offset: 0 })).not.toThrow();
+    expect(() => buildClientsCatalogQuery(REGISTRO, { q: "a; DROP TABLE users", limit: 1, offset: 0 })).not.toThrow();
     // O `;` foi para o PARÂMETRO, não para o SQL — é por isso que não
     // lança: a injeção nunca chega a virar texto de consulta.
-    expect(buildClientsCatalogQuery({ q: "a; DROP TABLE users", limit: 1, offset: 0 }).sql).not.toContain(";");
+    expect(buildClientsCatalogQuery(REGISTRO, { q: "a; DROP TABLE users", limit: 1, offset: 0 }).sql).not.toContain(";");
     expect(ForbiddenSourceQueryError).toBeDefined();
   });
 });

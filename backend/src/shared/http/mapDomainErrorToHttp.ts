@@ -61,7 +61,18 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
   // inexistente", e não pedido malformado: o corpo estava certo quando
   // a pessoa clicou. Distinto de PORTAL_CATALOG_CLIENT_INACTIVE (409),
   // em que o cliente existe e o que mudou foi o estado dele.
-  PORTAL_CATALOG_CLIENT_NOT_FOUND: 404
+  PORTAL_CATALOG_CLIENT_NOT_FOUND: 404,
+  // Assistente de importação (v0.12.x): a fonte de USUÁRIOS do Helpdesk
+  // não está disponível. 503 pelo mesmo raciocínio de
+  // INVITATION_DELIVERY_FAILED — nada no pedido do ADMIN está errado, e
+  // 422 diria o contrário. 503 é também o único status que a UI já
+  // trata como "condição do servidor, tente de novo mais tarde", em vez
+  // de "corrija o que você enviou".
+  //
+  // Nunca 404: "não encontrado" afirmaria que a origem foi consultada e
+  // não tinha usuários, que é exatamente a conclusão que este erro
+  // existe para impedir.
+  HELPDESK_USER_SOURCE_UNAVAILABLE: 503
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({

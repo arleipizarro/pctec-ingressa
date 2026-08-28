@@ -25,7 +25,27 @@ const MENSAGEM_POR_STATUS: Readonly<Record<number, string>> = {
   404: "Registro não encontrado.",
   409: "O registro mudou desde que a tela carregou. Recarregue e tente de novo.",
   422: "Dados inválidos. Revise os campos.",
-  500: "Erro interno. Tente novamente em instantes."
+  500: "Erro interno. Tente novamente em instantes.",
+  503: "Serviço temporariamente indisponível. Tente novamente em instantes."
+};
+
+/**
+ * Mensagens por CÓDIGO — para as poucas condições em que o status
+ * sozinho não diz o suficiente para a pessoa decidir o que fazer.
+ *
+ * A mensagem do backend NÃO é exibida por padrão (ela pode carregar
+ * vocabulário interno), então uma condição operacional que exige uma
+ * ação específica precisa aparecer aqui, escrita para quem opera.
+ */
+const MENSAGEM_POR_CODIGO: Readonly<Record<string, string>> = {
+  // A fonte de usuários do Helpdesk não pôde ser consultada. A frase
+  // evita deliberadamente qualquer forma de "não há usuários": o
+  // sistema não sabe disso, e quem lesse isso poderia concluir a
+  // importação sem usuários ou recadastrá-los à mão.
+  HELPDESK_USER_SOURCE_UNAVAILABLE:
+    "A fonte de usuários do Helpdesk está temporariamente indisponível — não foi possível consultá-la. " +
+    "Isto não indica que a empresa esteja sem usuários. Nenhuma importação foi executada. " +
+    "A seleção de empresas e o vínculo com o Portal seguem disponíveis."
 };
 
 async function requisitar<T>(caminho: string, init: RequestInit = {}): Promise<T> {
@@ -46,7 +66,9 @@ async function requisitar<T>(caminho: string, init: RequestInit = {}): Promise<T
     throw new ApiError(
       resposta.status,
       code,
-      MENSAGEM_POR_STATUS[resposta.status] ?? "Não foi possível concluir a operação."
+      MENSAGEM_POR_CODIGO[code] ??
+        MENSAGEM_POR_STATUS[resposta.status] ??
+        "Não foi possível concluir a operação."
     );
   }
 

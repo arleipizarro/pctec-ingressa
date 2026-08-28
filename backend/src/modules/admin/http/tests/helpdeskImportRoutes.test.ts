@@ -12,6 +12,7 @@ import type {
 import type { HelpdeskImportApiDeps } from "../helpdeskImportRoutes.js";
 import { HelpdeskImportSelection } from "../../../import/domain/wizard/HelpdeskImportSelection.js";
 import { WIZARD_APPLY_CONFIRMATION } from "../../../import/application/RunHelpdeskImportWizardService.js";
+import { HelpdeskUserSourceUnavailableError } from "../../../import/domain/errors/HelpdeskUserSourceErrors.js";
 
 const ADMIN = "cccccccc-0000-4000-8000-000000000001";
 const OUTRO_ADMIN = "cccccccc-0000-4000-8000-000000000009";
@@ -504,5 +505,95 @@ describe("assistente de importação — indisponível sem configuração da fon
     // A mensagem nunca carrega credencial nem nome de variável.
     expect(JSON.stringify(wizard.body)).not.toMatch(/HELPDESK_DB|password|senha/i);
     expect(saude.status).toBe(200);
+  });
+});
+
+/**
+ * Fonte de USUÁRIOS indisponível, na fronteira HTTP.
+ *
+ * A recusa precisa chegar ao navegador como uma CONDIÇÃO DO SERVIDOR, e
+ * não como "essa empresa não tem usuários": 404 ou uma lista vazia
+ * levariam quem opera a concluir a importação sem usuários, ou a
+ * recadastrá-los à mão, sobre uma informação que ninguém verificou.
+ */
+describe("assistente de importação — fonte de usuários indisponível", () => {
+  function depsQueRecusamUsuarios(): HelpdeskImportApiDeps {
+    const base = fakeDeps();
+    return {
+      ...base,
+      catalogService: {
+        ...base.catalogService,
+        listUsers: vi.fn(async () => {
+          throw new HelpdeskUserSourceUnavailableError();
+        })
+      } as unknown as HelpdeskImportApiDeps["catalogService"],
+      wizardService: {
+        ...base.wizardService,
+        execute: vi.fn(async () => {
+          throw new HelpdeskUserSourceUnavailableError();
+        }),
+        prepare: vi.fn(async () => {
+          throw new HelpdeskUserSourceUnavailableError();
+        })
+      } as unknown as HelpdeskImportApiDeps["wizardService"]
+    };
+  }
+
+  it("listar usuários responde 503 com o código estável — nunca 404 nem lista vazia", async () => {
+    const { baseUrl } = await subir({ deps: depsQueRecusamUsuarios() });
+
+    const r = await chamar(baseUrl, `/api/v1/admin/helpdesk-import/companies/${CLIENTE_ID}/users`);
+
+    expect(r.status).toBe(503);
+    const erro = r.body["error"] as Record<string, unknown>;
+    expect(erro["code"]).toBe("HELPDESK_USER_SOURCE_UNAVAILABLE");
+    // Uma lista vazia teria vindo em `items`; não há corpo de sucesso.
+    expect(r.body["items"]).toBeUndefined();
+  });
+
+  it("o APPLY responde 503 e não devolve lote concluído", async () => {
+    const { baseUrl } = await subir({ deps: depsQueRecusamUsuarios() });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/helpdesk-import/apply", {
+      method: "POST",
+      comOrigem: true,
+      body: JSON.stringify({
+        sourceClientId: CLIENTE_ID,
+        selectedSourceUserIds: [999911],
+        dryRunBatchPublicId: LOTE_DRY_RUN,
+        confirmation: WIZARD_APPLY_CONFIRMATION
+      })
+    });
+
+    expect(r.status).toBe(503);
+    expect((r.body["error"] as Record<string, unknown>)["code"]).toBe("HELPDESK_USER_SOURCE_UNAVAILABLE");
+    // Nada de "COMPLETED" com zero usuários — que seria a leitura errada
+    // virando um fato registrado no lote.
+    expect(r.body["status"]).toBeUndefined();
+    expect(r.body["batchPublicId"]).toBeUndefined();
+  });
+
+  it("a mensagem explica a indisponibilidade sem afirmar ausência de usuários", async () => {
+    const { baseUrl } = await subir({ deps: depsQueRecusamUsuarios() });
+
+    const r = await chamar(baseUrl, `/api/v1/admin/helpdesk-import/companies/${CLIENTE_ID}/users`);
+    const mensagem = String((r.body["error"] as Record<string, unknown>)["message"]).toLowerCase();
+
+    expect(mensagem).toContain("indisponível");
+    for (const proibido of ["nenhum usuário", "sem usuários", "não encontrado", "não possui usuários"]) {
+      expect(mensagem).not.toContain(proibido);
+    }
+    // E não vaza vocabulário de banco para a tela.
+    for (const proibido of ["select", "pctec_helpdesk", "pctecdb", "helpdesk_usuarios", "mariadb"]) {
+      expect(mensagem).not.toContain(proibido);
+    }
+  });
+
+  it("o catálogo de EMPRESAS continua respondendo — o bloqueio é só dos usuários", async () => {
+    const { baseUrl } = await subir({ deps: depsQueRecusamUsuarios() });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/helpdesk-import/companies");
+
+    expect(r.status).toBe(200);
   });
 });

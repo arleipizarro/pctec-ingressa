@@ -122,7 +122,7 @@ const TODOS = [EXTERNO_A, EXTERNO_B, INTERNO, NAO_SELECIONADO];
 const ADMIN_PUBLIC_ID = "99990200-0000-4000-8000-000000000001";
 const ADMIN_ACESSO_PUBLIC_ID = "99990200-0000-4000-8000-000000000002";
 const ADMIN_EMAIL = `aprovador.${SUFIXO_EMAIL}`;
-const CLIENTE: HelpdeskClientRecord = { id: CLIENTE_ID, name: RAZAO_SOCIAL, active: true };
+const CLIENTE: HelpdeskClientRecord = { id: CLIENTE_ID, name: RAZAO_SOCIAL, active: true, documentNumber: null };
 
 class FonteEmMemoria implements HelpdeskSourceReader, HelpdeskCatalogReader {
   public constructor(private readonly users: readonly HelpdeskUserRecord[] = TODOS) {}

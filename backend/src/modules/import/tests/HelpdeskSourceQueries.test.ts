@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   assertReadOnlySourceQuery,
   buildClientByIdQuery,
-  buildUsersByIdsQuery,
   ForbiddenSourceQueryError,
-  SOURCE_USER_COLUMNS
+  qualificarRegistro,
+  SOURCE_CLIENT_COLUMNS
 } from "../infrastructure/source/HelpdeskSourceQueries.js";
+
+const REGISTRO = "pctecdb";
 
 /**
  * Trava da PROJEÇÃO — o teste-guarda pedido para esta fatia.
@@ -33,37 +35,81 @@ describe("consulta à fonte Helpdesk — projeção", () => {
   ];
 
   it("não seleciona nenhum campo de autenticação, sessão ou recuperação", () => {
-    const { sql } = buildUsersByIdsQuery([35, 44]);
+    const { sql } = buildClientByIdQuery(REGISTRO, 75);
     const normalizado = sql.toLowerCase();
     for (const proibido of CAMPOS_DE_AUTENTICACAO) {
       expect(normalizado).not.toContain(proibido);
     }
   });
 
-  it("projeta exatamente as seis colunas necessárias à decisão", () => {
-    const { sql } = buildUsersByIdsQuery([35, 44]);
-    expect(SOURCE_USER_COLUMNS).toEqual(["id", "name", "email", "role", "active", "client_id"]);
-    for (const coluna of SOURCE_USER_COLUMNS) {
+  it("projeta exatamente as cinco colunas do cadastro necessárias à decisão", () => {
+    const { sql, params } = buildClientByIdQuery(REGISTRO, 75);
+    expect(SOURCE_CLIENT_COLUMNS).toEqual(["id", "nome", "tipo_doc", "documento", "ativo"]);
+    for (const coluna of SOURCE_CLIENT_COLUMNS) {
       expect(sql).toContain(coluna);
     }
     expect(sql).not.toContain("*");
-  });
-
-  it("parametriza os ids em vez de interpolá-los", () => {
-    const { sql, params } = buildUsersByIdsQuery([35, 44]);
-    expect(sql).toContain("IN (?, ?)");
-    expect(sql).not.toContain("35");
-    expect(params).toEqual([35, 44]);
-  });
-
-  it("recusa leitura sem escopo — a fonte nunca é lida por inteiro", () => {
-    expect(() => buildUsersByIdsQuery([])).toThrow(ForbiddenSourceQueryError);
-  });
-
-  it("lê o cliente só pelos três campos que importam", () => {
-    const { sql, params } = buildClientByIdQuery(75);
-    expect(sql).toContain("SELECT id, name, active");
     expect(params).toEqual([75]);
+  });
+
+  it("o documento vem na projeção principal — não há mais consulta separada", () => {
+    const { sql } = buildClientByIdQuery(REGISTRO, 75);
+    expect(sql).toContain("documento");
+    expect(sql).toContain("tipo_doc");
+  });
+
+  it("parametriza o id em vez de interpolá-lo", () => {
+    const { sql, params } = buildClientByIdQuery(REGISTRO, 75);
+    expect(sql).toContain("id = ?");
+    expect(sql).not.toContain("75");
+    expect(params).toEqual([75]);
+  });
+
+  it("NÃO consulta o contrato antigo — nem `clients`, nem `users`", () => {
+    const { sql } = buildClientByIdQuery(REGISTRO, 75);
+    expect(sql).not.toMatch(/\bFROM\s+clients\b/);
+    expect(sql).not.toMatch(/\bFROM\s+users\b/);
+    expect(sql).not.toContain("pctec_helpdesk");
+  });
+});
+
+/**
+ * Qualificação do schema autoritativo.
+ *
+ * Este é o único valor de configuração que entra no TEXTO de uma
+ * consulta — `?` liga valores, não identificadores. A defesa é lista
+ * branca, e ela vive tanto no carregamento quanto aqui.
+ */
+describe("consulta à fonte Helpdesk — schema autoritativo", () => {
+  it("qualifica a tabela com o schema informado, entre crases", () => {
+    expect(qualificarRegistro("pctecdb", "clientes")).toBe("`pctecdb`.clientes");
+  });
+
+  it("o nome do schema NÃO é fixo no código — trocar a configuração troca a consulta", () => {
+    const { sql } = buildClientByIdQuery("outro_registro", 75);
+    expect(sql).toContain("`outro_registro`.clientes");
+    expect(sql).not.toContain("pctecdb");
+  });
+
+  it.each([
+    ["ponto e vírgula", "pctecdb; DROP DATABASE alvo"],
+    ["crase", "pctec`db"],
+    ["espaço", "pctec db"],
+    ["hífen", "pctec-db"],
+    ["vazio", ""],
+    ["começando com dígito", "1pctecdb"]
+  ])("recusa schema inválido (%s) — a consulta nem chega a ser montada", (_rotulo, nome) => {
+    expect(() => qualificarRegistro(nome, "clientes")).toThrow(ForbiddenSourceQueryError);
+    expect(() => buildClientByIdQuery(nome, 75)).toThrow(ForbiddenSourceQueryError);
+  });
+
+  it("a recusa não ecoa o valor recebido", () => {
+    try {
+      qualificarRegistro("pctecdb; DROP DATABASE alvo", "clientes");
+      expect.unreachable("deveria ter falhado");
+    } catch (error) {
+      expect((error as Error).message).not.toContain("DROP DATABASE");
+    }
   });
 });
 
@@ -81,7 +127,7 @@ describe("guarda de SQL da fonte", () => {
     expect(() => assertReadOnlySourceQuery(sql)).toThrow(ForbiddenSourceQueryError);
   });
 
-  it("aceita a consulta legítima do piloto", () => {
-    expect(() => assertReadOnlySourceQuery(buildUsersByIdsQuery([35, 44]).sql)).not.toThrow();
+  it("aceita a consulta legítima do cadastro", () => {
+    expect(() => assertReadOnlySourceQuery(buildClientByIdQuery(REGISTRO, 75).sql)).not.toThrow();
   });
 });
