@@ -19,7 +19,8 @@
  * presença, de quantidade de dígitos e de contagens — nunca do valor.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createPool, type Pool } from "mysql2/promise";
+import type { Pool } from "mysql2/promise";
+import { createPool } from "../../../shared/database/Pool.js";
 import { shouldRunIntegrationTests } from "../../../shared/types/integration-test-guard.js";
 import { loadHelpdeskSourceConfig } from "../infrastructure/source/HelpdeskSourceConfig.js";
 import { MariaDbHelpdeskReadOnlySource } from "../infrastructure/source/MariaDbHelpdeskReadOnlySource.js";
@@ -38,7 +39,15 @@ describe.skipIf(!shouldRun)("fonte Helpdesk — integração read-only", () => {
   beforeAll(() => {
     const config = loadHelpdeskSourceConfig();
     registro = config.registryDatabase;
+    // O MESMO helper que a produção usa. Ele projeta explicitamente os
+    // cinco campos de conexão, então `registryDatabase` não chega ao
+    // driver — o mysql2 avisa sobre opção desconhecida hoje e promete
+    // lançar em versões futuras. Entregar a configuração inteira ao
+    // `mysql2.createPool` também faria este teste divergir do caminho
+    // real de composição, que é justamente o que ele deveria exercitar.
     pool = createPool(config);
+    // `registryDatabase` vai para o ADAPTER, que qualifica o schema na
+    // consulta. É o único lugar que precisa dele.
     source = new MariaDbHelpdeskReadOnlySource(pool, registro);
   });
 
