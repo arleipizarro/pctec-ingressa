@@ -1005,3 +1005,145 @@ describe("API administrativa — referência do Portal ambígua", () => {
     }
   });
 });
+
+/**
+ * Criação manual de COMPANY com correspondência automática por CNPJ.
+ *
+ * Dois fatos distintos na MESMA resposta: a organização existe, e o
+ * vínculo com o Portal aconteceu (ou não). Confundi-los seria o defeito
+ * — uma falha do Portal não pode parecer falha da criação, e uma
+ * criação bem-sucedida não pode parecer um vínculo que não houve.
+ */
+describe("criação de organização — integração com o Portal", () => {
+  const CNPJ = "11222333000181";
+
+  function comAutoLink(resultado: Record<string, unknown>) {
+    const execute = vi.fn(async () => resultado);
+    return {
+      execute,
+      deps: fakeDeps({ autoLinkPortalReferenceService: { execute } } as unknown as Partial<AdminApiDeps>)
+    };
+  }
+
+  const VINCULADA = {
+    status: "LINKED",
+    legacyId: 71,
+    referencePublicId: REFERENCIA,
+    clientName: "CLIENTE SINTETICO",
+    clientDocumentMasked: "**.***.333/0001-81",
+    candidateCount: 1,
+    reasonCode: null
+  };
+
+  it("repassa o CNPJ informado ao provisionamento e devolve o vínculo criado", async () => {
+    const { deps, execute } = comAutoLink(VINCULADA);
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "NOVA LTDA", documentNumber: "11.222.333/0001-81" })
+    });
+
+    expect(r.status).toBe(201);
+    expect(deps.provisionOrganizationService.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ documentNumber: "11.222.333/0001-81" })
+    );
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ organizationPublicId: ORG, actorPublicId: ADMIN }));
+    expect(r.body["portalIntegration"]).toMatchObject({ status: "LINKED", legacyId: 71 });
+    // A organização continua sendo o fato principal da resposta.
+    expect(r.body["publicId"]).toBe(ORG);
+  });
+
+  it("CNPJ ausente cria a organização e deixa a integração pendente", async () => {
+    const { deps } = comAutoLink({
+      status: "DOCUMENT_MISSING_OR_INVALID",
+      legacyId: null,
+      referencePublicId: null,
+      clientName: null,
+      clientDocumentMasked: null,
+      candidateCount: 0,
+      reasonCode: null
+    });
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "NOVA LTDA" })
+    });
+
+    expect(r.status).toBe(201);
+    expect(deps.provisionOrganizationService.execute).toHaveBeenCalledWith(
+      expect.not.objectContaining({ documentNumber: expect.anything() })
+    );
+    expect(r.body["portalIntegration"]).toMatchObject({ status: "DOCUMENT_MISSING_OR_INVALID" });
+  });
+
+  it("falha da fonte NÃO apaga a organização e não inventa vínculo", async () => {
+    const { deps } = comAutoLink({
+      status: "FAILED",
+      legacyId: null,
+      referencePublicId: null,
+      clientName: null,
+      clientDocumentMasked: null,
+      candidateCount: 0,
+      reasonCode: "PORTAL_CATALOG_SOURCE_ERROR"
+    });
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "NOVA LTDA", documentNumber: CNPJ })
+    });
+
+    expect(r.status).toBe(201);
+    expect(r.body["publicId"]).toBe(ORG);
+    expect(r.body["portalIntegration"]).toMatchObject({ status: "FAILED", legacyId: null, referencePublicId: null });
+  });
+
+  it("BUSINESS_GROUP nunca tenta vínculo — nem consulta a fonte", async () => {
+    const { deps, execute } = comAutoLink(VINCULADA);
+    (deps.provisionOrganizationService.execute as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      publicId: GRUPO,
+      type: "BUSINESS_GROUP",
+      status: "ACTIVE",
+      version: 1,
+      relationshipPublicId: null
+    });
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "BUSINESS_GROUP", legalName: "GRUPO LTDA" })
+    });
+
+    expect(r.body["portalIntegration"]).toMatchObject({ status: "NOT_A_COMPANY" });
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("sem fonte configurada, diz SOURCE_NOT_CONFIGURED — nunca 'não encontrado'", async () => {
+    // `autoLinkPortalReferenceService` ausente: é o estado de um
+    // processo sem `portal-source.env`. Afirmar NOT_FOUND aqui seria
+    // relatar um fato que ninguém verificou.
+    const { baseUrl } = await subir({ deps: fakeDeps() });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "NOVA LTDA", documentNumber: CNPJ })
+    });
+
+    expect(r.status).toBe(201);
+    expect(r.body["portalIntegration"]).toMatchObject({ status: "SOURCE_NOT_CONFIGURED" });
+  });
+
+  it("a resposta da criação não devolve o CNPJ inteiro", async () => {
+    const { deps } = comAutoLink(VINCULADA);
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, "/api/v1/admin/organizations", {
+      method: "POST",
+      body: JSON.stringify({ type: "COMPANY", legalName: "NOVA LTDA", documentNumber: CNPJ })
+    });
+
+    expect(JSON.stringify(r.body)).not.toContain(CNPJ);
+  });
+});

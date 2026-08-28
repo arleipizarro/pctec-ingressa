@@ -134,6 +134,12 @@ export const api = {
     type: string;
     legalName: string;
     tradeName?: string | undefined;
+    /**
+     * CNPJ, opcional. É o insumo da correspondência automática com o
+     * Portal — com ele a empresa pode nascer já vinculada; sem ele
+     * nasce igual, e o vínculo espera seleção administrativa.
+     */
+    documentNumber?: string | undefined;
     parentBusinessGroupPublicId?: string | undefined;
   }) =>
     requisitar<OrganizacaoCriada>("/admin/organizations", {
@@ -179,6 +185,38 @@ export const api = {
     requisitar<ReferenciaPortalVinculada>(`/admin/organizations/${publicId}/portal-reference`, {
       method: "POST",
       body: JSON.stringify({ legacyId })
+    }),
+  /**
+   * Busca no catálogo de clientes do Portal.
+   *
+   * É o que substitui "descobrir o `clientes.id` no SQL". O termo pode
+   * ser nome, nome fantasia ou um CNPJ — quando é CNPJ, o servidor
+   * compara por igualdade exata; nos demais casos é busca textual, e
+   * ela **não vincula nada**: o vínculo só nasce da seleção explícita
+   * de um resultado, por `linkPortalReference`.
+   *
+   * 503 quando a fonte do Portal não está configurada no processo. A
+   * tela distingue isso de "nada encontrado": são coisas diferentes.
+   */
+  portalCatalog: (params: URLSearchParams) =>
+    requisitar<PaginaDoCatalogoDoPortal>(`/admin/portal-catalog/clients?${params.toString()}`),
+  /**
+   * Correspondência automática desta organização, por CNPJ.
+   *
+   * Leitura pura: `EXACT_UNIQUE` traz a sugestão pronta para
+   * confirmação, e confirmar continua sendo um clique. Nenhum estado
+   * desta resposta escreve nada.
+   */
+  portalMatch: (publicId: string) =>
+    requisitar<CorrespondenciaDoPortal>(`/admin/portal-catalog/organizations/${publicId}/match`),
+  /** Reconciliação — dry-run. É GET porque não escreve nada. */
+  portalReconciliationDryRun: (params: URLSearchParams) =>
+    requisitar<ReconciliacaoDoPortal>(`/admin/portal-catalog/reconciliation/dry-run?${params.toString()}`),
+  /** Reconciliação — execução. Exige confirmação literal e lista explícita. */
+  portalReconciliationExecute: (organizationPublicIds: readonly string[], confirmation: string) =>
+    requisitar<ExecucaoDaReconciliacao>("/admin/portal-catalog/reconciliation/execute", {
+      method: "POST",
+      body: JSON.stringify({ organizationPublicIds, confirmation })
     }),
   /** Associação inicial: só para COMPANY ainda sem grupo. */
   associateParent: (publicId: string, parentOrganizationPublicId: string) =>
@@ -494,6 +532,12 @@ export interface OrganizacaoCriada {
   readonly version: number;
   /** `null` quando nenhuma associação inicial foi pedida. */
   readonly relationshipPublicId: string | null;
+  /**
+   * Dois fatos numa resposta só: a organização existe (`publicId`) e o
+   * vínculo com o Portal aconteceu — ou não. O segundo pode falhar sem
+   * desfazer o primeiro, e é por isso que ele tem campo próprio.
+   */
+  readonly portalIntegration?: IntegracaoAposCriacao;
 }
 
 /**
@@ -599,6 +643,129 @@ export interface IntegracaoComOPortal {
   readonly ambiguousReferences: readonly ReferenciaDoPortal[];
   /** Só em BUSINESS_GROUP. */
   readonly group: CoberturaDeGrupoNoPortal | null;
+}
+
+/** Palavra que a execução da reconciliação exige — a mesma do servidor. */
+export const CONFIRMACAO_DA_RECONCILIACAO = "RECONCILIAR";
+
+/**
+ * Um cliente do Portal, como o catálogo administrativo o devolve.
+ *
+ * `documentMasked` é `**.***.678/0001-95` — nunca o documento inteiro.
+ * `hasDocument` separa "não tem CNPJ cadastrado" de "tem, e está
+ * escondido": sem essa distinção a tela mentiria por omissão.
+ */
+export interface ClienteDoPortal {
+  readonly legacyId: number;
+  readonly name: string;
+  readonly tradeName: string | null;
+  readonly documentMasked: string | null;
+  readonly hasDocument: boolean;
+  readonly active: boolean;
+}
+
+export interface PaginaDoCatalogoDoPortal {
+  readonly items: readonly ClienteDoPortal[];
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/**
+ * Estados da correspondência por CNPJ. Os mesmos nomes do servidor, de
+ * propósito: traduzir aqui criaria um segundo vocabulário para a mesma
+ * decisão.
+ */
+export type EstadoDaCorrespondencia =
+  | "EXACT_UNIQUE"
+  | "NOT_FOUND"
+  | "AMBIGUOUS"
+  | "DOCUMENT_MISSING_OR_INVALID"
+  | "NOT_A_COMPANY";
+
+export interface CorrespondenciaDoPortal {
+  readonly organizationPublicId: string;
+  readonly status: EstadoDaCorrespondencia;
+  readonly hasDocument: boolean;
+  readonly candidateCount: number;
+  /** Só em `EXACT_UNIQUE`. É exatamente o que o botão de confirmar enviaria. */
+  readonly suggestion: {
+    readonly legacyId: number;
+    readonly name: string;
+    readonly tradeName: string | null;
+    readonly documentMasked: string | null;
+    readonly active: boolean;
+  } | null;
+}
+
+export type EstadoDaReconciliacao =
+  | "EXACT_UNIQUE"
+  | "NOT_FOUND"
+  | "AMBIGUOUS"
+  | "DOCUMENT_MISSING_OR_INVALID"
+  | "ALREADY_LINKED";
+
+export interface ItemDaReconciliacao {
+  readonly organizationPublicId: string;
+  readonly legalName: string;
+  readonly tradeName: string | null;
+  readonly status: EstadoDaReconciliacao;
+  /** Presença de CNPJ na organização — o valor nunca vem. */
+  readonly hasDocument: boolean;
+  readonly candidateCount: number;
+  readonly suggestedLegacyId: number | null;
+  readonly suggestedClientName: string | null;
+  readonly suggestedClientDocumentMasked: string | null;
+}
+
+export interface ReconciliacaoDoPortal {
+  readonly items: readonly ItemDaReconciliacao[];
+  readonly counts: Readonly<Record<EstadoDaReconciliacao, number>>;
+  readonly total: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly eligibleCount: number;
+}
+
+export interface ItemExecutadoDaReconciliacao {
+  readonly organizationPublicId: string;
+  readonly legalName: string;
+  readonly status: string;
+  readonly legacyId: number | null;
+  readonly referencePublicId: string | null;
+  readonly reasonCode: string | null;
+}
+
+export interface ExecucaoDaReconciliacao {
+  readonly items: readonly ItemExecutadoDaReconciliacao[];
+  readonly linked: number;
+  readonly alreadyLinked: number;
+  readonly skipped: number;
+  readonly failed: number;
+}
+
+/**
+ * Estado da integração com o Portal devolvido pela CRIAÇÃO de uma
+ * organização.
+ *
+ * Carrega os estados da correspondência mais os que só existem depois
+ * de uma escrita ter sido tentada — e `SOURCE_NOT_CONFIGURED`, que diz
+ * "ninguém perguntou ao Portal". Dizer "não encontrado" nesse caso
+ * seria afirmar um fato não verificado.
+ */
+export interface IntegracaoAposCriacao {
+  readonly status:
+    | EstadoDaCorrespondencia
+    | "LINKED"
+    | "ALREADY_LINKED"
+    | "FAILED"
+    | "SOURCE_NOT_CONFIGURED";
+  readonly legacyId: number | null;
+  readonly referencePublicId: string | null;
+  readonly clientName?: string | null;
+  readonly clientDocumentMasked?: string | null;
+  readonly candidateCount?: number;
+  readonly reasonCode: string | null;
 }
 
 export interface ReferenciaPortalVinculada {

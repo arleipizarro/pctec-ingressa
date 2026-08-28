@@ -432,10 +432,17 @@ describe("LinkPortalOrganizationReferenceService — estado ambíguo", () => {
 
     // A recusa diz QUANTAS existem, e nenhum legacyId: citar um já seria
     // a escolha que este erro existe para não fazer.
+    //
+    // A prova é a LISTA FECHADA de chaves, e não uma varredura do JSON
+    // por "71"/"99": `organizationPublicId` é um UUID aleatório, e um
+    // UUID contém esses dois dígitos em sequência de vez em quando — a
+    // varredura falhava em ~1 execução a cada 6, por sorteio, sem que
+    // nada estivesse errado. A lista fechada afirma a mesma coisa e
+    // afirma mais: qualquer campo NOVO no detalhe quebra o teste.
     const detalhe = (falha as PortalReferenceAmbiguousError).details[0] as Record<string, unknown>;
+    expect(Object.keys(detalhe).sort()).toEqual(["activeReferenceCount", "organizationPublicId"]);
     expect(detalhe["activeReferenceCount"]).toBe(2);
-    expect(JSON.stringify(detalhe)).not.toContain("71");
-    expect(JSON.stringify(detalhe)).not.toContain("99");
+    expect(detalhe["organizationPublicId"]).toBe(empresa);
   });
 
   it("ambiguidade recusa mesmo quando o legacyId pedido é um dos existentes", async () => {

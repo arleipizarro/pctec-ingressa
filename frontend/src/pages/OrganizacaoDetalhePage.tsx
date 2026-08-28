@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
@@ -8,9 +8,10 @@ import { FormularioNovoUsuario, ResultadoDoProvisionamento } from "../components
 import {
   FormularioVincularPortal,
   MOTIVOS_DO_VINCULO,
+  PORTAL_CATALOGO_INDISPONIVEL,
   SecaoIntegracaoPortal
 } from "../components/integracaoPortal.js";
-import type { UsuarioProvisionado } from "../api.js";
+import type { CorrespondenciaDoPortal, UsuarioProvisionado } from "../api.js";
 
 type AcaoPendente =
   | { tipo: "editar" }
@@ -21,6 +22,16 @@ type AcaoPendente =
 
 export function OrganizacaoDetalhePage(): JSX.Element {
   const { publicId = "" } = useParams();
+  /**
+   * Aviso trazido pela criação da organização.
+   *
+   * A criação acontece na tela anterior e termina aqui; quando a
+   * correspondência automática com o Portal não vinculou, o motivo
+   * precisa chegar junto — senão a seção do Portal diria "não
+   * vinculada" sem explicar se ninguém tentou, se o CNPJ não bateu ou
+   * se o Portal estava fora.
+   */
+  const avisoDaCriacao = (useLocation().state as { aviso?: string } | null)?.aviso ?? null;
   const { dados, carregando, erro, recarregar } = usarRecurso(() => api.organization(publicId), [publicId]);
   // Grupos para o seletor: carregados junto da tela para que o
   // formulário abra pronto, sem um segundo "carregando" dentro do modal.
@@ -44,6 +55,35 @@ export function OrganizacaoDetalhePage(): JSX.Element {
    * recarregar a lista levaria o link junto.
    */
   const [provisionado, setProvisionado] = useState<UsuarioProvisionado | null>(null);
+
+  /**
+   * Correspondência automática por CNPJ, carregada quando o formulário
+   * de vínculo abre.
+   *
+   * **Fora do carregamento da organização, de propósito.** O catálogo do
+   * Portal é um banco de fora e pode estar indisponível; embutir esta
+   * consulta em `api.organization` faria uma queda do Portal derrubar a
+   * tela inteira de detalhes, que não depende dele para nada.
+   */
+  const [correspondencia, setCorrespondencia] = useState<CorrespondenciaDoPortal | null>(null);
+  const [correspondenciaCarregando, setCorrespondenciaCarregando] = useState(false);
+  const [catalogoIndisponivel, setCatalogoIndisponivel] = useState(false);
+
+  async function abrirVinculoDoPortal(): Promise<void> {
+    setAcaoPendente({ tipo: "vincularPortal" });
+    setCorrespondencia(null);
+    setCatalogoIndisponivel(false);
+    setCorrespondenciaCarregando(true);
+    try {
+      setCorrespondencia(await api.portalMatch(publicId));
+    } catch (falha) {
+      // 503 é "ninguém perguntou ao Portal", e a tela diz isso em vez de
+      // "nada encontrado" — são fatos diferentes.
+      setCatalogoIndisponivel(falha instanceof ApiError && falha.code === PORTAL_CATALOGO_INDISPONIVEL);
+    } finally {
+      setCorrespondenciaCarregando(false);
+    }
+  }
 
   /**
    * Executa uma mutação e reconcilia a tela.
@@ -144,6 +184,10 @@ export function OrganizacaoDetalhePage(): JSX.Element {
             <h2>{dados.legal_name}</h2>
             <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
 
+            {mensagem === null && avisoDaCriacao !== null && (
+              <div className="aviso aviso-alerta" role="status" data-testid="aviso-da-criacao">{avisoDaCriacao}</div>
+            )}
+
             {mensagem !== null && (
               <div className={`aviso ${mensagem.tipo === "ok" ? "aviso-ok" : "aviso-erro"}`} role="alert">{mensagem.texto}</div>
             )}
@@ -210,7 +254,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
 
             <SecaoIntegracaoPortal
               portal={dados.portal}
-              onVincular={() => setAcaoPendente({ tipo: "vincularPortal" })}
+              onVincular={() => { void abrirVinculoDoPortal(); }}
             />
 
             <div className="secao">
@@ -309,6 +353,10 @@ export function OrganizacaoDetalhePage(): JSX.Element {
             {acao?.tipo === "vincularPortal" && (
               <FormularioVincularPortal
                 organizacao={dados}
+                correspondencia={correspondencia}
+                correspondenciaCarregando={correspondenciaCarregando}
+                correspondenciaIndisponivel={catalogoIndisponivel}
+                onBuscar={(termo) => api.portalCatalog(new URLSearchParams({ q: termo }))}
                 enviando={enviando}
                 onCancelar={() => setAcaoPendente(null)}
                 onConfirmar={(legacyId) => { void vincularAoPortal(legacyId); }}

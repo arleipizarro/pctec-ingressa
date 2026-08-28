@@ -33,6 +33,12 @@ import {
   type HelpdeskImportApiDeps
 } from "../../modules/admin/http/helpdeskImportRoutes.js";
 import { composeHelpdeskImport } from "../../modules/import/infrastructure/HelpdeskImportComposition.js";
+import {
+  createPortalCatalogRoutes,
+  type PortalCatalogApiDeps
+} from "../../modules/admin/http/portalCatalogRoutes.js";
+import { composePortalCatalog } from "../../modules/portal/infrastructure/PortalCatalogComposition.js";
+import type { AutoLinkPortalOrganizationReferenceService } from "../../modules/portal/application/AutoLinkPortalOrganizationReferenceService.js";
 import { createRequireSafeOrigin } from "../../modules/security/http/requireSafeOrigin.js";
 import { MariaDbUnitOfWork } from "../../shared/database/UnitOfWork.js";
 import { MariaDbAdminReadRepository } from "../../modules/admin/infrastructure/persistence/MariaDbAdminReadRepository.js";
@@ -204,6 +210,16 @@ export interface CreateAppOptions {
    * silenciosamente e nunca operam com credencial adivinhada.
    */
   readonly helpdeskImport?: HelpdeskImportApiDeps;
+  /**
+   * Injetável para teste do catálogo administrativo do Portal.
+   *
+   * Quando omitido, `createApp()` tenta montar o catálogo real a partir
+   * de `loadPortalSourceConfig()`. Faltando a configuração da fonte, as
+   * rotas do catálogo respondem 503 — nunca somem silenciosamente e
+   * nunca operam com credencial adivinhada. O restante da API,
+   * inclusive login e o vínculo manual ao Portal, segue funcionando.
+   */
+  readonly portalCatalog?: PortalCatalogApiDeps;
   /**
    * Injetável para testes — P1B.0 Fatia 4 (v0.7.x). Quando omitido,
    * `createApp()` constrói um `GetActiveIdentityExternalReferenceService`
@@ -381,6 +397,82 @@ function helpdeskImportRouter(options: CreateAppOptions, ingressaPool: Pool | un
     return router;
   }
 }
+
+/**
+ * Catálogo administrativo do Portal — montado sempre, funcional só
+ * quando a fonte está configurada.
+ *
+ * Mesma decisão do assistente de importação, pelas mesmas três razões:
+ * derrubar o boot puniria login e todo o resto por causa de uma
+ * funcionalidade opcional; não montar a rota devolveria 404 ("não
+ * existe") quando a verdade é "existe, falta configuração"; 503 com
+ * código próprio diz o que é.
+ *
+ * A diferença em relação ao assistente é o que sobrevive à falta de
+ * configuração: **o vínculo manual ao Portal continua inteiro**. A rota
+ * `POST /admin/organizations/:publicId/portal-reference` não depende da
+ * fonte — o ADMIN que souber o `legacyId` segue vinculando. O que fica
+ * indisponível é a parte que existe para ele NÃO precisar saber.
+ *
+ * Devolve também o serviço de vínculo automático, `undefined` quando a
+ * fonte não está configurada: a criação manual de COMPANY usa esse
+ * mesmo objeto e precisa distinguir "não bateu" de "nem foi possível
+ * perguntar".
+ */
+function portalCatalogRouter(
+  options: CreateAppOptions,
+  ingressaPool: Pool | undefined,
+  linkService: LinkPortalOrganizationReferenceService,
+  allowedOrigins: readonly string[]
+): { readonly router: Router; readonly autoLinkService: AutoLinkPortalOrganizationReferenceService | undefined } {
+  if (options.portalCatalog !== undefined) {
+    return {
+      router: createPortalCatalogRoutes(options.portalCatalog, allowedOrigins),
+      autoLinkService: undefined
+    };
+  }
+
+  try {
+    const composicao = composePortalCatalog(ingressaPool!, linkService);
+    return {
+      router: createPortalCatalogRoutes(
+        {
+          catalogService: composicao.catalogService,
+          matchService: composicao.matchService,
+          reconciliationService: composicao.reconciliationService
+        },
+        allowedOrigins
+      ),
+      autoLinkService: composicao.autoLinkService
+    };
+  } catch (error) {
+    // A mensagem do erro de configuração lista NOMES de variável, nunca
+    // valores (ver `MissingPortalSourceConfigError`). Ainda assim ela
+    // não vai para a resposta HTTP: quem está do lado de fora não
+    // precisa da lista, e ela não deve aparecer num log de navegador.
+    const motivo = error instanceof Error ? error.message : String(error);
+    const router = Router();
+    router.use((_req, res: Response) => {
+      res.status(503).json({
+        error: {
+          code: PORTAL_CATALOG_SOURCE_NOT_CONFIGURED,
+          message:
+            "Catálogo do Portal indisponível: a configuração da fonte não está presente neste processo. " +
+            "O vínculo manual pelo id do cliente continua funcionando.",
+          details: []
+        }
+      });
+    });
+    // Registrado uma vez, no boot, para que a indisponibilidade seja
+    // diagnosticável sem precisar reproduzir a requisição.
+    // eslint-disable-next-line no-console -- diagnóstico de boot, sem valor de credencial.
+    console.warn(`[portal-catalog] rotas do catálogo indisponíveis: ${motivo}`);
+    return { router, autoLinkService: undefined };
+  }
+}
+
+/** Código estável da indisponibilidade — a UI distingue "não bateu" de "não deu para perguntar". */
+export const PORTAL_CATALOG_SOURCE_NOT_CONFIGURED = "PORTAL_CATALOG_SOURCE_NOT_CONFIGURED";
 
 /**
  * Cria a aplicação Express, sem abrir porta nenhuma — quem decide
@@ -649,6 +741,51 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createRequireSafeOrigin(allowedOrigins),
     helpdeskImportRouter(options, sharedPool)
   );
+
+  /**
+   * Vínculo da COMPANY ao Portal — UMA montagem, DOIS consumidores.
+   *
+   * A rota administrativa de vínculo manual e o vínculo automático por
+   * CNPJ escrevem pelo MESMO serviço, com o `SELECT ... FOR UPDATE`, a
+   * idempotência e a auditoria dele. Montá-lo duas vezes daria dois
+   * caminhos de escrita que divergem no primeiro ajuste feito de um
+   * lado só — e o sintoma seria uma empresa apontando para o cliente
+   * errado.
+   */
+  const vinculoDoPortal = new LinkPortalOrganizationReferenceService(
+    new MariaDbUnitOfWork(sharedPool!),
+    (c) => new MariaDbOrganizationRepository(c),
+    (c) => new MariaDbOrganizationExternalReferenceRepository(c),
+    (uow) =>
+      new CreateOrganizationExternalReferenceService(
+        uow,
+        (c) => new MariaDbOrganizationRepository(c),
+        (c) => new MariaDbOrganizationExternalReferenceRepository(c),
+        (c) => new MariaDbAuditEventRepository(c)
+      )
+  );
+  const catalogoDoPortal = portalCatalogRouter(options, sharedPool, vinculoDoPortal, allowedOrigins);
+
+  // Catálogo administrativo do Portal (v0.12.x) — MESMA cadeia do
+  // restante de /api/v1/admin (sessão → Identity ACTIVE → ADMIN em
+  // PCTEC_INGRESSA). A guarda de origem fica ROTA A ROTA dentro do
+  // router, e não aqui: das quatro rotas, três são leitura pura, e
+  // montar a guarda no prefixo transformaria o 404 de rota inexistente
+  // em 403 enganoso.
+  //
+  // Prefixo próprio, ANTES do /api/v1/admin genérico, pelo mesmo motivo
+  // do assistente de importação — e por um a mais: sem a configuração
+  // da fonte, este router inteiro responde 503, e nada mais em
+  // /api/v1/admin é afetado.
+  app.use(
+    "/api/v1/admin/portal-catalog",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
+      profile: "ADMIN"
+    }),
+    catalogoDoPortal.router
+  );
   /**
    * Cobertura do Portal de uma organização — leitura pura, composta dos
    * repositórios oficiais, sobre o pool.
@@ -702,18 +839,14 @@ export function createApp(options: CreateAppOptions = {}): Express {
         // com o Aggregate, o evento e a auditoria de sempre. Uma segunda
         // transação aqui reabriria a janela de corrida que este desenho
         // fecha.
-        linkPortalOrganizationReferenceService: new LinkPortalOrganizationReferenceService(
-          new MariaDbUnitOfWork(sharedPool!),
-          (c) => new MariaDbOrganizationRepository(c),
-          (c) => new MariaDbOrganizationExternalReferenceRepository(c),
-          (uow) =>
-            new CreateOrganizationExternalReferenceService(
-              uow,
-              (c) => new MariaDbOrganizationRepository(c),
-              (c) => new MariaDbOrganizationExternalReferenceRepository(c),
-              (c) => new MariaDbAuditEventRepository(c)
-            )
-        ),
+        linkPortalOrganizationReferenceService: vinculoDoPortal,
+        // Correspondência automática por CNPJ na criação manual de
+        // COMPANY. `undefined` quando a fonte do Portal não está
+        // configurada — e a rota diz isso à tela em vez de fingir que
+        // não houve correspondência.
+        ...(catalogoDoPortal.autoLinkService !== undefined
+          ? { autoLinkPortalReferenceService: catalogoDoPortal.autoLinkService }
+          : {}),
         // Projeção de leitura da auditoria — contrato separado do
         // repositório de ESCRITA, que segue append-only e sem consulta.
         auditEventReadRepository: new MariaDbAuditEventReadRepository(sharedPool!),

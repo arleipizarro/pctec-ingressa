@@ -38,15 +38,19 @@ export function FormularioNovaOrganizacao({
     type: string;
     legalName: string;
     tradeName?: string | undefined;
+    documentNumber?: string | undefined;
     parentBusinessGroupPublicId?: string | undefined;
   }) => void;
 }): JSX.Element {
   const [type, setType] = useState("COMPANY");
   const [legalName, setLegalName] = useState("");
   const [tradeName, setTradeName] = useState("");
+  const [documentNumber, setDocumentNumber] = useState("");
   const [grupo, setGrupo] = useState("");
 
   const ehEmpresa = type === "COMPANY";
+  const digitosDoCnpj = documentNumber.replace(/\D/g, "");
+  const cnpjIncompleto = digitosDoCnpj.length > 0 && digitosDoCnpj.length !== 14;
 
   function enviar(evento: FormEvent): void {
     evento.preventDefault();
@@ -54,6 +58,10 @@ export function FormularioNovaOrganizacao({
       type,
       legalName: legalName.trim(),
       ...(tradeName.trim().length > 0 ? { tradeName: tradeName.trim() } : {}),
+      // Só COMPANY leva CNPJ para a correspondência: grupo não recebe
+      // vínculo próprio, e mandar o documento dele daria a impressão de
+      // que receberia.
+      ...(ehEmpresa && digitosDoCnpj.length === 14 ? { documentNumber } : {}),
       ...(ehEmpresa && grupo !== "" ? { parentBusinessGroupPublicId: grupo } : {})
     });
   }
@@ -63,8 +71,9 @@ export function FormularioNovaOrganizacao({
       <div className="modal">
         <h3>Nova organização</h3>
         <p className="subtitulo">
-          A organização nasce no Ingressa. Nenhum cadastro é criado ou consultado no Helpdesk ou no Portal, e
-          nenhuma referência externa é gerada.
+          A organização nasce no Ingressa. Nenhum cadastro é criado no Helpdesk ou no Portal. Com CNPJ
+          informado, o servidor <strong>consulta</strong> o catálogo do Portal e vincula esta empresa quando o
+          documento corresponde a <strong>exatamente um</strong> cliente de lá — nunca por semelhança de nome.
         </p>
         <form onSubmit={enviar}>
           <label htmlFor="nova-org-type">Tipo</label>
@@ -102,6 +111,32 @@ export function FormularioNovaOrganizacao({
             style={{ width: "100%" }}
           />
           <p className="subtitulo">Opcional.</p>
+
+          {ehEmpresa && (
+            <>
+              <label htmlFor="nova-org-cnpj">CNPJ</label>
+              <input
+                id="nova-org-cnpj"
+                value={documentNumber}
+                onChange={(e) => setDocumentNumber(e.target.value)}
+                inputMode="numeric"
+                placeholder="00.000.000/0000-00"
+                style={{ width: "100%" }}
+              />
+              <p className="subtitulo">
+                Opcional — e é o que permite <strong>vincular esta empresa ao Portal automaticamente</strong>.
+                Com CNPJ, o servidor procura o cliente correspondente e vincula quando encontra{" "}
+                <strong>exatamente um</strong>. Sem CNPJ, a empresa é criada igual e o vínculo fica pendente de
+                seleção na tela dela.
+              </p>
+              {cnpjIncompleto && (
+                <div className="aviso aviso-alerta" role="status">
+                  CNPJ tem 14 dígitos. Enquanto estiver incompleto, ele não será enviado e a empresa nascerá sem
+                  documento.
+                </div>
+              )}
+            </>
+          )}
 
           {ehEmpresa && (
             <>

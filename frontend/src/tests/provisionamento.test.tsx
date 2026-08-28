@@ -123,10 +123,91 @@ describe("criação de organização", () => {
     expect(within(dialogo).getByLabelText("Nome fantasia")).toHaveValue("");
   });
 
-  it("avisa que nada é criado no Helpdesk ou no Portal", async () => {
+  it("avisa que nada é CRIADO no Helpdesk ou no Portal — e que o CNPJ é apenas consultado", async () => {
     renderizarLista();
     const dialogo = await abrirNovaOrganizacao();
-    expect(within(dialogo).getByText(/nenhuma referência externa é gerada/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/Nenhum cadastro é criado no Helpdesk ou no Portal/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/nunca por semelhança de nome/i)).toBeInTheDocument();
+  });
+
+  it("o CNPJ é opcional, só aparece para COMPANY e explica o que ele habilita", async () => {
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    expect(within(dialogo).getByLabelText("CNPJ")).toHaveValue("");
+    expect(within(dialogo).getByText(/vincular esta empresa ao Portal automaticamente/i)).toBeInTheDocument();
+
+    // Grupo não recebe vínculo próprio, então não pede documento.
+    await userEvent.selectOptions(within(dialogo).getByLabelText("Tipo"), "BUSINESS_GROUP");
+    expect(within(dialogo).queryByLabelText("CNPJ")).not.toBeInTheDocument();
+  });
+
+  it("envia o CNPJ informado, com a pontuação que a pessoa digitou", async () => {
+    const criar = vi.spyOn(api, "createOrganization").mockResolvedValue({
+      publicId: NOVA_ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null
+    });
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
+    await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "11.222.333/0001-81");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar organização" }));
+
+    // A normalização é do servidor — mandar dígitos daqui criaria uma
+    // segunda regra de normalização, que divergiria da primeira.
+    await waitFor(() =>
+      expect(criar).toHaveBeenCalledWith({
+        type: "COMPANY",
+        legalName: "EMPRESA NOVA LTDA",
+        documentNumber: "11.222.333/0001-81"
+      })
+    );
+  });
+
+  it("CNPJ incompleto avisa e NÃO é enviado — a empresa nasce sem documento", async () => {
+    const criar = vi.spyOn(api, "createOrganization").mockResolvedValue({
+      publicId: NOVA_ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null
+    });
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
+    await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "11.222.333");
+    expect(within(dialogo).getByText(/CNPJ tem 14 dígitos/i)).toBeInTheDocument();
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar organização" }));
+
+    await waitFor(() =>
+      expect(criar).toHaveBeenCalledWith({ type: "COMPANY", legalName: "EMPRESA NOVA LTDA" })
+    );
+  });
+
+  it("o desfecho da correspondência viaja até a tela de destino", async () => {
+    vi.spyOn(api, "createOrganization").mockResolvedValue({
+      publicId: NOVA_ORG,
+      type: "COMPANY",
+      status: "ACTIVE",
+      version: 1,
+      relationshipPublicId: null,
+      portalIntegration: {
+        status: "AMBIGUOUS",
+        legacyId: null,
+        referencePublicId: null,
+        candidateCount: 2,
+        reasonCode: null
+      }
+    } as never);
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
+    await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "11.222.333/0001-81");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar organização" }));
+
+    // Sem isto, a seção do Portal diria "não vinculada" e ninguém saberia
+    // se ninguém tentou, se o CNPJ não bateu ou se o Portal estava fora.
+    expect(await screen.findByTestId("aviso-da-criacao")).toHaveTextContent(
+      /Mais de um cliente do Portal tem este CNPJ/i
+    );
   });
 
   it("o grupo só é oferecido para COMPANY", async () => {

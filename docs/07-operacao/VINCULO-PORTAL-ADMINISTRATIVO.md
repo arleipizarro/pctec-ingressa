@@ -26,10 +26,13 @@ Regras estruturais, não convenções:
 
 `Organizações → (abrir a empresa) → Integração com o Portal`.
 
-- **COMPANY não vinculada** — botão “Vincular ao Portal”, campo “ID do
-  cliente no Portal”, confirmação explícita. O aviso diz o alcance: o
-  vínculo vale para **todos** os usuários do Portal daquela empresa e
-  **não pode ser trocado nem revogado** por esta tela.
+- **COMPANY não vinculada** — botão “Vincular ao Portal”, e então
+  sugestão automática por CNPJ e/ou busca do cliente por nome ou
+  documento, com seleção explícita e confirmação. O campo cru de id não
+  existe mais (ver “Correspondência automática por CNPJ”, adiante). O
+  aviso diz o alcance: o vínculo vale para **todos** os usuários do
+  Portal daquela empresa e **não pode ser trocado nem revogado** por
+  esta tela.
 - **COMPANY vinculada** — estado, id do cliente e `publicId` técnico da
   referência. Nenhuma ação de troca, revogação ou exclusão: elas não
   existem no servidor nesta fatia.
@@ -161,20 +164,177 @@ nenhum comando de domínio faz essa transição hoje; implementá-la junto
 com a tela significaria inventar a regra de sucessão no mesmo movimento.
 Enquanto isso, um vínculo errado é corrigido pelo CLI, com registro.
 
-## Próxima etapa — correspondência automática por CNPJ
+## Correspondência automática por CNPJ
 
-Planejada, **não implementada** nesta fatia. O desenho acordado:
+Entregue. O administrador **não precisa mais conhecer nem consultar
+`pctecdb.clientes.id`** — nem para vincular uma empresa nova, nem para
+reconciliar as que já existem.
 
-1. importar o CNPJ do Helpdesk para `organizations.document_number`,
-   normalizado (só dígitos);
-2. criar um catálogo/contrato de leitura seguro para a correspondência
-   com os clientes do Portal — sem expor documento em resposta de
-   produto;
-3. vincular automaticamente **somente** por CNPJ normalizado, **único** e
-   **exato**, dos dois lados;
-4. ausente, duplicado ou ambíguo fica em revisão manual, na mesma tela
-   deste PR;
-5. **nunca** vincular por semelhança de nome. Razão social e nome
-   fantasia divergem entre sistemas, se repetem entre filiais e mudam
-   sem aviso — um "match" por nome erra em silêncio e o erro só aparece
-   quando alguém lê o faturamento da empresa errada.
+### A regra, inteira
+
+CNPJ normalizado (só dígitos, exatamente 14), comparado por
+**igualdade** dos dois lados. Quatro resultados possíveis:
+
+| resultado | significado | vincula? |
+|---|---|---|
+| `EXACT_UNIQUE` | exatamente 1 cliente do Portal com o mesmo CNPJ | **sim** (com confirmação) |
+| `NOT_FOUND` | nenhum | não |
+| `AMBIGUOUS` | mais de um | não — fail-closed |
+| `DOCUMENT_MISSING_OR_INVALID` | a organização não tem CNPJ comparável | não |
+
+**Nunca por nome.** Não há `LIKE`, distância de edição nem prefixo no
+caminho automático. Razão social e nome fantasia divergem entre
+sistemas, se repetem entre filiais e mudam sem aviso — um match por nome
+erra em silêncio, e o erro só aparece quando alguém lê o faturamento da
+empresa errada.
+
+**Nunca `LIMIT 1`.** A consulta por CNPJ não tem limite: a contagem é o
+que separa `EXACT_UNIQUE` de `AMBIGUOUS`, e um limite transformaria
+duplicidade em vínculo silencioso para a primeira linha que o motor
+devolvesse.
+
+**CPF nunca entra.** `pctecdb.clientes` guarda CPF e CNPJ na mesma
+coluna `documento`, com `tipo_doc ENUM('CPF','CNPJ')`. A consulta filtra
+`tipo_doc = 'CNPJ'`, e a normalização exige 14 dígitos.
+
+A decisão mora num lugar só — `MatchPortalClientByDocumentService` — e é
+chamada de três: a criação manual, a sugestão da tela e a reconciliação.
+
+### A escrita continua sendo a mesma
+
+Nenhum caminho novo escreve referência. Todos passam pelo
+`LinkPortalOrganizationReferenceService` deste documento, com o
+`SELECT ... FOR UPDATE`, a releitura pós-bloqueio, a idempotência, o
+`PORTAL_REFERENCE_AMBIGUOUS` e a auditoria oficial. A correspondência
+decide **se** e **com qual `legacyId`** chamá-lo; ela não sabe escrever.
+
+### Pela tela
+
+**Empresa não vinculada.** O campo cru "ID do cliente no Portal" não
+existe mais. No lugar:
+
+1. ao abrir, a tela consulta a correspondência por CNPJ. Havendo
+   `EXACT_UNIQUE`, mostra o cliente (nome + CNPJ mascarado) e um botão
+   de confirmação. **A sugestão não vincula sozinha**: o vínculo não tem
+   desfazer nesta tela, e uma correspondência exata ainda depende de os
+   dois cadastros estarem certos;
+2. em qualquer estado, há busca por nome, nome fantasia ou CNPJ. A busca
+   textual **mostra** candidatos; ela nunca vincula, nem quando devolve
+   um resultado só;
+3. o `legacyId` só existe como consequência de um resultado
+   **selecionado explicitamente**.
+
+Trocar e revogar continuam sem caminho, como antes.
+
+**Grupo.** Igual: cobertura e empresas pendentes, nunca campo de id e
+nunca vínculo próprio.
+
+**Criação de empresa.** O formulário ganhou um campo de CNPJ, opcional.
+Com ele, a correspondência é tentada logo depois de a organização ser
+criada — **fora da transação dela**. Uma indisponibilidade do Portal não
+pode desfazer um cadastro que já é válido: a empresa nasce, e o vínculo
+é uma segunda decisão, que pode ficar pendente. A resposta separa os
+dois fatos (`publicId` e `portalIntegration`), e a tela de destino
+explica o que aconteceu.
+
+### Reconciliação das organizações existentes
+
+`Organizações → Reconciliar com o Portal`. Duas etapas separadas:
+
+- **dry-run** (`GET`): classifica as COMPANY ACTIVE e mostra contagens
+  por estado e as candidatas (`publicId`, nomes, estado, sugestão com
+  CNPJ **mascarado** do cliente). **Não escreve nada** — nem referência,
+  nem lote, nem evento. O método é parte do contrato: um `POST` diria
+  que algo acontece;
+- **execução** (`POST`, com guarda de origem): exige a palavra literal
+  `RECONCILIAR` e a lista explícita de organizações. Não existe
+  "reconciliar tudo". Cada organização é **reclassificada do zero** —
+  o dry-run é uma fotografia — e só `EXACT_UNIQUE` chega a escrever.
+  Uma transação por organização: a falha de uma não altera as outras, e
+  o resultado diz, organização por organização, o que aconteceu.
+
+Nenhuma consulta ou `INSERT` manual em lugar nenhum deste caminho.
+
+### O catálogo do Portal
+
+Adapter **somente leitura** no Ingressa, no mesmo padrão isolado da
+fonte Helpdesk: pool próprio, credencial própria, projeção fechada
+(`id, nome, nome_fantasia, tipo_doc, documento, ativo`), guarda de SQL
+que recusa qualquer coisa que não seja um `SELECT` sobre `clientes`, e
+nenhum método de escrita na classe. `portal_acesso` e `clientes_grupo`
+estão explicitamente fora do alcance.
+
+`pctecdb.clientes.documento` é `VARCHAR(20)` **sem índice**, e guarda o
+CNPJ **mascarado** (as migrations do Portal fazem
+`WHERE documento = '13.356.779/0001-24'`). A normalização acontece dentro
+do `SELECT`, dos dois lados, ao custo de uma varredura de uma tabela
+pequena. **Nenhum índice é criado no banco do Portal** — este conector
+não altera nada lá.
+
+O que sai na resposta HTTP é `legacyId`, nome, nome fantasia e a
+**máscara** `**.***.678/0001-95`. Nunca o documento inteiro, nunca
+telefone, e-mail, endereço ou qualquer coluna comercial.
+
+### Sem configuração da fonte
+
+As rotas de `/api/v1/admin/portal-catalog` respondem **503** com
+`PORTAL_CATALOG_SOURCE_NOT_CONFIGURED`. Não derrubam o boot e não somem:
+login, `/admin/organizations` e **o vínculo manual pelo `legacyId`**
+continuam funcionando. A criação de empresa responde
+`portalIntegration.status = SOURCE_NOT_CONFIGURED` — que é diferente de
+`NOT_FOUND`: ninguém chegou a perguntar ao Portal, e afirmar
+"não encontrado" seria relatar um fato não verificado.
+
+### Configuração operacional
+
+Arquivo próprio, fora do repositório, permissão 600, carregado pelo Node
+via `--env-file`:
+
+`/app/.config/pctec-ingressa/portal-source.env`
+
+| variável | |
+|---|---|
+| `PORTAL_SOURCE_DB_HOST` | |
+| `PORTAL_SOURCE_DB_PORT` | |
+| `PORTAL_SOURCE_DB_NAME` | |
+| `PORTAL_SOURCE_DB_USER` | |
+| `PORTAL_SOURCE_DB_PASSWORD` | |
+
+Sem default nenhum: faltando qualquer uma, o catálogo não sobe (503) e
+nada é lido. Nenhuma variável `DB_*` do Ingressa é reaproveitada —
+herdá-las faria o catálogo ler o banco do Ingressa e não achar cliente
+nenhum, transformando "configuração ausente" em "conectou no lugar
+errado".
+
+A credencial apontada ali precisa ser **dedicada e somente leitura**
+sobre `clientes` do banco do Portal. Nada neste módulo escreve lá, e a
+separação de pools garante que uma escrita do Ingressa nunca saia por
+essa conexão.
+
+### O CNPJ no importador do Helpdesk
+
+Verificado contra a fonte real, e o achado importa:
+
+- `pctec_helpdesk.clients` **tem** a coluna `cnpj` (`VARCHAR(20)`);
+- a credencial read-only do Ingressa **não a alcança**: o GRANT é
+  `SELECT (id, name, active)`, e pedir `cnpj` responde
+  `ERROR 1143 ... for column 'cnpj' in table 'clients'`.
+
+Então, hoje, **a fonte não fornece CNPJ ao Ingressa**. O importador está
+preparado para os dois mundos: ele lê o documento numa consulta própria
+e isolada, trata a negativa de privilégio como "a fonte não fornece"
+(nunca como falha, que derrubaria o APPLY inteiro por um campo
+opcional), e transporta o CNPJ até `Organization.documentNumber` quando
+ele vem. **Nome nunca é usado como substituto.** Enquanto o GRANT não
+for ampliado, as empresas importadas nascem sem documento e o vínculo
+com o Portal fica pendente — resolvido pela reconciliação ou pela
+seleção na tela da empresa.
+
+Ampliar o GRANT (`SELECT (id, name, active, cnpj)`) é decisão de quem
+administra o banco do Helpdesk, não deste código. Feita a mudança, nada
+mais precisa ser alterado no Ingressa.
+
+O documento é lido **só no APPLY**, e não em `prepare`: ele não muda
+decisão nenhuma do plano, e incluí-lo faria um CNPJ corrigido no
+Helpdesk entre o dry-run e o apply mudar o `scopeFingerprint` — punindo
+uma correção que não altera nada do que vai ser escrito.

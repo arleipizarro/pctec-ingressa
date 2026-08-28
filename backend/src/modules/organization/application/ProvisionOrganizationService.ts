@@ -18,6 +18,22 @@ export interface ProvisionOrganizationRequest {
   readonly legalName: string;
   readonly tradeName?: string | undefined;
   /**
+   * CNPJ, OPCIONAL — e a única evidência que a correspondência
+   * automática com o Portal aceita.
+   *
+   * Continua opcional porque o domínio não o exige (`Organization`
+   * nasce sem documento desde G1, e um BUSINESS_GROUP frequentemente
+   * não tem CNPJ próprio). O que mudou não foi a obrigatoriedade: foi
+   * o proveito. Sem ele, a empresa nasce e o vínculo com o Portal fica
+   * pendente de seleção administrativa; com ele, o vínculo pode nascer
+   * junto, sem ninguém consultar `clientes.id` no SQL.
+   *
+   * A unicidade de `(documentNumber, type)` continua sendo do
+   * `CreateOrganizationService`, e o formato do
+   * `DocumentNumber` — nada disso é revalidado aqui.
+   */
+  readonly documentNumber?: string | undefined;
+  /**
    * Associação inicial, OPCIONAL e só para `COMPANY`. Ausente significa
    * "empresa sem grupo" — estado legítimo, não cadastro pela metade.
    */
@@ -61,10 +77,19 @@ export interface ProvisionOrganizationResult {
  * causa da composição: grupo não pertence a grupo, e grupo inativo não
  * recebe empresa nova.
  *
- * **Nenhuma referência externa é criada.** Organização nascida aqui não
- * veio do Helpdesk nem do Portal; fabricar um
- * `OrganizationExternalReference` registraria um vínculo legado que não
- * existe. Nada é inferido de sistema de origem algum.
+ * **Nenhuma referência externa é criada AQUI.** Organização nascida
+ * neste serviço não veio do Helpdesk nem do Portal; fabricar um
+ * `OrganizationExternalReference` dentro desta transação registraria um
+ * vínculo legado a partir de um palpite. Nada é inferido de sistema de
+ * origem algum.
+ *
+ * A correspondência automática com o Portal acontece **depois** desta
+ * transação comitar, na rota administrativa, pelo
+ * `AutoLinkPortalOrganizationReferenceService` — e é deliberado que ela
+ * fique fora daqui. O catálogo do Portal é um banco de fora: se a
+ * consulta a ele participasse desta transação, uma indisponibilidade
+ * dele desfaria o cadastro de uma empresa que já é válido. A empresa
+ * nasce; o vínculo é uma segunda decisão, que pode ficar pendente.
  *
  * **Nenhuma exclusão.** Este serviço só insere.
  */
@@ -132,6 +157,7 @@ export class ProvisionOrganizationService {
         type: request.type,
         legalName: request.legalName,
         tradeName: request.tradeName,
+        documentNumber: request.documentNumber,
         actorPublicId: request.actorPublicId,
         correlationId
       });

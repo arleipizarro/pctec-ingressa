@@ -18,6 +18,7 @@ import type { ProvisionOrganizationUserService } from "../application/ProvisionO
 import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
 import type { GetPortalOrganizationCoverageService } from "../../organization/application/GetPortalOrganizationCoverageService.js";
 import type { LinkPortalOrganizationReferenceService } from "../../organization/application/LinkPortalOrganizationReferenceService.js";
+import type { AutoLinkPortalOrganizationReferenceService } from "../../portal/application/AutoLinkPortalOrganizationReferenceService.js";
 import { createRequireSafeOrigin } from "../../security/http/requireSafeOrigin.js";
 import type { AuditEventReadRepository } from "../../audit/application/AuditEventReadRepository.js";
 import { normalizarInstante } from "../../audit/infrastructure/MariaDbAuditEventReadRepository.js";
@@ -51,6 +52,16 @@ export interface AdminApiDeps {
    */
   readonly portalOrganizationCoverageService: GetPortalOrganizationCoverageService;
   readonly linkPortalOrganizationReferenceService: LinkPortalOrganizationReferenceService;
+  /**
+   * Correspondência automática por CNPJ na criação manual de COMPANY.
+   *
+   * OPCIONAL: a fonte do Portal pode não estar configurada neste
+   * processo, e nesse caso a criação de organização continua inteira —
+   * o que muda é que ela responde `SOURCE_NOT_CONFIGURED` em vez de um
+   * estado de correspondência. Tornar a dependência obrigatória ligaria
+   * o cadastro de empresas à disponibilidade de um banco de fora.
+   */
+  readonly autoLinkPortalReferenceService?: AutoLinkPortalOrganizationReferenceService;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,6 +88,70 @@ function naoEncontrado(res: Response, recurso: string): void {
 /** O ator de toda mutação é a identidade autenticada, nunca o corpo. */
 function atorAutenticado(req: RequestWithAuthorization): string {
   return String(req.authorization?.identityPublicId ?? "");
+}
+
+/** Ninguém chegou a perguntar ao Portal — diferente de "não encontrado". */
+const PORTAL_INTEGRATION_SOURCE_NOT_CONFIGURED = "SOURCE_NOT_CONFIGURED";
+
+/**
+ * Estado da integração com o Portal devolvido pela criação de
+ * organização.
+ *
+ * Existe para que a tela NUNCA precise adivinhar. São quatro situações
+ * distintas, e confundi-las levaria a orientações erradas:
+ *
+ *  - vinculada agora (`LINKED`) — não há nada a fazer;
+ *  - sem correspondência (`NOT_FOUND`, `AMBIGUOUS`,
+ *    `DOCUMENT_MISSING_OR_INVALID`) — a empresa existe e o vínculo
+ *    espera seleção administrativa;
+ *  - grupo (`NOT_A_COMPANY`) — não recebe vínculo, e a tela não deve
+ *    oferecer nenhum;
+ *  - fonte não configurada (`SOURCE_NOT_CONFIGURED`) — ninguém sequer
+ *    perguntou ao Portal. Dizer "não encontrado" aqui seria afirmar um
+ *    fato que não foi verificado.
+ *
+ * O `undefined` de `deps.autoLinkPortalReferenceService` é a quarta
+ * situação, e é por isso que ela tem código próprio em vez de virar
+ * uma falha genérica.
+ */
+async function tentarVincularAoPortal(
+  deps: AdminApiDeps,
+  req: RequestWithAuthorization,
+  organizationPublicId: string,
+  organizationType: string
+): Promise<Record<string, unknown>> {
+  // Grupo nunca recebe vínculo próprio. Cortar aqui evita consultar a
+  // fonte para descobrir algo que o modelo já responde — e mantém a
+  // resposta honesta: `NOT_A_COMPANY` não é "não encontrado".
+  if (organizationType !== "COMPANY") {
+    return { status: "NOT_A_COMPANY", legacyId: null, referencePublicId: null, reasonCode: null };
+  }
+  if (deps.autoLinkPortalReferenceService === undefined) {
+    return {
+      status: PORTAL_INTEGRATION_SOURCE_NOT_CONFIGURED,
+      legacyId: null,
+      referencePublicId: null,
+      reasonCode: PORTAL_INTEGRATION_SOURCE_NOT_CONFIGURED
+    };
+  }
+  // O serviço não lança: ele devolve `FAILED` com código. É o que
+  // garante que uma queda do Portal não transforme uma organização
+  // recém-criada num 500 — a organização já existe, e a resposta
+  // precisa dizer isso.
+  const resultado = await deps.autoLinkPortalReferenceService.execute({
+    organizationPublicId,
+    actorPublicId: atorAutenticado(req),
+    correlationId: req.correlationId
+  });
+  return {
+    status: resultado.status,
+    legacyId: resultado.legacyId,
+    referencePublicId: resultado.referencePublicId,
+    clientName: resultado.clientName,
+    clientDocumentMasked: resultado.clientDocumentMasked,
+    candidateCount: resultado.candidateCount,
+    reasonCode: resultado.reasonCode
+  };
 }
 
 /**
@@ -456,16 +531,27 @@ export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonl
 
   /**
    * Criação de organização — COMPANY ou BUSINESS_GROUP, com associação
-   * inicial OPCIONAL a um grupo.
+   * inicial OPCIONAL a um grupo e CNPJ OPCIONAL.
    *
-   * Nenhum campo além de tipo, razão social e nome fantasia: o domínio
-   * não exige mais nada para criar (`documentNumber` é opcional em
-   * `Organization.create`). Pedir CNPJ aqui seria inventar obrigação que
-   * o modelo não tem — e o documento tem regra de unicidade própria, que
-   * merece a tela dela quando for a hora.
+   * **Por que o CNPJ passou a ter campo.** Ele continua opcional — o
+   * domínio nunca o exigiu, e um grupo empresarial frequentemente não
+   * tem um. O que mudou foi o proveito: com CNPJ, a empresa nasce e a
+   * correspondência com o Portal é tentada na hora; sem ele, a empresa
+   * nasce igual e o vínculo fica pendente de seleção administrativa. O
+   * campo não é uma obrigação nova, é o insumo da única
+   * correspondência automática que este sistema aceita.
    *
-   * Nenhuma referência externa é criada, e nada é inferido do Helpdesk
-   * ou do Portal: esta organização nasce no Ingressa.
+   * **A tentativa de vínculo acontece DEPOIS do 201 lógico da
+   * organização, e nunca dentro da transação dela.** O catálogo do
+   * Portal é um banco de fora; se a consulta participasse da
+   * transação, uma indisponibilidade dele desfaria um cadastro válido.
+   * Por isso a resposta separa dois fatos: `publicId` diz que a
+   * organização existe; `portalIntegration` diz o que aconteceu com o
+   * vínculo — e o segundo pode ter falhado sem desfazer o primeiro.
+   *
+   * Nenhuma referência externa é INFERIDA: o vínculo só nasce quando o
+   * CNPJ bate com **exatamente um** cliente do Portal, e a escrita é a
+   * do serviço oficial, com o bloqueio e a auditoria dele.
    */
   router.post("/organizations", origemSegura, envolver(async (req, res) => {
     const corpo = (req.body ?? {}) as Record<string, unknown>;
@@ -482,6 +568,9 @@ export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonl
       erro(res, 422, "ORGANIZATION_PUBLIC_ID_INVALID", "parentBusinessGroupPublicId inválido.");
       return;
     }
+    const documentNumber = typeof corpo["documentNumber"] === "string"
+      ? (corpo["documentNumber"] as string).trim()
+      : "";
 
     const resultado = await deps.provisionOrganizationService.execute({
       type,
@@ -489,11 +578,16 @@ export function createAdminApiRoutes(deps: AdminApiDeps, allowedOrigins: readonl
       ...(typeof corpo["tradeName"] === "string" && (corpo["tradeName"] as string).trim().length > 0
         ? { tradeName: (corpo["tradeName"] as string).trim() }
         : {}),
+      ...(documentNumber.length > 0 ? { documentNumber } : {}),
       ...(parent.length > 0 ? { parentBusinessGroupPublicId: parent } : {}),
       actorPublicId: atorAutenticado(req),
       correlationId: req.correlationId
     });
-    res.status(201).json(resultado);
+
+    res.status(201).json({
+      ...resultado,
+      portalIntegration: await tentarVincularAoPortal(deps, req, resultado.publicId, resultado.type)
+    });
   }));
 
   /**

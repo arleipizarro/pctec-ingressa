@@ -106,7 +106,7 @@ export class MariaDbWizardApplyWriter implements WizardApplyWriter {
   public constructor(private readonly unitOfWork: UnitOfWork) {}
 
   public async writeOrganization(input: WriteOrganizationInput): Promise<WizardOrganizationWriteResult> {
-    const { plan, client, parentBusinessGroupPublicId, actorPublicId, recordItems } = input;
+    const { plan, client, sourceDocumentNumber, parentBusinessGroupPublicId, actorPublicId, recordItems } = input;
 
     return this.unitOfWork.runInTransaction(async (connection) => {
       const inner = new ExistingConnectionUnitOfWork(connection);
@@ -147,10 +147,25 @@ export class MariaDbWizardApplyWriter implements WizardApplyWriter {
           case "ORGANIZATION": {
             const criada = await createOrganization.execute({
               type: WIZARD_ORGANIZATION_TYPE_COMPANY,
-              // A razão social vem do nome cadastral da origem. Não há
-              // CNPJ para trazer: o grant projeta `clients(id, name,
-              // active)` e nada mais.
+              // A razão social vem do nome cadastral da origem.
               legalName: client.name,
+              // O CNPJ vem junto QUANDO a fonte o fornece. Hoje ela não
+              // fornece: `pctec_helpdesk.clients` tem a coluna `cnpj`,
+              // mas o principal read-only do Ingressa tem SELECT de
+              // COLUNA em `(id, name, active)`, e a leitura responde
+              // `available: false`. Ampliar o GRANT é decisão de quem
+              // opera, não deste código — e enquanto não for tomada, a
+              // empresa nasce sem documento e o vínculo com o Portal
+              // fica pendente de seleção administrativa.
+              //
+              // O que NÃO acontece na ausência: cair para o nome. A
+              // unicidade de `(documentNumber, type)` continua sendo do
+              // `CreateOrganizationService`; se o CNPJ trazido já
+              // pertencer a outra organização, ele recusa e a transação
+              // inteira do APPLY volta atrás — que é o comportamento
+              // correto, porque duas organizações com o mesmo CNPJ é
+              // exatamente o cadastro que não pode nascer.
+              ...(sourceDocumentNumber !== null ? { documentNumber: sourceDocumentNumber } : {}),
               actorPublicId
             });
             organizationPublicId = criada.publicId;

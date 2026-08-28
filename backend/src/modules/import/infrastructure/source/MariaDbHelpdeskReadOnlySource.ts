@@ -1,5 +1,6 @@
 import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type {
+  HelpdeskClientDocumentRead,
   HelpdeskClientRecord,
   HelpdeskSourceReader,
   HelpdeskUserRecord
@@ -12,6 +13,7 @@ import type {
 import {
   assertReadOnlySourceQuery,
   buildClientByIdQuery,
+  buildClientDocumentQuery,
   buildClientsCatalogCountQuery,
   buildClientsCatalogQuery,
   buildUsersByClientIdQuery,
@@ -90,6 +92,43 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
     };
   }
 
+  /**
+   * CNPJ da empresa de origem — ou a admissão de que a fonte não o
+   * fornece.
+   *
+   * A negativa de privilégio de COLUNA (`ERROR 1143`) é tratada como
+   * resposta, não como falha, e é a única exceção que este conector
+   * engole. O motivo é preciso: hoje o principal read-only tem SELECT
+   * em `(id, name, active)` de `clients`, então pedir `cnpj` responde
+   * 1143 em DEV e em PRD. Deixar esse erro subir faria o APPLY inteiro
+   * do assistente falhar por causa de um campo opcional que a operação
+   * nunca teve.
+   *
+   * `1054` (coluna inexistente) recebe o mesmo tratamento pelo mesmo
+   * motivo: nas duas situações a resposta correta é "esta fonte não
+   * fornece CNPJ", e o efeito prático é idêntico — a organização é
+   * criada sem documento e o vínculo com o Portal fica pendente de
+   * seleção administrativa.
+   *
+   * **Qualquer outro erro sobe.** Conexão recusada, timeout ou tabela
+   * ausente não são "a fonte não fornece": são falhas, e mascará-las
+   * transformaria um problema de infraestrutura numa importação
+   * silenciosamente incompleta.
+   */
+  public async readClientDocument(clientId: number): Promise<HelpdeskClientDocumentRead> {
+    const { sql, params } = buildClientDocumentQuery(clientId);
+    try {
+      const rows = await this.select<{ id: number; cnpj: string | null }>(sql, params);
+      const row = rows[0];
+      return { available: true, documentNumber: row?.cnpj ?? null };
+    } catch (erro) {
+      if (ehNegativaDeColuna(erro)) {
+        return { available: false };
+      }
+      throw erro;
+    }
+  }
+
   public async readUsersByClientId(clientId: number): Promise<readonly HelpdeskUserRecord[]> {
     const { sql, params } = buildUsersByClientIdQuery(clientId);
     const rows = await this.select<UserRow>(sql, params);
@@ -124,4 +163,19 @@ function toBoolean(value: number | boolean | null): boolean {
     return value;
   }
   return value === 1;
+}
+
+/**
+ * Erros do driver que significam "esta credencial não enxerga a
+ * coluna".
+ *
+ * `1143` = `ER_COLUMNACCESS_DENIED_ERROR` (privilégio de coluna);
+ * `1054` = `ER_BAD_FIELD_ERROR` (coluna inexistente). Comparados por
+ * NÚMERO, não pela mensagem: a mensagem muda com locale e versão do
+ * servidor, e ela carrega o nome do usuário de banco — nada que se
+ * queira dentro de um `includes()`.
+ */
+function ehNegativaDeColuna(erro: unknown): boolean {
+  const errno = (erro as { errno?: unknown } | null)?.errno;
+  return errno === 1143 || errno === 1054;
 }
