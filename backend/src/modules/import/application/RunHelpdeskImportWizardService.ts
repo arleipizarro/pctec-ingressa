@@ -827,6 +827,24 @@ function normalizarEmailSeguro(bruto: string): string | undefined {
   return texto.length === 0 || !texto.includes("@") ? undefined : texto;
 }
 
+/**
+ * Material canônico do lote.
+ *
+ * O documento faz parte dele, e essa inclusão é uma correção: o
+ * `documentNumber` decide três coisas a jusante — o CNPJ gravado na
+ * Organization, a correspondência com o catálogo do Portal e o
+ * resultado do `AutoLink`. Deixá-lo fora significava que um CNPJ
+ * corrigido (ou trocado) no cadastro entre a revisão do dry-run e o
+ * APPLY não mudava o fingerprint, e o APPLY seguia adiante vinculando a
+ * organização a um cliente do Portal que **ninguém revisou**.
+ *
+ * O que entra é a forma CANÔNICA — 14 dígitos ou `null`. É a diferença
+ * entre "o CNPJ mudou" e "a máscara mudou": reformatar
+ * `11.222.333/0001-81` para `11222333000181` não muda decisão nenhuma e
+ * não pode custar um novo dry-run ao operador. Trocar os 14 dígitos,
+ * ganhar documento, perder documento ou passar de CPF para CNPJ mudam,
+ * e todos passam a invalidar o plano.
+ */
 function snapshotRecords(
   usuarios: readonly HelpdeskUserRecord[],
   cliente: HelpdeskClientRecord
@@ -845,7 +863,12 @@ function snapshotRecords(
   registros.push({
     entityType: WIZARD_SOURCE_CLIENT_ENTITY,
     legacyId: cliente.id,
-    fields: { name: cliente.name, active: cliente.active }
+    // `documentNumber` já chega canônico da fronteira: 14 dígitos ou
+    // `null`. É essa forma que entra aqui, e nunca o valor cru do
+    // cadastro — senão trocar `11.222.333/0001-81` por `11222333000181`
+    // mudaria o fingerprint sem que o CNPJ tivesse mudado, e o operador
+    // seria mandado refazer um dry-run por causa de pontuação.
+    fields: { name: cliente.name, active: cliente.active, document_number: cliente.documentNumber }
   });
   return registros;
 }

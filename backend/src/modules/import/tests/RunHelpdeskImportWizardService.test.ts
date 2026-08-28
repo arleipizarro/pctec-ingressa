@@ -20,6 +20,9 @@ import {
 } from "../application/RunHelpdeskImportWizardService.js";
 import { WIZARD_MAPPING_RULES_VERSION } from "../domain/wizard/HelpdeskImportScope.js";
 import { HelpdeskUserSourceUnavailableError } from "../domain/errors/HelpdeskUserSourceErrors.js";
+import { SourceChangedSinceDryRunError } from "../domain/errors/ImportErrors.js";
+import { MariaDbHelpdeskReadOnlySource } from "../infrastructure/source/MariaDbHelpdeskReadOnlySource.js";
+import type { Queryable } from "../../../shared/database/Queryable.js";
 import {
   acessoConcedido,
   alvo,
@@ -549,20 +552,159 @@ describe("assistente — CNPJ da origem", () => {
     expect(bancada.documentosDeOrganizacao).not.toContain(CLIENTE.name);
   });
 
-  it("o documento NÃO entra no fingerprint — corrigir um CNPJ não invalida o dry-run aprovado", async () => {
-    // Esta é a invariante que a mudança de contrato poderia ter
-    // quebrado sem ninguém notar: o documento passou a viajar JUNTO do
-    // registro da empresa, então bastaria ele ser projetado no
-    // fingerprint para que uma correção de cadastro no Helpdesk entre o
-    // dry-run e o apply fizesse o apply ser recusado por "a origem
-    // mudou" — punindo exatamente quem corrigiu o dado.
-    const servico = (fonte: FonteFake) => new RunHelpdeskImportWizardService(montar(alvo(), {}, { status: "ACTIVE" }, fonte).deps);
+  /**
+   * O documento PARTICIPA do fingerprint.
+   *
+   * Ele decide o CNPJ gravado na Organization, a correspondência com o
+   * catálogo do Portal e o resultado do `AutoLink`. Fora do
+   * fingerprint, um CNPJ trocado entre a revisão do dry-run e o APPLY
+   * passava despercebido e a organização era vinculada a um cliente do
+   * Portal que ninguém revisou.
+   *
+   * O que entra é a forma canônica, e é isso que separa "o CNPJ mudou"
+   * de "a máscara mudou".
+   */
+  function fingerprints(documentNumber: string | null) {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonteComDocumento(documentNumber));
+    return new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+  }
 
-    const semDocumento = await servico(fonteComDocumento(null)).execute(pedidoApply());
-    const comDocumento = await servico(fonteComDocumento("11222333000181")).execute(pedidoApply());
+  /**
+   * Lê a empresa pelo CONECTOR REAL, para que a normalização de máscara
+   * seja exercitada de verdade. Dois valores já normalizados provariam
+   * apenas que o mesmo dado gera o mesmo hash.
+   */
+  async function fingerprintsPelaFonteReal(documentoCru: string) {
+    const conexao: Queryable = {
+      execute: async () => [
+        [{ id: CLIENTE_ID, nome: CLIENTE.name, tipo_doc: "cnpj", documento: documentoCru, ativo: 1 }],
+        undefined
+      ]
+    };
+    const empresa = await new MariaDbHelpdeskReadOnlySource(conexao, "pctecdb").readClientById(CLIENTE_ID);
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteFake(USUARIOS, empresa ?? CLIENTE));
+    return new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+  }
 
-    expect(comDocumento.snapshotFingerprint).toBe(semDocumento.snapshotFingerprint);
-    expect(comDocumento.scopeFingerprint).toBe(semDocumento.scopeFingerprint);
+  it("mesmo CNPJ com e sem máscara produz o MESMO fingerprint", async () => {
+    // Os dois valores CRUS são diferentes; a fronteira os normaliza
+    // para os mesmos 14 dígitos, então o plano é o mesmo plano.
+    // Reformatar pontuação não pode custar um novo dry-run ao operador.
+    const comMascara = await fingerprintsPelaFonteReal("11.222.333/0001-81");
+    const semMascara = await fingerprintsPelaFonteReal("11222333000181");
+    const comEspacos = await fingerprintsPelaFonteReal("  11 222 333 0001 81  ");
+
+    expect(comMascara.snapshotFingerprint).toBe(semMascara.snapshotFingerprint);
+    expect(comMascara.scopeFingerprint).toBe(semMascara.scopeFingerprint);
+    expect(comEspacos.scopeFingerprint).toBe(semMascara.scopeFingerprint);
+  });
+
+  it("pela fonte real, um CNPJ diferente muda o fingerprint", async () => {
+    const um = await fingerprintsPelaFonteReal("11.222.333/0001-81");
+    const outro = await fingerprintsPelaFonteReal("11.444.777/0001-61");
+
+    expect(outro.scopeFingerprint).not.toBe(um.scopeFingerprint);
+  });
+
+  it("CNPJ DIFERENTE produz fingerprint diferente", async () => {
+    const um = await fingerprints("11222333000181");
+    const outro = await fingerprints("11444777000161");
+
+    expect(outro.snapshotFingerprint).not.toBe(um.snapshotFingerprint);
+    expect(outro.scopeFingerprint).not.toBe(um.scopeFingerprint);
+  });
+
+  it("`null` e CNPJ produzem fingerprints diferentes — nos dois sentidos", async () => {
+    const sem = await fingerprints(null);
+    const com = await fingerprints("11222333000181");
+
+    expect(com.snapshotFingerprint).not.toBe(sem.snapshotFingerprint);
+    expect(com.scopeFingerprint).not.toBe(sem.scopeFingerprint);
+  });
+
+  it("CPF e CNPJ diferem pela REPRESENTAÇÃO CANÔNICA, não pelo valor cru", async () => {
+    // Um CPF chega à fronteira e vira `null` (`tipo_doc` diferente de
+    // `cnpj`). O fingerprint do "cliente com CPF" é o do cliente sem
+    // documento — e é diferente do fingerprint com CNPJ, que é o que
+    // importa: a transição CPF → CNPJ invalida o plano.
+    const bancadaCpf = montar(
+      alvo(),
+      {},
+      { status: "ACTIVE" },
+      new FonteFake(USUARIOS, { ...CLIENTE, documentNumber: null })
+    );
+    const comCpf = await new RunHelpdeskImportWizardService(bancadaCpf.deps).execute(pedidoApply());
+    const comCnpj = await fingerprints("11222333000181");
+
+    expect(comCnpj.snapshotFingerprint).not.toBe(comCpf.snapshotFingerprint);
+    expect(comCnpj.scopeFingerprint).not.toBe(comCpf.scopeFingerprint);
+  });
+
+  it("o valor MASCARADO não entra no material canônico", async () => {
+    // Se o cru entrasse, a máscara mudaria o hash — e o teste de cima
+    // (mesmo CNPJ, formatos diferentes) passaria por acidente só
+    // enquanto ninguém reformatasse o cadastro.
+    const resultado = await fingerprints("11222333000181");
+    const serializado = JSON.stringify(resultado);
+
+    expect(serializado).not.toContain("11.222.333/0001-81");
+  });
+});
+
+/**
+ * O documento corrigido entre o dry-run e o APPLY invalida o plano.
+ *
+ * Esta é a consequência que dá razão a incluí-lo no fingerprint, e ela
+ * precisa acontecer ANTES de qualquer escrita: o lote não abre, nada é
+ * escrito, e o `AutoLink` não é chamado.
+ */
+describe("assistente — documento alterado entre dry-run e APPLY", () => {
+  it("o APPLY é recusado com o código de origem alterada já existente", async () => {
+    const autoLink = { execute: vi.fn() };
+    const bancada = montar(
+      alvo(),
+      { portalAutoLinkService: autoLink },
+      { status: "ACTIVE" },
+      new FonteFake(USUARIOS, { ...CLIENTE, documentNumber: "11444777000161" })
+    );
+    // O lote de dry-run foi calculado com OUTRO documento; o serviço
+    // recalcula o escopo do zero e compara.
+    bancada.start.mockImplementationOnce(async () => {
+      throw new SourceChangedSinceDryRunError();
+    });
+
+    await expect(
+      new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply())
+    ).rejects.toMatchObject({ code: "IMPORT_SOURCE_CHANGED_SINCE_DRY_RUN" });
+
+    // Nada foi escrito, e o vínculo com o Portal nem foi cogitado — que
+    // é exatamente o dano que a inclusão do documento previne: vincular
+    // a organização a um cliente que ninguém revisou.
+    //
+    // A recusa acontece no portão de abertura do lote: `startApply`
+    // valida ANTES de o repositório inserir, então nem o lote existe.
+    expect(bancada.start).toHaveBeenCalledTimes(1);
+    expect(bancada.ordemDeChamadas).toEqual([]);
+    expect(bancada.escritasDeOrganizacao).toEqual([]);
+    expect(bancada.escritasDeUsuario).toEqual([]);
+    expect(bancada.complete).not.toHaveBeenCalled();
+    expect(bancada.fail).not.toHaveBeenCalled();
+    expect(autoLink.execute).not.toHaveBeenCalled();
+  });
+
+  it("o escopo recalculado no APPLY carrega o documento atual da origem", async () => {
+    // A prova de que a comparação do lote enxerga o documento: dois
+    // APPLYs idênticos em tudo, menos o CNPJ da origem, mandam
+    // `scopeFingerprint` diferentes para `startImportBatchService` — que
+    // é quem confronta com o do dry-run aprovado.
+    const escopoDe = async (documentNumber: string | null) => {
+      const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteFake(USUARIOS, { ...CLIENTE, documentNumber }));
+      await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+      return (bancada.start.mock.calls[0]?.[0] as { scopeFingerprint: string }).scopeFingerprint;
+    };
+
+    expect(await escopoDe("11222333000181")).not.toBe(await escopoDe("11444777000161"));
+    expect(await escopoDe("11222333000181")).not.toBe(await escopoDe(null));
   });
 });
 

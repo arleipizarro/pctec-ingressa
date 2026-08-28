@@ -48,8 +48,30 @@ Nos três casos a organização é criada **sem documento** e o vínculo com
 o Portal fica `PENDING_DOCUMENT`, pendente de decisão administrativa.
 Nunca há correspondência por CPF, e nunca há queda para o nome.
 
-O documento **não entra no `scopeFingerprint`**: corrigir um CNPJ no
-Helpdesk entre o dry-run e o apply não invalida a aprovação.
+O documento **entra no `scopeFingerprint`**, na sua forma canônica.
+
+Ele decide três coisas a jusante: o CNPJ gravado na Organization, a
+correspondência com o catálogo do Portal e o resultado do `AutoLink`.
+Fora do fingerprint, um CNPJ trocado no cadastro entre a revisão do
+dry-run e o APPLY passaria despercebido, e o APPLY seguiria adiante
+vinculando a organização a um cliente do Portal que **ninguém revisou**.
+
+O que entra é a forma canônica — 14 dígitos ou `null` —, e é isso que
+separa *"o CNPJ mudou"* de *"a máscara mudou"*:
+
+| mudança na origem | fingerprint |
+|---|---|
+| `11.222.333/0001-81` → `11222333000181` | **igual** — mesma forma canônica |
+| espaços ou pontuação diferentes | **igual** |
+| outros 14 dígitos | **muda** |
+| `null` → CNPJ, ou CNPJ → `null` | **muda** |
+| CPF → CNPJ, ou CNPJ → CPF | **muda** (o CPF é `null` canônico) |
+
+Quando muda, o APPLY é recusado com `IMPORT_SOURCE_CHANGED_SINCE_DRY_RUN`
+— o código que o domínio já usava para "a origem mudou" — e o operador
+roda um novo dry-run. A recusa acontece no portão de abertura do lote,
+que valida antes de inserir: nenhuma organização, Identity, Membership,
+referência ou lote é escrito, e o `AutoLink` não é chamado.
 
 ## Usuários — bloqueado, e por quê
 
