@@ -181,7 +181,12 @@ export function createHelpdeskImportRoutes(deps: HelpdeskImportApiDeps): Router 
         selection: HelpdeskImportSelection.create(selecao),
         actorIdentityPublicId: ator(req),
         dryRunBatchPublicId: dryRun,
-        confirmation: typeof corpo.confirmation === "string" ? corpo.confirmation : undefined
+        confirmation: typeof corpo.confirmation === "string" ? corpo.confirmation : undefined,
+        // A MESMA correlação da requisição desce até o vínculo com o
+        // Portal e até o evento de auditoria dele. Sem isto, "esta
+        // empresa foi importada" e "esta empresa foi vinculada" viram
+        // dois registros sem elo na trilha.
+        correlationId: req.correlationId
       });
       res.status(201).json(resultado);
     })

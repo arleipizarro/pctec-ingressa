@@ -194,6 +194,20 @@ export interface RunImportWizardRequest {
   readonly dryRunBatchPublicId?: string | undefined;
   /** Só no APPLY. Comparada com `WIZARD_APPLY_CONFIRMATION`. */
   readonly confirmation?: string | undefined;
+  /**
+   * Correlação da requisição HTTP que originou esta execução.
+   *
+   * Atravessa o importador sem ser interpretado: serve para que o
+   * vínculo criado no APPLY e o evento de auditoria dele fiquem
+   * amarrados à MESMA requisição que importou a empresa. Sem isto, o
+   * vínculo do importador nasce sem correlação e a trilha perde o elo
+   * entre "a empresa foi importada" e "a empresa foi vinculada".
+   *
+   * Só o APPLY o preenche, e não é esquecimento: o DRY_RUN não escreve
+   * nada e não vincula nada, então não há evento para correlacionar —
+   * mandá-lo ali só alargaria o payload que a rota de dry-run monta.
+   */
+  readonly correlationId?: string | undefined;
 }
 
 export interface WizardUserOutcome {
@@ -248,6 +262,17 @@ export type WizardPortalIntegrationStatus =
   | "PENDING_AMBIGUOUS"
   | "SOURCE_NOT_CONFIGURED"
   | "FAILED";
+
+/**
+ * Código da recusa quando o serviço de vínculo LANÇOU em vez de
+ * responder.
+ *
+ * Genérico de propósito e fixo: a mensagem original é descartada
+ * inteira, porque ela pode carregar SQL, host, usuário de banco,
+ * documento ou segredo — e este campo vai para a resposta HTTP e para a
+ * tela. Quem diagnostica usa o log do processo, não o corpo da resposta.
+ */
+export const WIZARD_PORTAL_LINK_UNEXPECTED_ERROR = "PORTAL_AUTO_LINK_UNEXPECTED_ERROR";
 
 export interface WizardPortalIntegration {
   readonly organizationPublicId: string;
@@ -433,16 +458,20 @@ export class RunHelpdeskImportWizardService {
     //
     // Fora do `try` acima de propósito: uma indisponibilidade do Portal
     // não pode marcar o lote como FAILED nem desfazer uma importação
-    // que já é válida. `AutoLink` também não lança — ele devolve
-    // `FAILED` com código —, então este ponto não tem como derrubar a
-    // requisição.
+    // que já é válida. O `AutoLink` de hoje devolve `FAILED` com código
+    // em vez de lançar — mas o TIPO não promete isso, e um port
+    // injetado, um bug futuro ou um erro fora do catch dele lançariam.
+    // Por isso a proteção está aqui, e não numa suposição sobre o
+    // implementador: ver `vincularAoPortal`.
     //
     // Depois de `applyPlan` significa depois do COMMIT da organização:
     // a transação dela já fechou, e a consulta ao Portal acontece numa
     // conexão diferente, para um banco diferente. Nenhuma transação
     // atravessa Helpdesk, Portal e Ingressa.
     const portalIntegration =
-      request.mode === "APPLY" ? await this.vincularAoPortal(organizationPublicId, request.actorIdentityPublicId) : null;
+      request.mode === "APPLY"
+        ? await this.vincularAoPortal(organizationPublicId, request.actorIdentityPublicId, request.correlationId)
+        : null;
 
     const countsAfter =
       request.mode === "APPLY"
@@ -495,12 +524,29 @@ export class RunHelpdeskImportWizardService {
    * mudar, ela muda num lugar só, e este método continua correto.
    *
    * Idempotente por construção: numa reexecução, a organização já
-   * vinculada ao mesmo cliente devolve `ALREADY_LINKED` — o serviço de
-   * vínculo relê as referências sob o bloqueio e não escreve nada.
+   * vinculada devolve `ALREADY_LINKED` — o `AutoLink` enxerga a
+   * referência ACTIVE existente antes de qualquer correspondência, e o
+   * serviço de vínculo relê sob o bloqueio e não escreve nada.
+   *
+   * ## Fronteira de exceção, DEPOIS do commit
+   *
+   * Quando este método roda, o APPLY já está comitado: a organização
+   * existe, os usuários existem, os itens do lote estão gravados. Uma
+   * exceção aqui não pode derrubar a resposta nem deixar o lote em
+   * `RUNNING`, e MUITO MENOS marcá-lo `FAILED` — o lote descreve a
+   * importação, que deu certo; o vínculo é outro fato, e ele tem campo
+   * próprio para dizer que não deu.
+   *
+   * Por isso o `catch` sem binding: o objeto original é descartado
+   * inteiro, não inspecionado e não serializado. Uma exceção de driver
+   * carrega SQL, host e usuário de banco, e este resultado vai para o
+   * corpo HTTP e para a tela. O que sobe é só
+   * `WIZARD_PORTAL_LINK_UNEXPECTED_ERROR`.
    */
   private async vincularAoPortal(
     organizationPublicId: string | null,
-    actorPublicId: string
+    actorPublicId: string,
+    correlationId: string | undefined
   ): Promise<WizardPortalIntegration | null> {
     if (organizationPublicId === null) {
       // Plano bloqueado: não há organização para vincular, e inventar um
@@ -519,7 +565,21 @@ export class RunHelpdeskImportWizardService {
       };
     }
 
-    const resultado = await servico.execute({ organizationPublicId, actorPublicId });
+    let resultado: Awaited<ReturnType<typeof servico.execute>>;
+    try {
+      // O importador manda o publicId, o ator e a correlação — e nada
+      // mais. Documento, candidato e `legacyId` seriam cópia da regra
+      // de correspondência, que não mora aqui.
+      resultado = await servico.execute({ organizationPublicId, actorPublicId, correlationId });
+    } catch {
+      return {
+        organizationPublicId,
+        status: "FAILED",
+        legacyId: null,
+        referencePublicId: null,
+        reasonCode: WIZARD_PORTAL_LINK_UNEXPECTED_ERROR
+      };
+    }
     const status = traduzirEstadoDoPortal(resultado.status);
     return {
       organizationPublicId,

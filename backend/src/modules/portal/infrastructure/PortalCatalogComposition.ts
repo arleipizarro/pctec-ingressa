@@ -3,6 +3,8 @@ import type { Queryable } from "../../../shared/database/Queryable.js";
 import { createPool } from "../../../shared/database/Pool.js";
 import type { OrganizationRepository } from "../../organization/domain/OrganizationRepository.js";
 import { MariaDbOrganizationRepository } from "../../organization/infrastructure/persistence/MariaDbOrganizationRepository.js";
+import type { OrganizationExternalReferenceRepository } from "../../organization/domain/OrganizationExternalReferenceRepository.js";
+import { MariaDbOrganizationExternalReferenceRepository } from "../../organization/infrastructure/persistence/MariaDbOrganizationExternalReferenceRepository.js";
 import type { LinkPortalOrganizationReferenceService } from "../../organization/application/LinkPortalOrganizationReferenceService.js";
 import { MariaDbPortalReadOnlySource } from "./source/MariaDbPortalReadOnlySource.js";
 import { loadPortalSourceConfig } from "./source/PortalSourceConfig.js";
@@ -54,12 +56,18 @@ export function composePortalCatalog(
   const matchByDocument = new MatchPortalClientByDocumentService(source);
   const organizationRepositoryFactory = (c: Queryable): OrganizationRepository =>
     new MariaDbOrganizationRepository(c);
+  // Mesma implementação que o vínculo e a leitura administrativa usam:
+  // o AutoLink lê as referências existentes pelo contrato de domínio,
+  // sobre o pool do Ingressa — nunca sobre o pool da fonte.
+  const referenceRepositoryFactory = (c: Queryable): OrganizationExternalReferenceRepository =>
+    new MariaDbOrganizationExternalReferenceRepository(c);
 
   const autoLinkService = new AutoLinkPortalOrganizationReferenceService(
     organizationRepositoryFactory,
     ingressaPool,
     matchByDocument,
-    linkService
+    linkService,
+    referenceRepositoryFactory
   );
 
   return {

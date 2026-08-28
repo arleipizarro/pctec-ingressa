@@ -420,6 +420,47 @@ describe("assistente de importação — APPLY", () => {
     );
   });
 
+  it("o correlationId da requisição desce para o serviço — é ele que amarra o vínculo à importação", async () => {
+    const { baseUrl, deps } = await subir();
+    const CORRELACAO = "eeeeeeee-0000-4000-8000-000000000001";
+
+    await chamar(baseUrl, "/api/v1/admin/helpdesk-import/apply", {
+      method: "POST",
+      comOrigem: true,
+      headers: { "x-correlation-id": CORRELACAO },
+      body: JSON.stringify({
+        sourceClientId: CLIENTE_ID,
+        selectedSourceUserIds: [999911],
+        dryRunBatchPublicId: LOTE_DRY_RUN,
+        confirmation: WIZARD_APPLY_CONFIRMATION
+      })
+    });
+
+    expect(deps.wizardService.execute).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "APPLY", correlationId: CORRELACAO })
+    );
+  });
+
+  it("sem cabeçalho, a correlação gerada pelo middleware é a que desce — nunca `undefined`", async () => {
+    const { baseUrl, deps } = await subir();
+
+    await chamar(baseUrl, "/api/v1/admin/helpdesk-import/apply", {
+      method: "POST",
+      comOrigem: true,
+      body: JSON.stringify({
+        sourceClientId: CLIENTE_ID,
+        selectedSourceUserIds: [999911],
+        dryRunBatchPublicId: LOTE_DRY_RUN,
+        confirmation: WIZARD_APPLY_CONFIRMATION
+      })
+    });
+
+    const pedido = (deps.wizardService.execute as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]?.[0] as {
+      correlationId?: string;
+    };
+    expect(pedido.correlationId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
   it("um apply bem formado devolve 201 com o lote criado", async () => {
     const { baseUrl } = await subir();
 
