@@ -55,10 +55,10 @@ export const FORBIDDEN_SQL_TERMS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Tabelas que o conector do piloto não consulta, por decisão de
- * autorização: chamado, fila, equipe e grupo não concedem acesso — só
- * `users.client_id` concede. A auditoria do Helpdesk mostrou que
- * `client_group_id` sequer é lido como filtro de acesso lá.
+ * Tabelas que este conector não consulta, por decisão de autorização:
+ * chamado, fila, equipe e grupo não concedem acesso a nada. A auditoria
+ * do Helpdesk mostrou que `client_group_id` sequer é lido como filtro de
+ * acesso lá.
  */
 export const FORBIDDEN_SQL_TABLES: readonly string[] = Object.freeze([
   "tickets",
@@ -171,8 +171,8 @@ export function buildClientByIdQuery(registryDatabase: string, clientId: number)
  * chamado/fila/equipe/grupo, sem coluna de autenticação.
  *
  * Nenhuma destas consultas amplia o que o principal read-only já podia
- * ler: são as mesmas 9 colunas de `users` e `clients` do piloto, agora
- * filtradas por empresa em vez de por uma lista fixa de ids.
+ * ler: são as mesmas cinco colunas do cadastro que `buildClientByIdQuery`
+ * projeta, agora paginadas em vez de buscadas por id.
  */
 export interface CatalogPageQuery {
   readonly q?: string | undefined;
