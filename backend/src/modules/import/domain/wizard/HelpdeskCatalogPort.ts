@@ -18,9 +18,9 @@ import type { HelpdeskClientRecord, HelpdeskUserRecord } from "../pilot/Helpdesk
  * conclusão verificada, não um esquecimento:
  *
  *  - o principal read-only da fonte tem SELECT de COLUNA em exatamente
- *    9 colunas — `users(id, name, email, role, active, client_id)` e
- *    `clients(id, name, active)`. `users.client_group_id` NÃO está
- *    concedida, e nenhuma tabela de grupo está;
+ *    cinco colunas do cadastro de empresas — `clientes(id, nome,
+ *    tipo_doc, documento, ativo)` no registro autoritativo. Nenhuma
+ *    tabela nem coluna de grupo está concedida;
  *  - grupo empresarial não é sequer tabela do Helpdesk: o Helpdesk lê
  *    `pctecdb.clientes_grupo` e `pctecdb.clientes_grupo_membros` —
  *    banco do HUB, outro sistema (ADR-031), fora do alcance deste
@@ -55,10 +55,16 @@ export interface HelpdeskCatalogReader {
   /**
    * Usuários de UMA empresa.
    *
-   * Devolve todos os papéis, não só `cliente`: o ADMIN precisa VER que
-   * existe um interno vinculado àquela empresa para entender por que
-   * ele não é importável. Esconder o registro faria a tela mentir por
-   * omissão. Quem recusa o interno é o planner, com motivo registrado.
+   * O contrato prevê todos os papéis, não só `cliente`: o ADMIN precisa
+   * VER que existe um interno vinculado àquela empresa para entender por
+   * que ele não é importável. Esconder o registro faria a tela mentir
+   * por omissão.
+   *
+   * A implementação real RECUSA hoje, com
+   * `HELPDESK_USER_SOURCE_UNAVAILABLE`: o Helpdesk ainda não migrou a
+   * autoridade de usuários. O método fica no contrato para que a
+   * indisponibilidade seja uma recusa explícita, e não uma lista vazia
+   * em quem chama.
    */
   readUsersByClientId(clientId: number): Promise<readonly HelpdeskUserRecord[]>;
 }
