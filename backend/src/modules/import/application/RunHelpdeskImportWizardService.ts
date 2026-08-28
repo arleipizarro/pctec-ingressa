@@ -208,6 +208,55 @@ export interface WizardUserOutcome {
   readonly activatedNow: boolean;
 }
 
+/**
+ * Estado da integração com o Portal de UMA organização, depois do
+ * APPLY.
+ *
+ * Aditivo: consumidores anteriores a esta fatia ignoram o campo, e ele
+ * é `null` em DRY_RUN — onde nada foi escrito e, portanto, nada foi
+ * vinculado.
+ *
+ * Os oito estados existem para não confundir cinco coisas que pedem
+ * ações diferentes:
+ *
+ * | estado | o que aconteceu | o que fazer |
+ * |---|---|---|
+ * | `LINKED` | vinculada agora | nada |
+ * | `ALREADY_LINKED` | já apontava para o mesmo cliente | nada, e nada foi escrito |
+ * | `PENDING_DOCUMENT` | a organização não tem CNPJ comparável | cadastrar o CNPJ, ou selecionar na tela |
+ * | `PENDING_NOT_FOUND` | o CNPJ não existe no Portal | cadastrar a empresa no Portal |
+ * | `PENDING_INACTIVE` | existe no Portal, mas inativo | reativar lá |
+ * | `PENDING_AMBIGUOUS` | mais de um cliente ativo com o CNPJ | resolver a duplicidade no Portal |
+ * | `SOURCE_NOT_CONFIGURED` | a fonte não foi sequer consultada | configurar `portal-source.env` |
+ * | `FAILED` | falha técnica ou recusa do vínculo | ver `reasonCode` |
+ *
+ * "Fonte não consultada", "cliente inexistente", "cliente inativo",
+ * "ambiguidade" e "falha técnica" são cinco fatos distintos, e tratá-los
+ * como um só faria alguém cadastrar de novo, no Portal, uma empresa que
+ * já está lá — criando a duplicidade que produz `PENDING_AMBIGUOUS`.
+ *
+ * **Nunca carrega documento, credencial, configuração da fonte ou
+ * detalhe de driver.** `reasonCode` é código estável, nunca a mensagem
+ * crua de uma exceção.
+ */
+export type WizardPortalIntegrationStatus =
+  | "LINKED"
+  | "ALREADY_LINKED"
+  | "PENDING_DOCUMENT"
+  | "PENDING_NOT_FOUND"
+  | "PENDING_INACTIVE"
+  | "PENDING_AMBIGUOUS"
+  | "SOURCE_NOT_CONFIGURED"
+  | "FAILED";
+
+export interface WizardPortalIntegration {
+  readonly organizationPublicId: string;
+  readonly status: WizardPortalIntegrationStatus;
+  readonly legacyId: number | null;
+  readonly referencePublicId: string | null;
+  readonly reasonCode: string | null;
+}
+
 export interface RunImportWizardResult {
   readonly batchPublicId: string;
   readonly mode: string;
@@ -231,6 +280,11 @@ export interface RunImportWizardResult {
   readonly users: readonly WizardUserOutcome[];
   readonly recordedItems: number;
   readonly resumedUsers: readonly number[];
+  /**
+   * Integração com o Portal da organização deste APPLY. `null` em
+   * DRY_RUN e quando o plano não resolveu organização nenhuma.
+   */
+  readonly portalIntegration: WizardPortalIntegration | null;
 }
 
 export interface RunHelpdeskImportWizardDeps {
@@ -255,6 +309,34 @@ export interface RunHelpdeskImportWizardDeps {
    */
   readonly linkKindResolver?:
     | ((users: readonly HelpdeskUserRecord[]) => ReadonlyMap<number, SourceOrganizationLinkKind>)
+    | undefined;
+  /**
+   * Vínculo automático da organização com o Portal, DEPOIS do APPLY.
+   *
+   * OPCIONAL, e essa é a regra: a fonte do Portal é um banco de fora,
+   * com configuração própria que o processo pode não ter. Ausente, o
+   * importador funciona inteiro e o resultado diz
+   * `SOURCE_NOT_CONFIGURED` — que é diferente de "não encontrado",
+   * porque ninguém chegou a perguntar.
+   *
+   * É o MESMO objeto usado pela criação manual e pela reconciliação.
+   * Nenhuma regra de correspondência é reimplementada aqui: o
+   * importador não sabe o que é CNPJ exato, único ou ativo — ele só
+   * sabe quando pedir.
+   */
+  readonly portalAutoLinkService?:
+    | {
+        execute(request: {
+          readonly organizationPublicId: string;
+          readonly actorPublicId: string;
+          readonly correlationId?: string | undefined;
+        }): Promise<{
+          readonly status: string;
+          readonly legacyId: number | null;
+          readonly referencePublicId: string | null;
+          readonly reasonCode: string | null;
+        }>;
+      }
     | undefined;
 }
 
@@ -347,6 +429,21 @@ export class RunHelpdeskImportWizardService {
       throw error;
     }
 
+    // --- Portal, DEPOIS de tudo comitado -----------------------------
+    //
+    // Fora do `try` acima de propósito: uma indisponibilidade do Portal
+    // não pode marcar o lote como FAILED nem desfazer uma importação
+    // que já é válida. `AutoLink` também não lança — ele devolve
+    // `FAILED` com código —, então este ponto não tem como derrubar a
+    // requisição.
+    //
+    // Depois de `applyPlan` significa depois do COMMIT da organização:
+    // a transação dela já fechou, e a consulta ao Portal acontece numa
+    // conexão diferente, para um banco diferente. Nenhuma transação
+    // atravessa Helpdesk, Portal e Ingressa.
+    const portalIntegration =
+      request.mode === "APPLY" ? await this.vincularAoPortal(organizationPublicId, request.actorIdentityPublicId) : null;
+
     const countsAfter =
       request.mode === "APPLY"
         ? await this.deps.targetStateReader.readCounts()
@@ -379,7 +476,62 @@ export class RunHelpdeskImportWizardService {
       blockingReasonCode: plano.organization.blockingReasonCode ?? null,
       users: plano.users.map((u) => toOutcome(u, escritos.get(u.sourceLegacyId))),
       recordedItems: registrados,
-      resumedUsers: retomados
+      resumedUsers: retomados,
+      portalIntegration
+    };
+  }
+
+  /**
+   * Vínculo com o Portal da organização importada.
+   *
+   * Serve tanto à organização RECÉM-CRIADA quanto à que já existia e foi
+   * resolvida pelo APPLY: `organizationPublicId` é o mesmo campo nos
+   * dois casos, e quem decide se há correspondência é o `AutoLink`, que
+   * relê a organização (e o CNPJ dela) do banco.
+   *
+   * **Nenhuma regra de correspondência mora aqui.** Este método não sabe
+   * o que é CNPJ normalizado, exato, único ou ativo; ele traduz o
+   * resultado de quem sabe para o vocabulário do lote. Se um dia a regra
+   * mudar, ela muda num lugar só, e este método continua correto.
+   *
+   * Idempotente por construção: numa reexecução, a organização já
+   * vinculada ao mesmo cliente devolve `ALREADY_LINKED` — o serviço de
+   * vínculo relê as referências sob o bloqueio e não escreve nada.
+   */
+  private async vincularAoPortal(
+    organizationPublicId: string | null,
+    actorPublicId: string
+  ): Promise<WizardPortalIntegration | null> {
+    if (organizationPublicId === null) {
+      // Plano bloqueado: não há organização para vincular, e inventar um
+      // estado de integração afirmaria algo sobre um registro que não
+      // existe.
+      return null;
+    }
+    const servico = this.deps.portalAutoLinkService;
+    if (servico === undefined) {
+      return {
+        organizationPublicId,
+        status: "SOURCE_NOT_CONFIGURED",
+        legacyId: null,
+        referencePublicId: null,
+        reasonCode: null
+      };
+    }
+
+    const resultado = await servico.execute({ organizationPublicId, actorPublicId });
+    const status = traduzirEstadoDoPortal(resultado.status);
+    return {
+      organizationPublicId,
+      status,
+      legacyId: resultado.legacyId,
+      referencePublicId: resultado.referencePublicId,
+      // Um `FAILED` sem código seria um beco sem saída para quem
+      // diagnostica. Quando a recusa não trouxe código próprio (é o caso
+      // de `NOT_A_COMPANY`), o estado de origem vira o código — que é um
+      // valor fechado do nosso vocabulário, nunca a mensagem de uma
+      // exceção.
+      reasonCode: resultado.reasonCode ?? (status === "FAILED" ? resultado.status : null)
     };
   }
 
@@ -705,6 +857,39 @@ function scopeRecords(
       }
     }
   ];
+}
+
+/**
+ * Estados do `AutoLink` no vocabulário do lote.
+ *
+ * A tradução é explícita — e não um `as` — porque os dois vocabulários
+ * respondem a perguntas diferentes. O `AutoLink` responde "o que a
+ * correspondência achou?"; o lote responde "o que quem opera precisa
+ * fazer com esta importação?". `NOT_FOUND` e `INACTIVE_ONLY` viram
+ * dois `PENDING_*` distintos porque as ações são distintas: cadastrar a
+ * empresa no Portal, ou reativar a que já está lá.
+ *
+ * `NOT_A_COMPANY` não tem estado próprio: o assistente só cria e
+ * resolve COMPANY, então recebê-lo aqui é sintoma de um destino
+ * indevido — `FAILED`, com o código que diz qual foi a recusa.
+ */
+function traduzirEstadoDoPortal(status: string): WizardPortalIntegrationStatus {
+  switch (status) {
+    case "LINKED":
+      return "LINKED";
+    case "ALREADY_LINKED":
+      return "ALREADY_LINKED";
+    case "DOCUMENT_MISSING_OR_INVALID":
+      return "PENDING_DOCUMENT";
+    case "NOT_FOUND":
+      return "PENDING_NOT_FOUND";
+    case "INACTIVE_ONLY":
+      return "PENDING_INACTIVE";
+    case "AMBIGUOUS":
+      return "PENDING_AMBIGUOUS";
+    default:
+      return "FAILED";
+  }
 }
 
 function toRecordInput(

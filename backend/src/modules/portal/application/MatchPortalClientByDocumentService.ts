@@ -15,14 +15,21 @@ import { normalizePortalDocument } from "../domain/value-objects/PortalDocument.
  * ## A regra
  *
  * CNPJ normalizado (só dígitos, exatamente 14), comparado por
- * **igualdade** dos dois lados. Nada mais entra na decisão:
+ * **igualdade** dos dois lados, **entre clientes ATIVOS**. Nada mais
+ * entra na decisão:
  *
  * - **nunca por nome.** Razão social e nome fantasia divergem entre
  *   sistemas, se repetem entre filiais e mudam sem aviso;
  * - **nunca por semelhança.** Não há `LIKE`, distância de edição nem
  *   prefixo neste caminho;
- * - **nunca "o primeiro".** Com dois candidatos, o resultado é
- *   `AMBIGUOUS` e ninguém escolhe.
+ * - **nunca "o primeiro".** Com dois candidatos ativos, o resultado é
+ *   `AMBIGUOUS` e ninguém escolhe;
+ * - **nunca um cliente inativo.** `clientes.ativo = 0` é o Portal
+ *   dizendo que aquele cadastro saiu de operação. A consulta traz os
+ *   inativos — precisamos deles para distinguir "não existe lá" de
+ *   "existe e está desativado" — mas eles são separados ANTES da
+ *   contagem, e por isso um ativo convivendo com um inativo de mesmo
+ *   CNPJ é `EXACT_UNIQUE`, não ambiguidade.
  *
  * ## O que este serviço NÃO faz
  *
@@ -51,12 +58,24 @@ export class MatchPortalClientByDocumentService {
     if (candidatos.length === 0) {
       return { status: "NOT_FOUND", client: undefined, candidateCount: 0 };
     }
-    if (candidatos.length > 1) {
+
+    // A separação vem ANTES da contagem. Contar primeiro e filtrar
+    // depois transformaria "um ativo e um inativo" em ambiguidade — e
+    // mandaria alguém resolver à mão um caso que não tem dúvida
+    // nenhuma: existe exatamente um candidato.
+    const ativos = candidatos.filter((cliente) => cliente.active);
+    if (ativos.length === 0) {
+      // O CNPJ existe no Portal, mas só em cadastro desativado. Dizer
+      // `NOT_FOUND` aqui mandaria cadastrar de novo a mesma empresa,
+      // criando a duplicidade que depois vira `AMBIGUOUS`.
+      return { status: "INACTIVE_ONLY", client: undefined, candidateCount: candidatos.length };
+    }
+    if (ativos.length > 1) {
       // Fail-closed: `client` fica `undefined` de propósito. Devolver
       // "o primeiro junto com um aviso" convidaria quem consome a
       // ignorar o aviso.
-      return { status: "AMBIGUOUS", client: undefined, candidateCount: candidatos.length };
+      return { status: "AMBIGUOUS", client: undefined, candidateCount: ativos.length };
     }
-    return { status: "EXACT_UNIQUE", client: candidatos[0], candidateCount: 1 };
+    return { status: "EXACT_UNIQUE", client: ativos[0], candidateCount: 1 };
   }
 }

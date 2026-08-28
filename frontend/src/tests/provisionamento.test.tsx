@@ -164,7 +164,7 @@ describe("criação de organização", () => {
     );
   });
 
-  it("CNPJ incompleto avisa e NÃO é enviado — a empresa nasce sem documento", async () => {
+  it("CNPJ incompleto BLOQUEIA o envio — nunca cria a empresa sem o documento que a pessoa digitou", async () => {
     const criar = vi.spyOn(api, "createOrganization").mockResolvedValue({
       publicId: NOVA_ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null
     });
@@ -173,12 +173,69 @@ describe("criação de organização", () => {
 
     await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
     await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "11.222.333");
-    expect(within(dialogo).getByText(/CNPJ tem 14 dígitos/i)).toBeInTheDocument();
+
+    expect(within(dialogo).getByTestId("cnpj-incompleto")).toHaveTextContent(/CNPJ tem 14 dígitos/i);
+    const botao = within(dialogo).getByRole("button", { name: "Criar organização" });
+    expect(botao).toBeDisabled();
+
+    await userEvent.click(botao);
+
+    // Descartar o documento em silêncio criaria a empresa sem CNPJ
+    // enquanto a pessoa acredita tê-lo informado — e o sintoma só
+    // apareceria como um vínculo com o Portal que nunca acontece.
+    expect(criar).not.toHaveBeenCalled();
+  });
+
+  it("completar o CNPJ desbloqueia o envio", async () => {
+    const criar = vi.spyOn(api, "createOrganization").mockResolvedValue({
+      publicId: NOVA_ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null
+    });
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
+    await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "11.222.333");
+    expect(within(dialogo).getByRole("button", { name: "Criar organização" })).toBeDisabled();
+
+    await userEvent.type(within(dialogo).getByLabelText("CNPJ"), "/0001-81");
+    expect(within(dialogo).queryByTestId("cnpj-incompleto")).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Criar organização" }));
+    await waitFor(() =>
+      expect(criar).toHaveBeenCalledWith({
+        type: "COMPANY",
+        legalName: "EMPRESA NOVA LTDA",
+        documentNumber: "11.222.333/0001-81"
+      })
+    );
+  });
+
+  it("campo de CNPJ vazio continua criando normalmente", async () => {
+    const criar = vi.spyOn(api, "createOrganization").mockResolvedValue({
+      publicId: NOVA_ORG, type: "COMPANY", status: "ACTIVE", version: 1, relationshipPublicId: null
+    });
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    await userEvent.type(within(dialogo).getByLabelText("Razão social"), "EMPRESA NOVA LTDA");
+    expect(within(dialogo).queryByTestId("cnpj-incompleto")).not.toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Criar organização" }));
 
     await waitFor(() =>
       expect(criar).toHaveBeenCalledWith({ type: "COMPANY", legalName: "EMPRESA NOVA LTDA" })
     );
+  });
+
+  it("o texto do formulário não afirma que empresa e vínculo com o Portal são gravados juntos", async () => {
+    renderizarLista();
+    const dialogo = await abrirNovaOrganizacao();
+
+    // A empresa e a associação ao GRUPO são uma transação só; o vínculo
+    // com o Portal acontece depois e não desfaz a criação. Dizer o
+    // contrário faria alguém interpretar "não vinculou" como "não criou".
+    expect(within(dialogo).getByText(/associação ao grupo são gravadas na mesma transação/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/não desfaz a criação da empresa/i)).toBeInTheDocument();
+    expect(dialogo.textContent ?? "").not.toContain("A empresa e o vínculo são gravados juntos");
   });
 
   it("o desfecho da correspondência viaja até a tela de destino", async () => {

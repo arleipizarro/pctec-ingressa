@@ -158,6 +158,7 @@ describe("reconciliação — dry-run", () => {
       EXACT_UNIQUE: 1,
       NOT_FOUND: 1,
       AMBIGUOUS: 1,
+      INACTIVE_ONLY: 0,
       DOCUMENT_MISSING_OR_INVALID: 1,
       ALREADY_LINKED: 1
     });

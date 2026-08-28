@@ -12,6 +12,10 @@ import { RecordImportBatchItemService } from "../application/RecordImportBatchIt
 import { FinishImportBatchService } from "../application/FinishImportBatchService.js";
 import { RunHelpdeskImportWizardService } from "../application/RunHelpdeskImportWizardService.js";
 import { GetHelpdeskCatalogService } from "../application/GetHelpdeskCatalogService.js";
+import type { RunHelpdeskImportWizardDeps } from "../application/RunHelpdeskImportWizardService.js";
+
+/** O contrato mínimo que o assistente precisa do vínculo automático. */
+type PortalAutoLinkPort = NonNullable<RunHelpdeskImportWizardDeps["portalAutoLinkService"]>;
 
 export interface HelpdeskImportComposition {
   readonly catalogService: GetHelpdeskCatalogService;
@@ -34,7 +38,18 @@ export interface HelpdeskImportComposition {
  * primeiro `execute`. Montar isto no boot não custa rede nem quebra
  * `npm test`/`typecheck`/`build`.
  */
-export function composeHelpdeskImport(ingressaPool: Pool): HelpdeskImportComposition {
+export function composeHelpdeskImport(
+  ingressaPool: Pool,
+  /**
+   * Vínculo automático com o Portal, executado DEPOIS do APPLY.
+   *
+   * Opcional e vindo de fora: a fonte do Portal tem configuração
+   * própria, e o importador precisa funcionar sem ela. Recebê-lo pronto
+   * — em vez de montá-lo aqui — garante que é o MESMO objeto da criação
+   * manual e da reconciliação, com uma definição só de "corresponde".
+   */
+  portalAutoLinkService?: PortalAutoLinkPort | undefined
+): HelpdeskImportComposition {
   const sourcePool = createPool(loadHelpdeskSourceConfig());
   const source = new MariaDbHelpdeskReadOnlySource(sourcePool);
   const targetStateReader = new MariaDbWizardTargetStateReader(ingressaPool);
@@ -49,6 +64,7 @@ export function composeHelpdeskImport(ingressaPool: Pool): HelpdeskImportComposi
 
   const wizardService = new RunHelpdeskImportWizardService({
     source,
+    ...(portalAutoLinkService !== undefined ? { portalAutoLinkService } : {}),
     targetStateReader,
     startImportBatchService: new StartImportBatchService(
       unitOfWork,

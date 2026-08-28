@@ -116,6 +116,66 @@ describe("MatchPortalClientByDocumentService", () => {
     expect(leitor.findByDocument).not.toHaveBeenCalled();
   });
 
+  it("um cliente ATIVO com o CNPJ exato é EXACT_UNIQUE", async () => {
+    const resultado = await new MatchPortalClientByDocumentService(
+      catalogo([cliente({ active: true })])
+    ).execute(CNPJ_A);
+
+    expect(resultado.status).toBe("EXACT_UNIQUE");
+    expect(resultado.client?.active).toBe(true);
+  });
+
+  it("somente cliente INATIVO com o CNPJ exato é INACTIVE_ONLY — nunca EXACT_UNIQUE", async () => {
+    const resultado = await new MatchPortalClientByDocumentService(
+      catalogo([cliente({ active: false })])
+    ).execute(CNPJ_A);
+
+    expect(resultado.status).toBe("INACTIVE_ONLY");
+    expect(resultado.candidateCount).toBe(1);
+    // Fail-closed: nada a vincular, e nenhum candidato devolvido.
+    expect(resultado.client).toBeUndefined();
+  });
+
+  it("INACTIVE_ONLY é distinto de NOT_FOUND — as ações são diferentes", async () => {
+    const soInativo = await new MatchPortalClientByDocumentService(
+      catalogo([cliente({ active: false })])
+    ).execute(CNPJ_A);
+    const nenhum = await new MatchPortalClientByDocumentService(catalogo([])).execute(CNPJ_A);
+
+    // "existe e está desativado" pede reativação; "não existe" pede
+    // cadastro. Confundi-los faria alguém cadastrar de novo a mesma
+    // empresa, criando a duplicidade que produz AMBIGUOUS.
+    expect(soInativo.status).not.toBe(nenhum.status);
+    expect(nenhum.status).toBe("NOT_FOUND");
+  });
+
+  it("um ativo e um inativo com o MESMO CNPJ: o ativo é o único candidato, e o resultado é EXACT_UNIQUE", async () => {
+    const resultado = await new MatchPortalClientByDocumentService(
+      catalogo([cliente({ id: 71, active: false }), cliente({ id: 72, active: true })])
+    ).execute(CNPJ_A);
+
+    // A separação acontece ANTES da contagem: contar primeiro e filtrar
+    // depois transformaria isto em ambiguidade e mandaria alguém
+    // resolver à mão um caso que não tem dúvida nenhuma.
+    expect(resultado.status).toBe("EXACT_UNIQUE");
+    expect(resultado.client?.id).toBe(72);
+    expect(resultado.candidateCount).toBe(1);
+  });
+
+  it("dois ATIVOS com o mesmo CNPJ permanecem AMBIGUOUS, e a contagem é dos ativos", async () => {
+    const resultado = await new MatchPortalClientByDocumentService(
+      catalogo([
+        cliente({ id: 71, active: true }),
+        cliente({ id: 72, active: true }),
+        cliente({ id: 73, active: false })
+      ])
+    ).execute(CNPJ_A);
+
+    expect(resultado.status).toBe("AMBIGUOUS");
+    expect(resultado.candidateCount).toBe(2);
+    expect(resultado.client).toBeUndefined();
+  });
+
   it("nunca correlaciona por nome — nome idêntico com CNPJ diferente não é correspondência", async () => {
     // A fonte devolve [] porque o CNPJ pedido é outro. Se houvesse
     // qualquer caminho por nome, este cliente homônimo apareceria.

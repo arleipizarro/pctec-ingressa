@@ -177,10 +177,29 @@ CNPJ normalizado (só dígitos, exatamente 14), comparado por
 
 | resultado | significado | vincula? |
 |---|---|---|
-| `EXACT_UNIQUE` | exatamente 1 cliente do Portal com o mesmo CNPJ | **sim** (com confirmação) |
-| `NOT_FOUND` | nenhum | não |
-| `AMBIGUOUS` | mais de um | não — fail-closed |
+| `EXACT_UNIQUE` | exatamente 1 cliente **ativo** com o mesmo CNPJ | **sim** (com confirmação) |
+| `NOT_FOUND` | nenhum cliente, ativo ou não, tem este CNPJ | não |
+| `AMBIGUOUS` | mais de um cliente **ativo** | não — fail-closed |
+| `INACTIVE_ONLY` | o CNPJ existe no Portal, mas só em cliente inativo | não — fail-closed |
 | `DOCUMENT_MISSING_OR_INVALID` | a organização não tem CNPJ comparável | não |
+
+**Cliente inativo nunca é candidato.** `clientes.ativo = 0` é o Portal
+dizendo que aquele cadastro saiu de operação; vincular uma empresa a ele
+daria a ela um contexto comercial morto, e o vínculo não tem desfazer. A
+exclusão acontece **antes da contagem** — por isso um ativo convivendo
+com um inativo de mesmo CNPJ é `EXACT_UNIQUE`, e não ambiguidade: existe
+exatamente um candidato.
+
+`INACTIVE_ONLY` é estado próprio, e não `NOT_FOUND`, porque as ações são
+diferentes: "não existe lá" pede cadastro no Portal; "existe e está
+inativo" pede reativação. Dizer "não encontrado" mandaria cadastrar uma
+segunda vez a mesma empresa — criando exatamente a duplicidade que
+produz `AMBIGUOUS`.
+
+A busca administrativa **continua mostrando os inativos**, identificados
+e sem seletor: escondê-los faria alguém procurar em vão um cadastro que
+existe. A proibição de verdade está no servidor (ver adiante), não no
+React.
 
 **Nunca por nome.** Não há `LIKE`, distância de edição nem prefixo no
 caminho automático. Razão social e nome fantasia divergem entre
@@ -199,6 +218,34 @@ coluna `documento`, com `tipo_doc ENUM('CPF','CNPJ')`. A consulta filtra
 
 A decisão mora num lugar só — `MatchPortalClientByDocumentService` — e é
 chamada de três: a criação manual, a sugestão da tela e a reconciliação.
+
+### Dois caminhos de vínculo, e por que são dois
+
+| rota | quando | consulta o Portal? |
+|---|---|---|
+| `POST /admin/organizations/:publicId/portal-reference` (PR #19) | vínculo **operacional**, por `legacyId` já conhecido | **não** — e é isso que a mantém utilizável com a fonte fora do ar |
+| `POST /admin/portal-catalog/organizations/:publicId/link` | vínculo **confirmado a partir do catálogo** | **sim** — relê o cliente imediatamente antes de escrever |
+
+A tela nova usa **sempre** a segunda. O motivo é preciso: quando o
+`legacyId` veio de uma lista que esta própria API montou, aceitá-lo de
+volta sem reconferir é tratar a resposta anterior como autoridade. Entre
+a busca e o clique existe uma janela — o cliente pode ser desativado ou
+removido no Portal — e é nessa janela que um vínculo irreversível
+nasceria para um cadastro que já não serve.
+
+A releitura recusa com códigos próprios:
+
+| código | HTTP | quando |
+|---|---|---|
+| `PORTAL_CATALOG_LEGACY_ID_INVALID` | 422 | o corpo não traz um inteiro positivo |
+| `PORTAL_CATALOG_CLIENT_NOT_FOUND` | 404 | o cliente sumiu entre a busca e a confirmação |
+| `PORTAL_CATALOG_CLIENT_INACTIVE` | 409 | o cliente foi inativado entre a busca e a confirmação |
+
+O corpo carrega **só `legacyId`**. Nome, CNPJ, status e qualquer outro
+dado comercial que venham junto são descartados na fronteira — não há
+onde recebê-los no contrato do serviço, e o que a resposta diz sobre o
+cliente vem da releitura, nunca do pedido. `systemCode` e `entityType`
+seguem fixos no servidor.
 
 ### A escrita continua sendo a mesma
 
@@ -222,7 +269,11 @@ existe mais. No lugar:
    textual **mostra** candidatos; ela nunca vincula, nem quando devolve
    um resultado só;
 3. o `legacyId` só existe como consequência de um resultado
-   **selecionado explicitamente**.
+   **selecionado explicitamente** — e a confirmação passa pela rota que
+   relê o cliente na fonte, nunca pela rota operacional;
+4. clientes **inativos aparecem** na busca, identificados e sem seletor.
+   Some da lista, alguém procuraria em vão um cadastro que existe;
+   selecionável, viraria um vínculo irreversível para um cadastro morto.
 
 Trocar e revogar continuam sem caminho, como antes.
 
@@ -230,8 +281,17 @@ Trocar e revogar continuam sem caminho, como antes.
 nunca vínculo próprio.
 
 **Criação de empresa.** O formulário ganhou um campo de CNPJ, opcional.
-Com ele, a correspondência é tentada logo depois de a organização ser
-criada — **fora da transação dela**. Uma indisponibilidade do Portal não
+Vazio, a empresa é criada normalmente; **preenchido e incompleto,
+bloqueia o envio** — descartá-lo em silêncio criaria a empresa sem
+documento enquanto quem opera acredita tê-lo informado, e o sintoma só
+apareceria depois, como um vínculo que nunca acontece. O servidor
+continua sendo a autoridade e recusa documento inválido recebido
+diretamente (`ORGANIZATION_DOCUMENT_NUMBER_INVALID`).
+
+Com CNPJ, a correspondência é tentada logo depois de a organização ser
+criada — **fora da transação dela**. A empresa e a associação ao GRUPO
+são uma transação só; a integração com o Portal acontece **depois** e
+**não desfaz** a criação da empresa. Uma indisponibilidade do Portal não
 pode desfazer um cadastro que já é válido: a empresa nasce, e o vínculo
 é uma segunda decisão, que pode ficar pendente. A resposta separa os
 dois fatos (`publicId` e `portalIntegration`), e a tela de destino
@@ -325,10 +385,7 @@ preparado para os dois mundos: ele lê o documento numa consulta própria
 e isolada, trata a negativa de privilégio como "a fonte não fornece"
 (nunca como falha, que derrubaria o APPLY inteiro por um campo
 opcional), e transporta o CNPJ até `Organization.documentNumber` quando
-ele vem. **Nome nunca é usado como substituto.** Enquanto o GRANT não
-for ampliado, as empresas importadas nascem sem documento e o vínculo
-com o Portal fica pendente — resolvido pela reconciliação ou pela
-seleção na tela da empresa.
+ele vem. **Nome nunca é usado como substituto.**
 
 Ampliar o GRANT (`SELECT (id, name, active, cnpj)`) é decisão de quem
 administra o banco do Helpdesk, não deste código. Feita a mudança, nada
@@ -338,3 +395,50 @@ O documento é lido **só no APPLY**, e não em `prepare`: ele não muda
 decisão nenhuma do plano, e incluí-lo faria um CNPJ corrigido no
 Helpdesk entre o dry-run e o apply mudar o `scopeFingerprint` — punindo
 uma correção que não altera nada do que vai ser escrito.
+
+### O importador vincula, e não deixa a conta para depois
+
+Depois que o APPLY termina — organização **e** usuários comitados — o
+assistente chama o **mesmo**
+`AutoLinkPortalOrganizationReferenceService` da criação manual e da
+reconciliação. Não há cópia da regra de CNPJ dentro do importador: ele
+manda o `publicId` da organização e o ator, e traduz a resposta. Se a
+regra mudar, muda num lugar só.
+
+A chamada acontece **fora** do `try` que marca o lote como `FAILED`, e
+numa conexão/banco diferentes: nenhuma transação atravessa Helpdesk,
+Portal e Ingressa, e uma indisponibilidade do Portal não desfaz uma
+importação válida nem contamina o lote.
+
+Serve tanto à organização recém-criada quanto à que já existia e foi
+resolvida pelo APPLY sem referência do Portal.
+
+O resultado do APPLY ganhou `portalIntegration` — **aditivo**, `null` em
+DRY_RUN, e consumidores anteriores o ignoram:
+
+| estado | o que aconteceu | o que fazer |
+|---|---|---|
+| `LINKED` | vinculada agora | nada |
+| `ALREADY_LINKED` | já apontava para o mesmo cliente | nada, e nada foi escrito |
+| `PENDING_DOCUMENT` | a organização não tem CNPJ comparável | cadastrar o CNPJ, ou selecionar na tela |
+| `PENDING_NOT_FOUND` | o CNPJ não existe no Portal | cadastrar a empresa no Portal |
+| `PENDING_INACTIVE` | existe no Portal, mas inativo | reativar lá |
+| `PENDING_AMBIGUOUS` | mais de um cliente ativo com o CNPJ | resolver a duplicidade no Portal |
+| `SOURCE_NOT_CONFIGURED` | a fonte não foi sequer consultada | configurar `portal-source.env` |
+| `FAILED` | falha técnica ou recusa do vínculo | ver `reasonCode` |
+
+Cinco fatos distintos — fonte não consultada, cliente inexistente,
+cliente inativo, ambiguidade e falha técnica — com estados distintos.
+Tratá-los como um só faria alguém cadastrar de novo, no Portal, uma
+empresa que já está lá.
+
+Reexecutar o APPLY é idempotente: a organização já vinculada ao mesmo
+cliente responde `ALREADY_LINKED`, sem nova escrita e sem evento novo.
+
+Nem documento integral, nem credencial, nem configuração da fonte, nem
+mensagem de driver entram no lote, na resposta ou no log — `reasonCode`
+é sempre código estável.
+
+A reconciliação continua existindo, e agora para o que ela sempre foi:
+as organizações anteriores a esta fatia, e as que ficaram pendentes por
+um motivo que só quem opera pode resolver.

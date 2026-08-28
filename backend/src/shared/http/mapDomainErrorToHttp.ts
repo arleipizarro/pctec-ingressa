@@ -55,7 +55,13 @@ const HTTP_STATUS_OVERRIDE_BY_CODE: Readonly<Record<string, number>> = Object.fr
   // 404 em todo o resto da API administrativa. Código próprio, e não o
   // ORGANIZATION_NOT_FOUND compartilhado, justamente para não
   // reclassificar fluxos que hoje respondem 422 com aquele código.
-  PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: 404
+  PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: 404,
+  // Catálogo do Portal (v0.12.x): o cliente escolhido na tela não existe
+  // mais na fonte no momento da confirmação. Mesmo padrão — "recurso
+  // inexistente", e não pedido malformado: o corpo estava certo quando
+  // a pessoa clicou. Distinto de PORTAL_CATALOG_CLIENT_INACTIVE (409),
+  // em que o cliente existe e o que mudou foi o estado dele.
+  PORTAL_CATALOG_CLIENT_NOT_FOUND: 404
 });
 
 const HTTP_STATUS_BY_CLASSIFICATION: Readonly<Record<DomainErrorClassification, number>> = Object.freeze({

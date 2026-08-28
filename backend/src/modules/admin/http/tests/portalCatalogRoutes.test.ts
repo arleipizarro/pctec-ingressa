@@ -64,6 +64,19 @@ function fakeDeps(overrides: Partial<PortalCatalogApiDeps> = {}): PortalCatalogA
         }
       }))
     },
+    confirmSelectionService: {
+      execute: vi.fn(async (pedido: { legacyId: unknown }) => ({
+        publicId: "5e2f1a77-2b4c-4c3f-9a1e-3d6f8b0c4a11",
+        organizationPublicId: ORG,
+        systemCode: "PCTEC_PORTAL",
+        entityType: "clientes",
+        legacyId: Number(pedido.legacyId),
+        status: "ACTIVE",
+        alreadyLinked: false,
+        clientName: "CLIENTE SINTETICO",
+        clientDocumentMasked: "**.***.333/0001-81"
+      }))
+    },
     reconciliationService: {
       dryRun: vi.fn(async () => ({
         items: [
@@ -289,10 +302,139 @@ describe("catálogo do Portal — contrato", () => {
   });
 });
 
+describe("catálogo do Portal — confirmação do cliente selecionado", () => {
+  const CAMINHO = `/api/v1/admin/portal-catalog/organizations/${ORG}/link`;
+
+  it("201 ao criar, mandando SÓ o legacyId e o ator da sessão ao serviço", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, CAMINHO, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(r.status).toBe(201);
+    expect(deps.confirmSelectionService.execute).toHaveBeenCalledWith({
+      organizationPublicId: ORG,
+      legacyId: 71,
+      actorPublicId: ADMIN,
+      correlationId: expect.anything()
+    });
+  });
+
+  it("200 quando o vínculo idêntico já existia", async () => {
+    const deps = fakeDeps({
+      confirmSelectionService: {
+        execute: vi.fn(async () => ({
+          publicId: "5e2f1a77-2b4c-4c3f-9a1e-3d6f8b0c4a11",
+          organizationPublicId: ORG,
+          systemCode: "PCTEC_PORTAL",
+          entityType: "clientes",
+          legacyId: 71,
+          status: "ACTIVE",
+          alreadyLinked: true,
+          clientName: "CLIENTE SINTETICO",
+          clientDocumentMasked: "**.***.333/0001-81"
+        }))
+      }
+    } as unknown as Partial<PortalCatalogApiDeps>);
+    const { baseUrl } = await subir({ deps });
+
+    const r = await chamar(baseUrl, CAMINHO, { method: "POST", body: JSON.stringify({ legacyId: 71 }) });
+    expect(r.status).toBe(200);
+  });
+
+  it("descarta na fronteira qualquer dado comercial que o navegador mande junto", async () => {
+    const { baseUrl, deps } = await subir();
+    await chamar(baseUrl, CAMINHO, {
+      method: "POST",
+      body: JSON.stringify({
+        legacyId: 71,
+        // Tudo abaixo é ignorado: o servidor relê o cliente na fonte.
+        name: "NOME INVENTADO",
+        documentNumber: "99999999999999",
+        active: true,
+        systemCode: "PCTEC_HUB",
+        entityType: "clientes_grupo",
+        actorPublicId: "11111111-1111-4111-8111-111111111111"
+      })
+    });
+
+    const pedido = (deps.confirmSelectionService.execute as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0] as Record<string, unknown>;
+    expect(Object.keys(pedido).sort()).toEqual(
+      ["actorPublicId", "correlationId", "legacyId", "organizationPublicId"].sort()
+    );
+    expect(pedido["actorPublicId"]).toBe(ADMIN);
+  });
+
+  it("403 sem origem confiável, e o serviço nunca é chamado", async () => {
+    const { baseUrl, deps } = await subir();
+    const semOrigem = await chamar(baseUrl, CAMINHO, {
+      method: "POST",
+      origem: null,
+      body: JSON.stringify({ legacyId: 71 })
+    });
+    const origemEstranha = await chamar(baseUrl, CAMINHO, {
+      method: "POST",
+      origem: "https://atacante.example.invalid",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(semOrigem.status).toBe(403);
+    expect(origemEstranha.status).toBe(403);
+    expect(deps.confirmSelectionService.execute).not.toHaveBeenCalled();
+  });
+
+  it("401 sem sessão e 403 sem ADMIN", async () => {
+    const semSessao = await subir();
+    expect(
+      (await chamar(semSessao.baseUrl, CAMINHO, { method: "POST", comSessao: false, body: "{}" })).status
+    ).toBe(401);
+    await new Promise<void>((r) => servidor!.close(() => r()));
+    servidor = undefined;
+
+    const semAdmin = await subir({ semAdmin: true });
+    expect((await chamar(semAdmin.baseUrl, CAMINHO, { method: "POST", body: "{}" })).status).toBe(403);
+  });
+
+  it("422 para publicId malformado, sem chegar ao serviço", async () => {
+    const { baseUrl, deps } = await subir();
+    const r = await chamar(baseUrl, "/api/v1/admin/portal-catalog/organizations/nao-e-uuid/link", {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+
+    expect(r.status).toBe(422);
+    expect(deps.confirmSelectionService.execute).not.toHaveBeenCalled();
+  });
+
+  it("a resposta não devolve o documento inteiro", async () => {
+    const { baseUrl } = await subir();
+    const r = await chamar(baseUrl, CAMINHO, { method: "POST", body: JSON.stringify({ legacyId: 71 }) });
+
+    expect(r.texto).toContain("**.***.333/0001-81");
+    expect(r.texto).not.toContain(CNPJ);
+  });
+});
+
 describe("catálogo do Portal — fonte não configurada", () => {
   it("503 com código próprio, e sem revelar nome de variável nem credencial", async () => {
     const aviso = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { baseUrl } = await subir({ semCatalogo: true });
+
+    for (const caminho of ROTAS_DE_LEITURA) {
+      const r = await chamar(baseUrl, caminho);
+      expect(r.status).toBe(503);
+      expect((r.body["error"] as { code: string }).code).toBe("PORTAL_CATALOG_SOURCE_NOT_CONFIGURED");
+    }
+
+    // A confirmação também: sem a fonte não há como reler o cliente, e
+    // escrever sem reler é justamente o que esta rota existe para evitar.
+    const confirmacao = await chamar(baseUrl, `/api/v1/admin/portal-catalog/organizations/${ORG}/link`, {
+      method: "POST",
+      body: JSON.stringify({ legacyId: 71 })
+    });
+    expect(confirmacao.status).toBe(503);
 
     for (const caminho of ROTAS_DE_LEITURA) {
       const r = await chamar(baseUrl, caminho);

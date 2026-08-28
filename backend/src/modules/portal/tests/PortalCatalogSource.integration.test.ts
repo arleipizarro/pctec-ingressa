@@ -84,6 +84,25 @@ describe.skipIf(!shouldRun)("fonte Portal — integração read-only", () => {
     expect(correspondencia.status).toBe("NOT_FOUND");
   });
 
+  it("nenhum cliente INATIVO da base produz correspondência automática", async () => {
+    // Varre uma página do catálogo e, para cada inativo encontrado,
+    // exige que o CNPJ dele NÃO produza `EXACT_UNIQUE` — ou produza um
+    // `EXACT_UNIQUE` que aponte para OUTRO cliente, o ativo de mesmo
+    // documento. O que não pode existir é vínculo automático para um
+    // cadastro desativado.
+    const pagina = await source.search({ limit: 25, offset: 0 });
+    const inativos = pagina.items.filter((c) => !c.active && c.documentDigits !== undefined);
+    const matcher = new MatchPortalClientByDocumentService(source);
+
+    for (const inativo of inativos) {
+      const resultado = await matcher.execute(inativo.documentDigits);
+      if (resultado.status === "EXACT_UNIQUE") {
+        expect(resultado.client?.active).toBe(true);
+        expect(resultado.client?.id).not.toBe(inativo.id);
+      }
+    }
+  });
+
   it("a mesma consulta devolve a mesma contagem — o resultado é determinístico, sem LIMIT escondido", async () => {
     const pagina = await source.search({ limit: 3, offset: 0 });
     const denovo = await source.search({ limit: 3, offset: 0 });

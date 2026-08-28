@@ -226,14 +226,16 @@ describe("criação do vínculo — busca e seleção", () => {
         suggestion: { ...CLIENTE_71, documentMasked: "**.***.333/0001-81" }
       })
     );
-    const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+    const vincular = vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
       systemCode: "PCTEC_PORTAL",
       entityType: "clientes",
       legacyId: 71,
       status: "ACTIVE",
-      alreadyLinked: false
+      alreadyLinked: false,
+      clientName: "CLIENTE SINTETICO",
+      clientDocumentMasked: "**.***.333/0001-81"
     });
     renderizar();
     const dialogo = await abrirVinculo();
@@ -265,7 +267,7 @@ describe("criação do vínculo — busca e seleção", () => {
     const dialogo = await abrirVinculo();
 
     expect(await within(dialogo).findByTestId("portal-sem-sugestao")).toHaveTextContent(
-      /Mais de um cliente do Portal tem o CNPJ desta empresa/i
+      /Mais de um cliente ATIVO do Portal tem o CNPJ desta empresa/i
     );
     expect(within(dialogo).queryByTestId("portal-sugestao")).not.toBeInTheDocument();
   });
@@ -308,7 +310,7 @@ describe("criação do vínculo — busca e seleção", () => {
   });
 
   it("busca sem resultado diz que não encontrou — e não vincula nada", async () => {
-    const vincular = vi.spyOn(api, "linkPortalReference");
+    const vincular = vi.spyOn(api, "confirmPortalSelection");
     renderizar();
     const dialogo = await abrirVinculo();
 
@@ -321,7 +323,7 @@ describe("criação do vínculo — busca e seleção", () => {
 
   it("um resultado só NÃO vincula sozinho — a seleção é explícita", async () => {
     vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
-    const vincular = vi.spyOn(api, "linkPortalReference");
+    const vincular = vi.spyOn(api, "confirmPortalSelection");
     renderizar();
     const dialogo = await abrirVinculo();
 
@@ -337,14 +339,16 @@ describe("criação do vínculo — busca e seleção", () => {
 
   it("seleção explícita habilita a confirmação e envia o legacyId escolhido", async () => {
     vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71, CLIENTE_72]));
-    const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+    const vincular = vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
       systemCode: "PCTEC_PORTAL",
       entityType: "clientes",
       legacyId: 72,
       status: "ACTIVE",
-      alreadyLinked: false
+      alreadyLinked: false,
+      clientName: "EMPRESA SINTETICA FILIAL LTDA",
+      clientDocumentMasked: "**.***.333/0002-62"
     });
     renderizar();
     const dialogo = await abrirVinculo();
@@ -362,6 +366,127 @@ describe("criação do vínculo — busca e seleção", () => {
 
     await userEvent.click(confirmar);
     await waitFor(() => expect(vincular).toHaveBeenCalledWith(fixtures.ORG_PUBLIC_ID, 72));
+  });
+
+  it("cliente inativo APARECE na busca, identificado, mas não pode ser selecionado", async () => {
+    const inativo = { ...CLIENTE_72, name: "EMPRESA DESATIVADA LTDA", active: false };
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71, inativo]));
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "empresa");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+
+    // Some da lista, alguém procuraria em vão um cadastro que existe.
+    expect(await within(dialogo).findByText("EMPRESA DESATIVADA LTDA")).toBeInTheDocument();
+    expect(within(dialogo).getByTestId(`portal-cliente-inativo-${inativo.legacyId}`)).toHaveTextContent(
+      /não pode ser vinculado/i
+    );
+    // Mas não tem seletor: oferecer o clique e recusar depois é pior.
+    expect(within(dialogo).queryByLabelText("Selecionar EMPRESA DESATIVADA LTDA")).not.toBeInTheDocument();
+    expect(within(dialogo).getByLabelText("Selecionar EMPRESA SINTETICA LTDA")).toBeInTheDocument();
+  });
+
+  it("com apenas um resultado, e ele inativo, a confirmação segue desabilitada", async () => {
+    const inativo = { ...CLIENTE_71, active: false };
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([inativo]));
+    const confirmar = vi.spyOn(api, "confirmPortalSelection");
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await within(dialogo).findByTestId(`portal-cliente-inativo-${inativo.legacyId}`);
+
+    expect(within(dialogo).getByRole("button", { name: "Confirmar vínculo" })).toBeDisabled();
+    expect(within(dialogo).queryByLabelText("Selecionar EMPRESA SINTETICA LTDA")).not.toBeInTheDocument();
+    expect(confirmar).not.toHaveBeenCalled();
+  });
+
+  it("CNPJ existente só em cliente inativo tem mensagem própria, distinta de “não encontrado”", async () => {
+    vi.spyOn(api, "portalMatch").mockResolvedValue(
+      correspondencia({ status: "INACTIVE_ONLY", candidateCount: 1 })
+    );
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    expect(await within(dialogo).findByTestId("portal-sem-sugestao")).toHaveTextContent(
+      /apenas em cliente INATIVO/i
+    );
+    // Dizer "não encontrado" mandaria cadastrar de novo a mesma empresa.
+    expect(within(dialogo).getByTestId("portal-sem-sugestao")).not.toHaveTextContent(
+      /Nenhum cliente do Portal tem o CNPJ/i
+    );
+    expect(within(dialogo).queryByTestId("portal-sugestao")).not.toBeInTheDocument();
+  });
+
+  it("sugestão de cliente inativo nunca vira botão de confirmar", async () => {
+    // Resposta que não deveria existir — o servidor não produz
+    // `EXACT_UNIQUE` para inativo. A tela recusa mesmo assim: o custo de
+    // errar é um vínculo irreversível para um cadastro morto.
+    vi.spyOn(api, "portalMatch").mockResolvedValue(
+      correspondencia({
+        status: "EXACT_UNIQUE",
+        candidateCount: 1,
+        suggestion: { ...CLIENTE_71, active: false }
+      })
+    );
+    const confirmar = vi.spyOn(api, "confirmPortalSelection");
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await within(dialogo).findByLabelText("Buscar cliente no Portal");
+    expect(within(dialogo).queryByTestId("portal-sugestao")).not.toBeInTheDocument();
+    expect(confirmar).not.toHaveBeenCalled();
+  });
+
+  it("a confirmação usa a rota que relê a fonte, não a rota operacional do PR anterior", async () => {
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
+    const operacional = vi.spyOn(api, "linkPortalReference");
+    const confirmar = vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
+      publicId: "99999999-9999-4999-8999-999999999999",
+      organizationPublicId: fixtures.ORG_PUBLIC_ID,
+      systemCode: "PCTEC_PORTAL",
+      entityType: "clientes",
+      legacyId: 71,
+      status: "ACTIVE",
+      alreadyLinked: false,
+      clientName: "CLIENTE SINTETICO",
+      clientDocumentMasked: "**.***.333/0001-81"
+    });
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA"));
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
+
+    await waitFor(() => expect(confirmar).toHaveBeenCalledWith(fixtures.ORG_PUBLIC_ID, 71));
+    // O `legacyId` daqui veio de uma lista que o servidor montou;
+    // devolvê-lo sem releitura trataria a resposta anterior como
+    // autoridade.
+    expect(operacional).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["PORTAL_CATALOG_CLIENT_NOT_FOUND", /não existe mais no Portal/i],
+    ["PORTAL_CATALOG_CLIENT_INACTIVE", /foi inativado no Portal/i]
+  ])("recusa %s da releitura vira frase própria", async (code, esperado) => {
+    vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
+    vi.spyOn(api, "confirmPortalSelection").mockRejectedValue(
+      new ApiError(code === "PORTAL_CATALOG_CLIENT_NOT_FOUND" ? 404 : 409, code, "mensagem genérica do status")
+    );
+    renderizar();
+    const dialogo = await abrirVinculo();
+
+    await userEvent.type(within(dialogo).getByLabelText("Buscar cliente no Portal"), "sintetica");
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Buscar" }));
+    await userEvent.click(await within(dialogo).findByLabelText("Selecionar EMPRESA SINTETICA LTDA"));
+    await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar vínculo" }));
+
+    expect(await screen.findByText(esperado)).toBeInTheDocument();
+    expect(screen.queryByText("mensagem genérica do status")).not.toBeInTheDocument();
   });
 
   it("o aviso de alcance irreversível continua no modal", async () => {
@@ -389,14 +514,16 @@ describe("criação do vínculo — busca e seleção", () => {
       .mockResolvedValueOnce(organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO }))
       .mockResolvedValue(organizacao({ portal: fixtures.PORTAL_EMPRESA_VINCULADA }));
     vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
-    const vincular = vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+    const vincular = vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
       systemCode: "PCTEC_PORTAL",
       entityType: "clientes",
       legacyId: 71,
       status: "ACTIVE",
-      alreadyLinked: false
+      alreadyLinked: false,
+      clientName: "CLIENTE SINTETICO",
+      clientDocumentMasked: "**.***.333/0001-81"
     });
     renderizar();
     const dialogo = await abrirVinculo();
@@ -416,14 +543,16 @@ describe("criação do vínculo — busca e seleção", () => {
 
   it("repetição do mesmo vínculo é anunciada como idempotente, não como criação", async () => {
     vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
-    vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+    vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
       systemCode: "PCTEC_PORTAL",
       entityType: "clientes",
       legacyId: 71,
       status: "ACTIVE",
-      alreadyLinked: true
+      alreadyLinked: true,
+      clientName: "CLIENTE SINTETICO",
+      clientDocumentMasked: "**.***.333/0001-81"
     });
     renderizar();
     const dialogo = await abrirVinculo();
@@ -442,7 +571,7 @@ describe("criação do vínculo — busca e seleção", () => {
     [409, "PORTAL_REFERENCE_AMBIGUOUS", /mais de um vínculo ativo com o Portal/i]
   ])("erro %s/%s vira frase compreensível, não o texto genérico do status", async (status, code, esperado) => {
     vi.spyOn(api, "portalCatalog").mockResolvedValue(catalogo([CLIENTE_71]));
-    vi.spyOn(api, "linkPortalReference").mockRejectedValue(
+    vi.spyOn(api, "confirmPortalSelection").mockRejectedValue(
       new ApiError(status, code, "mensagem genérica do status")
     );
     renderizar();
@@ -542,14 +671,16 @@ describe("novo usuário — cobertura do Portal", () => {
     vi.spyOn(api, "organization")
       .mockResolvedValueOnce(organizacao({ portal: fixtures.PORTAL_EMPRESA_SEM_VINCULO }))
       .mockResolvedValue(organizacao({ portal: fixtures.PORTAL_EMPRESA_VINCULADA }));
-    vi.spyOn(api, "linkPortalReference").mockResolvedValue({
+    vi.spyOn(api, "confirmPortalSelection").mockResolvedValue({
       publicId: "99999999-9999-4999-8999-999999999999",
       organizationPublicId: fixtures.ORG_PUBLIC_ID,
       systemCode: "PCTEC_PORTAL",
       entityType: "clientes",
       legacyId: 71,
       status: "ACTIVE",
-      alreadyLinked: false
+      alreadyLinked: false,
+      clientName: "CLIENTE SINTETICO",
+      clientDocumentMasked: "**.***.333/0001-81"
     });
     renderizar();
 
@@ -701,7 +832,7 @@ describe("cadastro ambíguo", () => {
         active: true
       }
     } as never);
-    vi.spyOn(api, "linkPortalReference").mockRejectedValue(
+    vi.spyOn(api, "confirmPortalSelection").mockRejectedValue(
       new ApiError(409, "PORTAL_REFERENCE_AMBIGUOUS", "mensagem genérica do status")
     );
     renderizar();

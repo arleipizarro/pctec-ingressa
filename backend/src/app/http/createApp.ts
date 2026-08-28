@@ -361,13 +361,17 @@ function defaultResolvePortalTenantScopeService(
  * Fail-closed em qualquer caso: sem credencial da fonte, nada é lido e
  * nada é escrito. Nunca há default de host, usuário ou senha.
  */
-function helpdeskImportRouter(options: CreateAppOptions, ingressaPool: Pool | undefined): Router {
+function helpdeskImportRouter(
+  options: CreateAppOptions,
+  ingressaPool: Pool | undefined,
+  portalAutoLinkService: AutoLinkPortalOrganizationReferenceService | undefined
+): Router {
   if (options.helpdeskImport !== undefined) {
     return createHelpdeskImportRoutes(options.helpdeskImport);
   }
 
   try {
-    const composicao = composeHelpdeskImport(ingressaPool!);
+    const composicao = composeHelpdeskImport(ingressaPool!, portalAutoLinkService);
     return createHelpdeskImportRoutes({
       catalogService: composicao.catalogService,
       wizardService: composicao.wizardService
@@ -439,7 +443,8 @@ function portalCatalogRouter(
         {
           catalogService: composicao.catalogService,
           matchService: composicao.matchService,
-          reconciliationService: composicao.reconciliationService
+          reconciliationService: composicao.reconciliationService,
+          confirmSelectionService: composicao.confirmSelectionService
         },
         allowedOrigins
       ),
@@ -717,31 +722,6 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createAdminInvitationRoutes(createIdentityInvitationService)
   );
 
-  // Assistente de importação Helpdesk (v0.10.x) — MESMA cadeia de
-  // autorização do restante de /api/v1/admin (sessão → Identity ACTIVE →
-  // ADMIN em PCTEC_INGRESSA), MAIS a guarda de origem.
-  //
-  // Montado no próprio prefixo, ANTES do /api/v1/admin genérico, em vez
-  // de encaixado no meio da cadeia dele. A diferença é observável: como
-  // middleware do router administrativo inteiro, a guarda de origem
-  // passaria a responder 403 a qualquer método mutável que nenhuma rota
-  // administrativa atende — trocando o 404 correto ("essa rota não
-  // existe") por um 403 enganoso ("sua origem não é confiável").
-  //
-  // A guarda vale para o router inteiro do assistente, incluindo as
-  // rotas que ainda não existem: montada aqui, a rota nova nasce
-  // protegida, e desprotegê-la exige um ato deliberado.
-  app.use(
-    "/api/v1/admin/helpdesk-import",
-    createRequireAuthenticatedSession(validateSessionService),
-    createRequireApplicationAccess(authorizeApplicationAccessService, {
-      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
-      profile: "ADMIN"
-    }),
-    createRequireSafeOrigin(allowedOrigins),
-    helpdeskImportRouter(options, sharedPool)
-  );
-
   /**
    * Vínculo da COMPANY ao Portal — UMA montagem, DOIS consumidores.
    *
@@ -765,6 +745,37 @@ export function createApp(options: CreateAppOptions = {}): Express {
       )
   );
   const catalogoDoPortal = portalCatalogRouter(options, sharedPool, vinculoDoPortal, allowedOrigins);
+
+  // Assistente de importação Helpdesk (v0.10.x) — MESMA cadeia de
+  // autorização do restante de /api/v1/admin (sessão → Identity ACTIVE →
+  // ADMIN em PCTEC_INGRESSA), MAIS a guarda de origem.
+  //
+  // Montado no próprio prefixo, ANTES do /api/v1/admin genérico, em vez
+  // de encaixado no meio da cadeia dele. A diferença é observável: como
+  // middleware do router administrativo inteiro, a guarda de origem
+  // passaria a responder 403 a qualquer método mutável que nenhuma rota
+  // administrativa atende — trocando o 404 correto ("essa rota não
+  // existe") por um 403 enganoso ("sua origem não é confiável").
+  //
+  // A guarda vale para o router inteiro do assistente, incluindo as
+  // rotas que ainda não existem: montada aqui, a rota nova nasce
+  // protegida, e desprotegê-la exige um ato deliberado.
+  //
+  // Montado DEPOIS do catálogo do Portal porque recebe o vínculo
+  // automático dele — o MESMO objeto da criação manual e da
+  // reconciliação. `undefined` quando a fonte não está configurada, e
+  // nesse caso o assistente segue funcionando inteiro: o APPLY responde
+  // `SOURCE_NOT_CONFIGURED` na integração e não vincula nada.
+  app.use(
+    "/api/v1/admin/helpdesk-import",
+    createRequireAuthenticatedSession(validateSessionService),
+    createRequireApplicationAccess(authorizeApplicationAccessService, {
+      applicationCode: PCTEC_INGRESSA_APPLICATION_CODE,
+      profile: "ADMIN"
+    }),
+    createRequireSafeOrigin(allowedOrigins),
+    helpdeskImportRouter(options, sharedPool, catalogoDoPortal.autoLinkService)
+  );
 
   // Catálogo administrativo do Portal (v0.12.x) — MESMA cadeia do
   // restante de /api/v1/admin (sessão → Identity ACTIVE → ADMIN em

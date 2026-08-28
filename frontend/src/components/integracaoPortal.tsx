@@ -29,7 +29,15 @@ export const MOTIVOS_DO_VINCULO: Readonly<Record<string, string>> = {
   PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: "Organização não encontrada.",
   PORTAL_REFERENCE_AMBIGUOUS:
     "Esta empresa tem mais de um vínculo ativo com o Portal. Enquanto isso não for resolvido, nenhum novo " +
-    "vínculo pode ser criado — peça à equipe de plataforma para encerrar o vínculo incorreto."
+    "vínculo pode ser criado — peça à equipe de plataforma para encerrar o vínculo incorreto.",
+  // Recusas da releitura da fonte, feita imediatamente antes de
+  // escrever. Elas aparecem quando o cliente muda entre a busca e o
+  // clique — e é exatamente para isso que a releitura existe.
+  PORTAL_CATALOG_CLIENT_NOT_FOUND:
+    "Este cliente não existe mais no Portal. Busque de novo e selecione um cliente atual.",
+  PORTAL_CATALOG_CLIENT_INACTIVE:
+    "Este cliente foi inativado no Portal e não pode receber vínculo. Reative o cadastro lá antes de vincular.",
+  PORTAL_CATALOG_LEGACY_ID_INVALID: "Selecione um cliente do Portal antes de confirmar."
 };
 
 /**
@@ -238,8 +246,13 @@ export const MOTIVOS_DA_CORRESPONDENCIA: Readonly<Record<string, string>> = {
   NOT_FOUND:
     "Nenhum cliente do Portal tem o CNPJ desta empresa. Busque pelo nome e selecione o cliente correto.",
   AMBIGUOUS:
-    "Mais de um cliente do Portal tem o CNPJ desta empresa. Nada é sugerido automaticamente enquanto houver " +
-    "duplicidade no cadastro do Portal — selecione manualmente o cliente correto, ou corrija a duplicidade lá.",
+    "Mais de um cliente ATIVO do Portal tem o CNPJ desta empresa. Nada é sugerido automaticamente enquanto " +
+    "houver duplicidade no cadastro do Portal — selecione manualmente o cliente correto, ou corrija a " +
+    "duplicidade lá.",
+  INACTIVE_ONLY:
+    "O CNPJ desta empresa existe no Portal, mas apenas em cliente INATIVO. Um cliente inativo não pode " +
+    "receber vínculo — reative o cadastro no Portal. Cadastrar a empresa de novo criaria a duplicidade que " +
+    "depois impede qualquer vínculo automático.",
   DOCUMENT_MISSING_OR_INVALID:
     "Esta empresa não tem CNPJ cadastrado no Ingressa, então não há correspondência automática. Busque pelo " +
     "nome e selecione o cliente do Portal.",
@@ -308,7 +321,14 @@ export function FormularioVincularPortal({
   const [busca, setBusca] = useState<EstadoDaBusca>(BUSCA_VAZIA);
   const [selecionado, setSelecionado] = useState<number | null>(null);
 
-  const sugestao = correspondencia?.status === "EXACT_UNIQUE" ? correspondencia.suggestion : null;
+  // `EXACT_UNIQUE` já implica cliente ATIVO — a regra é do servidor. A
+  // segunda checagem existe porque o custo de errar aqui é um vínculo
+  // irreversível para um cadastro morto, e uma resposta antiga (ou um
+  // servidor de outra versão) não deve conseguir produzir esse botão.
+  const sugestao =
+    correspondencia?.status === "EXACT_UNIQUE" && correspondencia.suggestion?.active === true
+      ? correspondencia.suggestion
+      : null;
 
   async function buscar(evento: FormEvent): Promise<void> {
     evento.preventDefault();
@@ -433,20 +453,37 @@ export function FormularioVincularPortal({
                     {busca.resultados.map((cliente) => (
                       <tr key={cliente.legacyId}>
                         <td>
-                          <input
-                            type="radio"
-                            name="portal-cliente"
-                            aria-label={`Selecionar ${cliente.name}`}
-                            checked={selecionado === cliente.legacyId}
-                            onChange={() => setSelecionado(cliente.legacyId)}
-                          />
+                          {/* Inativo APARECE — some da lista, alguém
+                              procuraria em vão um cadastro que existe —
+                              mas não tem seletor. Oferecer o clique e
+                              recusar depois seria pior que não oferecer,
+                              e a proibição de verdade está no servidor,
+                              que relê o cliente antes de escrever. */}
+                          {cliente.active ? (
+                            <input
+                              type="radio"
+                              name="portal-cliente"
+                              aria-label={`Selecionar ${cliente.name}`}
+                              checked={selecionado === cliente.legacyId}
+                              onChange={() => setSelecionado(cliente.legacyId)}
+                            />
+                          ) : (
+                            <span className="subtitulo" aria-hidden="true">—</span>
+                          )}
                         </td>
                         <td>{cliente.name}</td>
                         <td>{cliente.tradeName ?? "—"}</td>
                         {/* Mascarado, sempre. A tela nunca recebe o
                             documento inteiro do servidor. */}
                         <td>{cliente.hasDocument ? cliente.documentMasked : "sem CNPJ"}</td>
-                        <td><Badge valor={cliente.active ? "ATIVO" : "INATIVO"} /></td>
+                        <td>
+                          <Badge valor={cliente.active ? "ATIVO" : "INATIVO"} />
+                          {!cliente.active && (
+                            <p className="subtitulo" data-testid={`portal-cliente-inativo-${cliente.legacyId}`}>
+                              Inativo no Portal — não pode ser vinculado. Reative o cadastro lá.
+                            </p>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
