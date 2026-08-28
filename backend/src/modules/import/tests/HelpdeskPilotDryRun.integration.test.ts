@@ -50,7 +50,7 @@ class FonteEmMemoria implements HelpdeskSourceReader {
 
   public async readClientById(clientId: number): Promise<HelpdeskClientRecord | undefined> {
     return clientId === CLIENTE_SINTETICO
-      ? { id: CLIENTE_SINTETICO, name: RAZAO_SOCIAL, active: true }
+      ? { id: CLIENTE_SINTETICO, name: RAZAO_SOCIAL, active: true, documentNumber: null }
       : undefined;
   }
 }

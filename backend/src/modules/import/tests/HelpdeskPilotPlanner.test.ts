@@ -39,7 +39,7 @@ function destino(overrides: Partial<IngressaTargetState> = {}): IngressaTargetSt
   };
 }
 
-function planejar(users: readonly HelpdeskUserRecord[], target = destino(), client = { id: CLIENTE_PILOTO, name: RAZAO_SOCIAL, active: true }) {
+function planejar(users: readonly HelpdeskUserRecord[], target = destino(), client = { id: CLIENTE_PILOTO, name: RAZAO_SOCIAL, active: true, documentNumber: null }) {
   return planPilotImport({ users, client, expectedSourceClientId: CLIENTE_PILOTO, target });
 }
 
@@ -131,7 +131,8 @@ describe("planner do piloto — autorização por vínculo cadastral", () => {
     const plano = planejar([usuario()], destino(), {
       id: CLIENTE_PILOTO,
       name: "NOME COMERCIAL DIFERENTE DA RAZAO SOCIAL",
-      active: true
+      active: true,
+      documentNumber: null
     });
 
     // A associação foi afirmada pelo operador (client id + publicId) e

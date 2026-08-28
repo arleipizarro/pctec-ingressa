@@ -35,7 +35,8 @@ export const CLIENTE_ID = 999901;
 export const CLIENTE: HelpdeskClientRecord = {
   id: CLIENTE_ID,
   name: "EMPRESA SINTETICA 999901 LTDA",
-  active: true
+  active: true,
+  documentNumber: null
 };
 
 export const EMPRESA: TargetOrganization = {

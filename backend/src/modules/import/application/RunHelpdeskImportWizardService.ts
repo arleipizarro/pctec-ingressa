@@ -595,29 +595,6 @@ export class RunHelpdeskImportWizardService {
     };
   }
 
-  /**
-   * CNPJ da empresa de origem, lido SÓ no APPLY.
-   *
-   * Não é lido em `prepare` de propósito. `prepare` alimenta a
-   * pré-visualização, o dry-run e o `scopeFingerprint` — e o documento
-   * não muda decisão nenhuma do plano: nenhuma ação, nenhum motivo,
-   * nenhum item depende dele. Se entrasse ali, um CNPJ corrigido no
-   * Helpdesk entre o dry-run e o apply mudaria o fingerprint e faria o
-   * apply ser recusado por "a origem mudou" — punindo uma correção que
-   * não altera o que vai ser escrito.
-   *
-   * A fonte que não implementa a leitura e a fonte que responde
-   * "privilégio negado" caem no mesmo lugar: `null`. Nos dois casos a
-   * organização é criada sem documento, o vínculo com o Portal fica
-   * pendente, e o nome NUNCA é usado como substituto.
-   */
-  private async lerDocumentoDaOrigem(clientId: number): Promise<string | null> {
-    const leitura = await this.deps.source.readClientDocument?.(clientId);
-    if (leitura === undefined || !leitura.available) {
-      return null;
-    }
-    return leitura.documentNumber;
-  }
 
   /**
    * Leitura da origem, do destino e planejamento — a parte comum de
@@ -754,7 +731,7 @@ export class RunHelpdeskImportWizardService {
       const escrita = await writer.writeOrganization({
         plan: plano.organization,
         client: cliente,
-        sourceDocumentNumber: await this.lerDocumentoDaOrigem(cliente.id),
+        sourceDocumentNumber: cliente.documentNumber,
         parentBusinessGroupPublicId: selection.getParentBusinessGroupPublicId(),
         actorPublicId,
         recordItems: async (connection, targets) => {

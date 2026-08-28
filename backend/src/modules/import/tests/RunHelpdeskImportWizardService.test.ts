@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import type {
-  HelpdeskClientDocumentRead,
   HelpdeskClientRecord,
   HelpdeskSourceReader,
   HelpdeskUserRecord
@@ -20,6 +19,7 @@ import {
   type WizardApplyWriter
 } from "../application/RunHelpdeskImportWizardService.js";
 import { WIZARD_MAPPING_RULES_VERSION } from "../domain/wizard/HelpdeskImportScope.js";
+import { HelpdeskUserSourceUnavailableError } from "../domain/errors/HelpdeskUserSourceErrors.js";
 import {
   acessoConcedido,
   alvo,
@@ -519,84 +519,130 @@ describe("assistente — fingerprints", () => {
  * CNPJ da origem — a única evidência que o vínculo automático com o
  * Portal aceita.
  *
- * A descoberta que motiva estes testes: `pctec_helpdesk.clients` TEM a
- * coluna `cnpj`, mas o principal read-only do Ingressa tem SELECT de
- * COLUNA em `(id, name, active)`. Enquanto o GRANT não for ampliado, a
- * fonte responde "não fornece" — e o assistente precisa se comportar
- * corretamente nos DOIS mundos, porque o segundo depende só de uma
- * decisão de quem opera.
+ * O documento agora chega junto do REGISTRO da empresa, e não por uma
+ * leitura à parte. A consulta separada existia para contornar um GRANT
+ * de coluna que não incluía o documento; no registro autoritativo ele é
+ * cadastro como qualquer outro campo. Ver
+ * `MariaDbHelpdeskReadOnlySource.normalizarDocumento` para as três
+ * recusas que produzem `null`.
  */
 describe("assistente — CNPJ da origem", () => {
-  class FonteComDocumento extends FonteFake {
-    public readonly idsConsultados: number[] = [];
-    public constructor(private readonly documento: string | null, private readonly disponivel = true) {
-      super();
-    }
-    public async readClientDocument(clientId: number): Promise<HelpdeskClientDocumentRead> {
-      this.idsConsultados.push(clientId);
-      return this.disponivel ? { available: true, documentNumber: this.documento } : { available: false };
+  function fonteComDocumento(documentNumber: string | null): FonteFake {
+    return new FonteFake(USUARIOS, { ...CLIENTE, documentNumber });
+  }
+
+  it("transporta o CNPJ do registro até a criação da Organization", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonteComDocumento("11222333000181"));
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(bancada.documentosDeOrganizacao).toEqual(["11222333000181"]);
+  });
+
+  it("empresa sem CNPJ utilizável: organização criada sem documento, e NUNCA pelo nome", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonteComDocumento(null));
+
+    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+
+    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+    // A razão social está ali, disponível, e continua não sendo usada.
+    expect(bancada.documentosDeOrganizacao).not.toContain(CLIENTE.name);
+  });
+
+  it("o documento NÃO entra no fingerprint — corrigir um CNPJ não invalida o dry-run aprovado", async () => {
+    // Esta é a invariante que a mudança de contrato poderia ter
+    // quebrado sem ninguém notar: o documento passou a viajar JUNTO do
+    // registro da empresa, então bastaria ele ser projetado no
+    // fingerprint para que uma correção de cadastro no Helpdesk entre o
+    // dry-run e o apply fizesse o apply ser recusado por "a origem
+    // mudou" — punindo exatamente quem corrigiu o dado.
+    const servico = (fonte: FonteFake) => new RunHelpdeskImportWizardService(montar(alvo(), {}, { status: "ACTIVE" }, fonte).deps);
+
+    const semDocumento = await servico(fonteComDocumento(null)).execute(pedidoApply());
+    const comDocumento = await servico(fonteComDocumento("11222333000181")).execute(pedidoApply());
+
+    expect(comDocumento.snapshotFingerprint).toBe(semDocumento.snapshotFingerprint);
+    expect(comDocumento.scopeFingerprint).toBe(semDocumento.scopeFingerprint);
+  });
+});
+
+/**
+ * Fonte de USUÁRIOS indisponível.
+ *
+ * O que estes testes protegem é uma distinção, não um caminho feliz:
+ * "não consegui perguntar" nunca pode virar "perguntei e não há
+ * ninguém". A segunda leitura convida a concluir a importação sem
+ * usuários ou a recadastrá-los à mão — decisões tomadas sobre uma
+ * informação que ninguém verificou.
+ */
+describe("assistente — fonte de usuários indisponível", () => {
+  class FonteSemUsuarios extends FonteFake {
+    public override async readUsersByIds(): Promise<readonly HelpdeskUserRecord[]> {
+      throw new HelpdeskUserSourceUnavailableError();
     }
   }
 
-  it("transporta o CNPJ até a criação da Organization quando a fonte o fornece", async () => {
-    const fonte = new FonteComDocumento("11.222.333/0001-81");
-    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonte);
+  it("o APPLY é recusado com o código estável, e NENHUM lote é aberto", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteSemUsuarios());
 
-    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    await expect(
+      new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply())
+    ).rejects.toMatchObject({ code: "HELPDESK_USER_SOURCE_UNAVAILABLE" });
 
-    expect(bancada.documentosDeOrganizacao).toEqual(["11.222.333/0001-81"]);
-    expect(fonte.idsConsultados).toEqual([CLIENTE_ID]);
+    // A recusa acontece em `prepare`, ANTES de o lote existir: não há
+    // lote RUNNING órfão, nem lote FAILED que sugira tentativa.
+    expect(bancada.start).not.toHaveBeenCalled();
+    expect(bancada.complete).not.toHaveBeenCalled();
+    expect(bancada.fail).not.toHaveBeenCalled();
   });
 
-  it("empresa sem CNPJ na origem: organização criada sem documento, e NUNCA pelo nome", async () => {
-    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteComDocumento(null));
+  it("nada é escrito: nem organização, nem usuário, nem vínculo", async () => {
+    const autoLink = { execute: vi.fn() };
+    const bancada = montar(alvo(), { portalAutoLinkService: autoLink }, { status: "ACTIVE" }, new FonteSemUsuarios());
 
-    await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    await expect(
+      new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply())
+    ).rejects.toThrow(HelpdeskUserSourceUnavailableError);
 
-    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+    expect(bancada.ordemDeChamadas).toEqual([]);
+    expect(bancada.escritasDeOrganizacao).toEqual([]);
+    expect(bancada.escritasDeUsuario).toEqual([]);
+    expect(autoLink.execute).not.toHaveBeenCalled();
   });
 
-  it("fonte sem privilégio na coluna é tratada como 'não fornece', não como falha", async () => {
-    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteComDocumento("11222333000181", false));
+  it("o DRY_RUN também é recusado — nunca produz um plano sem usuários", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteSemUsuarios());
 
-    // O APPLY completa. Deixar o 1143 subir faria uma importação
-    // inteira falhar por causa de um campo opcional que a operação
-    // nunca teve.
-    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    await expect(
+      new RunHelpdeskImportWizardService(bancada.deps).execute({
+        mode: "DRY_RUN",
+        selection: selecao(),
+        actorIdentityPublicId: APROVADOR
+      })
+    ).rejects.toMatchObject({ code: "HELPDESK_USER_SOURCE_UNAVAILABLE" });
 
-    expect(resultado.status).toBe("COMPLETED");
-    expect(bancada.documentosDeOrganizacao).toEqual([null]);
+    expect(bancada.start).not.toHaveBeenCalled();
   });
 
-  it("fonte que sequer implementa a leitura continua funcionando", async () => {
-    // `FonteFake` é a fonte de todos os outros testes desta suíte: ela
-    // não tem `readClientDocument`. Tratar a ausência do método como
-    // erro quebraria o assistente que já está em uso.
-    const bancada = montar();
+  it("a mensagem NÃO afirma ausência de usuários", async () => {
+    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteSemUsuarios());
 
-    const resultado = await new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
+    const erro = await new RunHelpdeskImportWizardService(bancada.deps)
+      .execute(pedidoApply())
+      .then(
+        () => undefined,
+        (e: unknown) => e as Error
+      );
+    const texto = (erro as Error).message.toLowerCase();
 
-    expect(resultado.status).toBe("COMPLETED");
-    expect(bancada.documentosDeOrganizacao).toEqual([null]);
-  });
-
-  it("o documento NÃO é lido na pré-visualização nem no dry-run", async () => {
-    const fonte = new FonteComDocumento("11222333000181");
-    const bancada = montar(alvo(), {}, { status: "ACTIVE" }, fonte);
-    const servico = new RunHelpdeskImportWizardService(bancada.deps);
-
-    await servico.prepare(selecao());
-    await servico.execute({
-      mode: "DRY_RUN",
-      selection: selecao(),
-      actorIdentityPublicId: APROVADOR
-    });
-
-    // Se entrasse no plano, um CNPJ corrigido no Helpdesk entre o
-    // dry-run e o apply mudaria o `scopeFingerprint` e faria o apply ser
-    // recusado por "a origem mudou" — punindo uma correção que não
-    // altera nada do que vai ser escrito.
-    expect(fonte.idsConsultados).toEqual([]);
+    // "temporariamente indisponível" e "não pôde ser consultada" são
+    // afirmações sobre a CONSULTA. "nenhum usuário", "sem usuários" ou
+    // "não encontrado" seriam afirmações sobre a EMPRESA — e o sistema
+    // não sabe nada sobre ela neste momento.
+    expect(texto).toContain("indisponível");
+    for (const proibido of ["nenhum usuário", "sem usuários", "não encontrado", "não possui usuários"]) {
+      expect(texto).not.toContain(proibido);
+    }
   });
 });
 

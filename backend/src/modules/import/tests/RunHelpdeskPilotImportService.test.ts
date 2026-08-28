@@ -23,7 +23,7 @@ const USUARIOS: readonly HelpdeskUserRecord[] = [
   { id: 44, name: "Piloto Dois", email: "piloto.dois@example.invalid", role: "cliente", active: true, clientId: 75 }
 ];
 
-const CLIENTE: HelpdeskClientRecord = { id: 75, name: RAZAO_SOCIAL, active: true };
+const CLIENTE: HelpdeskClientRecord = { id: 75, name: RAZAO_SOCIAL, active: true, documentNumber: null };
 
 class FakeSource implements HelpdeskSourceReader {
   public readIds: number[][] = [];

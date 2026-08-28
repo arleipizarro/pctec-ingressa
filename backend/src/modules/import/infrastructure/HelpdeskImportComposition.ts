@@ -50,8 +50,13 @@ export function composeHelpdeskImport(
    */
   portalAutoLinkService?: PortalAutoLinkPort | undefined
 ): HelpdeskImportComposition {
-  const sourcePool = createPool(loadHelpdeskSourceConfig());
-  const source = new MariaDbHelpdeskReadOnlySource(sourcePool);
+  const sourceConfig = loadHelpdeskSourceConfig();
+  const sourcePool = createPool(sourceConfig);
+  // O schema do registro autoritativo vem da configuração validada — a
+  // conexão é a do Helpdesk, e o cadastro de empresas mora em outro
+  // schema do mesmo servidor. Uma conexão só para os dois: o JOIN entre
+  // schemas não é possível com dois pools.
+  const source = new MariaDbHelpdeskReadOnlySource(sourcePool, sourceConfig.registryDatabase);
   const targetStateReader = new MariaDbWizardTargetStateReader(ingressaPool);
   const unitOfWork = new MariaDbUnitOfWork(ingressaPool);
   const itemRepository = new MariaDbImportBatchItemRepository(ingressaPool);
