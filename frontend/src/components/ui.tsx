@@ -1,6 +1,14 @@
 import type { ReactNode } from "react";
+import { rotulo } from "../apresentacao.js";
 
-/** Badge de status — a cor comunica antes da leitura. */
+/**
+ * Badge de status — a cor comunica antes da leitura.
+ *
+ * `valor` é sempre o valor do SERVIDOR: é ele que escolhe a classe, e é
+ * ele que os testes e o resto do código continuam enxergando. Só o
+ * texto passa por `rotulo()`, que devolve o próprio valor quando não há
+ * tradução — um enum novo aparece cru em vez de sumir.
+ */
 export function Badge({ valor }: { valor: string }): JSX.Element {
   const classe =
     valor === "ACTIVE" || valor === "GRANTED" || valor === "COMPLETED" || valor === "CREATE"
@@ -10,7 +18,7 @@ export function Badge({ valor }: { valor: string }): JSX.Element {
         : valor === "BLOCKED" || valor === "REVOKED" || valor === "FAILED" || valor === "CONFLICT"
           ? "badge-erro"
           : "badge-neutro";
-  return <span className={`badge ${classe}`}>{valor}</span>;
+  return <span className={`badge ${classe}`}>{rotulo(valor)}</span>;
 }
 
 /**
