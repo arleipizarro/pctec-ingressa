@@ -13,7 +13,7 @@ import { Badge, Estado, Paginacao } from "../components/ui.js";
  */
 const MOTIVOS: Readonly<Record<string, string>> = {
   IDENTITY_NOT_FOUND: "Identidade não encontrada.",
-  IDENTITY_NOT_ACTIVE: "A identidade não está ACTIVE.",
+  IDENTITY_NOT_ACTIVE: "A identidade não está ativa.",
   IDENTITY_FEDERATION_INACTIVE:
     "O vínculo federado desta identidade foi revogado. Conta criada localmente não cai aqui — só quem tinha vínculo e o perdeu.",
   CREDENTIAL_ALREADY_EXISTS: "Já possui senha definida — convite é só para primeiro acesso.",

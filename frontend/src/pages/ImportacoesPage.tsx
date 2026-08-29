@@ -16,7 +16,7 @@ export function ImportacoesPage(): JSX.Element {
       <h2>Importações</h2>
       <p className="subtitulo">
         Lotes do importador. A listagem é somente leitura; para criar um lote novo, use o
-        assistente — ele executa o dry-run, mostra as decisões e exige confirmação forte antes de
+        assistente — ele executa a simulação, mostra as decisões e exige confirmação forte antes de
         aplicar.
       </p>
 

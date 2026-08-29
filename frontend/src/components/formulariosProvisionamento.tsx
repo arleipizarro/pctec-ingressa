@@ -316,8 +316,9 @@ export function FormularioNovoUsuario({
             onChange={(e) => setMembershipProfile(e.target.value)}
             style={{ width: "100%" }}
           >
+            {/* `value` = enum enviado ao servidor; só o texto é traduzido. */}
             {PERFIS_DE_VINCULO.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>{rotulo(p)}</option>
             ))}
           </select>
           <p className="subtitulo">Descreve a relação com a organização — não é permissão.</p>
@@ -330,19 +331,19 @@ export function FormularioNovoUsuario({
             disabled={!ehGrupo}
             style={{ width: "100%" }}
           >
-            <option value="ORGANIZATION_ONLY">ORGANIZATION_ONLY</option>
-            {ehGrupo && <option value="ORGANIZATION_AND_DESCENDANTS">ORGANIZATION_AND_DESCENDANTS</option>}
+            <option value="ORGANIZATION_ONLY">{rotulo("ORGANIZATION_ONLY")}</option>
+            {ehGrupo && <option value="ORGANIZATION_AND_DESCENDANTS">{rotulo("ORGANIZATION_AND_DESCENDANTS")}</option>}
           </select>
           <p className="subtitulo">
             {ehGrupo
-              ? "ORGANIZATION_AND_DESCENDANTS alcança também as empresas do grupo."
-              : "Em COMPANY existe apenas ORGANIZATION_ONLY."}
+              ? "O escopo de organização e descendentes alcança também as empresas do grupo."
+              : "Para empresas, está disponível apenas o escopo da própria organização."}
           </p>
 
           <fieldset style={{ border: "none", padding: 0, margin: "12px 0 0" }}>
             <legend className="subtitulo" style={{ padding: 0 }}>Aplicações concedidas</legend>
             {ativas.length === 0 ? (
-              <div className="vazio">Nenhuma aplicação ACTIVE disponível.</div>
+              <div className="vazio">Nenhuma aplicação ativa disponível.</div>
             ) : (
               ativas.map((a) => (
                 <label key={a.code} style={{ display: "block", fontWeight: "normal" }}>
@@ -351,13 +352,13 @@ export function FormularioNovoUsuario({
                     checked={selecionadas.includes(a.code)}
                     onChange={() => alternar(a.code)}
                   />{" "}
-                  {a.name} <code>{a.code}</code> — perfil USER
+                  {a.name} <code>{a.code}</code> — perfil usuário
                 </label>
               ))
             )}
             <p className="subtitulo">
-              Ao menos uma. O perfil concedido é sempre <strong>USER</strong>; conceder ADMIN é uma ação
-              separada, na tela da pessoa.
+              Ao menos uma. O perfil concedido é sempre <strong>usuário</strong>; conceder administrador é
+              uma ação separada, na tela da pessoa.
             </p>
             {semCobertura && <AvisoDeCoberturaDoPortal portal={portal!} />}
           </fieldset>
@@ -467,7 +468,7 @@ function AvisoDeCoberturaDoPortal({ portal }: { portal: IntegracaoComOPortal }):
 
 const MOTIVOS_DE_CONVITE: Readonly<Record<string, string>> = {
   IDENTITY_NOT_FOUND: "Identidade não encontrada.",
-  IDENTITY_NOT_ACTIVE: "A identidade não está ACTIVE.",
+  IDENTITY_NOT_ACTIVE: "A identidade não está ativa.",
   IDENTITY_FEDERATION_INACTIVE: "O vínculo federado desta identidade foi revogado.",
   CREDENTIAL_ALREADY_EXISTS: "Já possui senha definida.",
   NO_APPLICATION_ACCESS: "Não tem acesso concedido a nenhum aplicativo.",
@@ -523,7 +524,7 @@ export function ResultadoDoProvisionamento({
           <dt>E-mail</dt><dd>{resultado.email}</dd>
           <dt>publicId</dt><dd><code>{resultado.identityPublicId}</code></dd>
           <dt>Vínculo</dt>
-          <dd>{resultado.membership.profile} · {resultado.membership.scope} · {resultado.membership.status}</dd>
+          <dd>{rotulo(resultado.membership.profile)} · {rotulo(resultado.membership.scope)} · {rotulo(resultado.membership.status)}</dd>
           <dt>Acessos</dt>
           <dd>
             {resultado.applicationAccesses.map((a) => `${a.applicationCode} (${a.accessProfile})`).join(", ")}

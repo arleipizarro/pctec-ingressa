@@ -4,6 +4,7 @@ import { api, ApiError, type ConviteDaIdentidade } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Confirmacao, Estado } from "../components/ui.js";
 import { FormularioConcederAcesso, FormularioCriarMembership } from "../components/formularios.js";
+import { rotulo, rotuloDeAplicacao } from "../apresentacao.js";
 
 type AcaoPendente =
   | { tipo: "ativar" }
@@ -33,7 +34,7 @@ const dataHora = (valor: string | null): string =>
 const TITULOS: Readonly<Record<string, string>> = {
   ativar: "Ativar identidade federada",
   revogar: "Revogar acesso",
-  encerrar: "Encerrar membership",
+  encerrar: "Encerrar vínculo",
   convidar: "Criar convite de acesso",
   revogarConvite: "Revogar convite",
   encerrarSessoes: "Encerrar todas as sessões",
@@ -130,7 +131,7 @@ export function UsuarioDetalhePage(): JSX.Element {
         setMensagem({ tipo: "ok", texto: "Acesso revogado." });
       } else if (acao.tipo === "encerrar") {
         await api.endMembership(acao.publicId, motivo.trim());
-        setMensagem({ tipo: "ok", texto: "Membership encerrado." });
+        setMensagem({ tipo: "ok", texto: "Vínculo encerrado." });
       } else if (acao.tipo === "convidar") {
         const resposta = await api.convidar([publicId]);
         const resultado = resposta.results[0];
@@ -207,7 +208,7 @@ export function UsuarioDetalhePage(): JSX.Element {
 
             <dl className="chave-valor">
               <dt>publicId</dt><dd><code>{dados.public_id}</code></dd>
-              <dt>Tipo</dt><dd>{dados.type}</dd>
+              <dt>Tipo</dt><dd>{rotulo(dados.type)}</dd>
               <dt>Login no Ingressa</dt><dd>{dados.login_enabled === 1 ? "habilitado" : "desabilitado"}</dd>
             </dl>
 
@@ -218,7 +219,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                 </button>
               )}
               <button type="button" onClick={() => setAcaoPendente({ tipo: "conceder" })}>Conceder acesso</button>
-              <button type="button" onClick={() => setAcaoPendente({ tipo: "criarMembership" })}>Criar membership</button>
+              <button type="button" onClick={() => setAcaoPendente({ tipo: "criarMembership" })}>Criar vínculo</button>
               {/* Só ACTIVE transita para BLOCKED. Oferecer o botão nos
                   outros estados levaria a pessoa a um 422 do domínio. */}
               {dados.status === "ACTIVE" && (
@@ -250,7 +251,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                 <p className="subtitulo">
                   {dados.login_enabled === 1
                     ? "Esta pessoa já define login por senha própria — convite é só para primeiro acesso."
-                    : "Convite disponível apenas para identidade ACTIVE ainda sem login habilitado."}
+                    : "O convite só fica disponível para uma identidade ativa que ainda não tenha login habilitado."}
                 </p>
               )}
 
@@ -342,7 +343,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.externalReferences.map((r) => (
                         <tr key={r.public_id}>
-                          <td>{r.system_code}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
+                          <td>{rotuloDeAplicacao(r.system_code)}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
                           <td>{r.match_method ?? "—"}</td><td><Badge valor={r.status} /></td>
                         </tr>
                       ))}
@@ -353,8 +354,8 @@ export function UsuarioDetalhePage(): JSX.Element {
             </div>
 
             <div className="secao">
-              <h3>Memberships</h3>
-              {dados.memberships.length === 0 ? <div className="vazio">Sem memberships.</div> : (
+              <h3>Vínculos</h3>
+              {dados.memberships.length === 0 ? <div className="vazio">Sem vínculos.</div> : (
                 <div className="tabela-rolavel">
                   <table>
                     <thead><tr><th>Organização</th><th>Perfil</th><th>Escopo</th><th>Status</th><th /></tr></thead>
@@ -362,7 +363,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                       {dados.memberships.map((m) => (
                         <tr key={m.public_id}>
                           <td><Link to={`/admin/organizacoes/${m.organization_public_id}`}>{m.trade_name ?? m.legal_name}</Link></td>
-                          <td>{m.profile}</td><td>{m.scope}</td><td><Badge valor={m.status} /></td>
+                          <td>{rotulo(m.profile)}</td><td>{rotulo(m.scope)}</td><td><Badge valor={m.status} /></td>
                           <td>
                             {m.status === "ACTIVE" && (
                               <button type="button" className="perigo"
@@ -388,7 +389,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.applicationAccesses.map((a) => (
                         <tr key={a.public_id}>
-                          <td>{a.application_code}</td><td>{a.access_profile}</td><td><Badge valor={a.status} /></td>
+                          <td>{rotuloDeAplicacao(a.application_code)}</td><td>{rotulo(a.access_profile)}</td><td><Badge valor={a.status} /></td>
                           <td>
                             {a.status === "GRANTED" && (
                               <button type="button" className="perigo"
@@ -424,7 +425,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                 onConfirmar={(organizationPublicId, profile, scope) =>
                   void executar(
                     () => api.createMembership({ identityPublicId: publicId, organizationPublicId, profile, scope }),
-                    "Membership criado."
+                    "Vínculo criado."
                   )
                 }
               />
@@ -435,7 +436,7 @@ export function UsuarioDetalhePage(): JSX.Element {
                 titulo={TITULOS[acao.tipo] ?? "Confirmar ação"}
                 descricao={
                   acao.tipo === "ativar"
-                    ? "A identidade passa a ACTIVE e recebe contexto no sistema externo. Nenhuma senha é criada."
+                    ? "A identidade passa a ficar ativa e recebe contexto no sistema externo. Nenhuma senha é criada."
                     : acao.tipo === "revogar"
                       ? `O acesso a ${acao.aplicacao} cessa imediatamente. O histórico é preservado.`
                       : acao.tipo === "encerrar"
@@ -447,8 +448,8 @@ export function UsuarioDetalhePage(): JSX.Element {
                             : acao.tipo === "encerrarSessoes"
                               ? `${acao.quantidade} sessão(ões) será(ão) encerrada(s). A pessoa precisará entrar de novo; o acesso dela não muda.`
                               : acao.tipo === "bloquear"
-                                ? "A pessoa deixa de autenticar e todas as sessões ativas são encerradas na mesma operação. Memberships, acessos e referências são preservados."
-                                : "A identidade volta ao estado ACTIVE. Sessões encerradas NÃO voltam, e nenhum convite, membership ou acesso é recriado. O login permanece como está."
+                                ? "A pessoa deixa de autenticar e todas as sessões ativas são encerradas na mesma operação. Vínculos, acessos e referências são preservados."
+                                : "A identidade volta a ficar ativa. As sessões já encerradas NÃO voltam, e nenhum convite, vínculo ou acesso é recriado. O login permanece como está."
                 }
                 confirmando={enviando}
                 onConfirmar={confirmar}

@@ -23,15 +23,15 @@
  * tabela ou no texto de uma `<option>`. Em CAIXA ALTA porque é assim
  * que o selo se apresenta e o elemento não aplica `text-transform`.
  *
- * O critério de fronteira: está aqui TODO valor que o `<Badge>`
- * classifica, mais `EXPIRED` e `INACTIVE`, que dividem coluna com eles.
- * Traduzir só parte de uma coluna deixaria o widget meio em português.
+ * O critério de fronteira: está aqui TODO valor de enum FECHADO que a
+ * interface mostra a quem opera — situação, tipo, perfil, escopo, ação,
+ * modo, entidade e situação da reconciliação.
  *
- * O que NÃO está aqui continua saindo cru de propósito, e cada um forma
- * uma coluna internamente coerente: os estados da reconciliação
- * (`EXACT_UNIQUE`, `NOT_FOUND`…), o tipo de identidade (`HUMAN`,
- * `SERVICE`), o escopo (`ORGANIZATION_ONLY`) e o perfil de vínculo
- * (`CUSTOMER`). São vocabulários próprios — não um esquecimento.
+ * Fora daqui ficam, de propósito, os IDENTIFICADORES que existem para
+ * rastrear e não para ler: `reason_code` do item de lote, `event_type`
+ * da auditoria e `source_entity_type` (o nome da tabela de origem no
+ * sistema legado). Traduzi-los quebraria a correspondência com o que
+ * está gravado na trilha e com o que o suporte procura.
  */
 const ROTULOS: Readonly<Record<string, string>> = {
   // Situação de identidade, organização e vínculo.
@@ -54,8 +54,8 @@ const ROTULOS: Readonly<Record<string, string>> = {
   RUNNING: "EM EXECUÇÃO",
   // Ação do item de lote: divide seletor e cartões com CONFLICT e
   // QUARANTINE, que já estavam traduzidos desde a rodada anterior.
-  CREATE: "CRIAÇÃO",
-  SKIP: "IGNORADO",
+  CREATE: "CRIAR",
+  SKIP: "IGNORAR",
   // Modo do lote de importação
   DRY_RUN: "SIMULAÇÃO",
   APPLY: "APLICAÇÃO",
@@ -67,7 +67,35 @@ const ROTULOS: Readonly<Record<string, string>> = {
   QUARANTINE: "QUARENTENA",
   // Tipo de organização
   BUSINESS_GROUP: "GRUPO EMPRESARIAL",
-  COMPANY: "EMPRESA"
+  COMPANY: "EMPRESA",
+  // Tipo de identidade
+  HUMAN: "PESSOA",
+  SERVICE: "SERVIÇO",
+  // Perfil do vínculo com a organização
+  CUSTOMER: "CLIENTE",
+  EMPLOYEE: "COLABORADOR",
+  PARTNER: "PARCEIRO",
+  SUPPLIER: "FORNECEDOR",
+  // Perfil de acesso a uma aplicação
+  USER: "USUÁRIO",
+  ADMIN: "ADMINISTRADOR",
+  // Escopo do vínculo
+  ORGANIZATION_ONLY: "SOMENTE ORGANIZAÇÃO",
+  ORGANIZATION_AND_DESCENDANTS: "ORGANIZAÇÃO E DESCENDENTES",
+  // Entidade tocada por um item de lote
+  IDENTITY: "IDENTIDADE",
+  ORGANIZATION: "ORGANIZAÇÃO",
+  MEMBERSHIP: "VÍNCULO",
+  APPLICATION_ACCESS: "ACESSO A APLICAÇÃO",
+  IDENTITY_EXTERNAL_REFERENCE: "REFERÊNCIA DA IDENTIDADE",
+  ORGANIZATION_EXTERNAL_REFERENCE: "REFERÊNCIA DA ORGANIZAÇÃO",
+  // Situação da reconciliação com o Portal
+  EXACT_UNIQUE: "CORRESPONDÊNCIA ÚNICA",
+  NOT_FOUND: "NÃO ENCONTRADA",
+  AMBIGUOUS: "AMBÍGUA",
+  INACTIVE_ONLY: "SOMENTE INATIVAS",
+  DOCUMENT_MISSING_OR_INVALID: "CNPJ AUSENTE OU INVÁLIDO",
+  ALREADY_LINKED: "JÁ VINCULADA"
 };
 
 /** Tradução de um valor avulso. Sem entrada no mapa, devolve o original. */

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api, ApiError, CONFIRMACAO_DA_RECONCILIACAO } from "../api.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
 import { PORTAL_CATALOGO_INDISPONIVEL } from "../components/integracaoPortal.js";
+import { rotulo } from "../apresentacao.js";
 import type {
   EstadoDaReconciliacao,
   ExecucaoDaReconciliacao,
@@ -154,7 +155,7 @@ export function ReconciliacaoPortalPage(): JSX.Element {
       <h2>Reconciliação com o Portal</h2>
       <p className="subtitulo">
         Empresas ativas do Ingressa, classificadas pela correspondência de <strong>CNPJ</strong> com os clientes
-        do Portal. Esta listagem é um <strong>dry-run</strong>: ela não escreve nada.
+        do Portal. Esta listagem é uma <strong>simulação</strong>: ela não escreve nada.
       </p>
 
       <Estado carregando={carregando} erro={erro} vazio={dados !== null && dados.items.length === 0}>
@@ -165,7 +166,7 @@ export function ReconciliacaoPortalPage(): JSX.Element {
               <dl className="chave-valor">
                 {ORDEM.map((estado) => (
                   <div key={estado}>
-                    <dt>{estado}</dt>
+                    <dt>{rotulo(estado)}</dt>
                     <dd data-testid={`contagem-${estado}`}>{dados.counts[estado]}</dd>
                   </div>
                 ))}

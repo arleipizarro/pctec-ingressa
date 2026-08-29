@@ -121,9 +121,9 @@ export function FormularioCriarMembership({
   }
 
   return (
-    <div className="modal-fundo" role="dialog" aria-modal="true" aria-label="Criar membership">
+    <div className="modal-fundo" role="dialog" aria-modal="true" aria-label="Criar vínculo">
       <div className="modal">
-        <h3>Criar membership</h3>
+        <h3>Criar vínculo</h3>
         <p className="subtitulo">
           A pessoa passa a pertencer à organização escolhida, no escopo selecionado. O vínculo fica
           registrado com o seu nome.
@@ -140,16 +140,17 @@ export function FormularioCriarMembership({
 
         <label htmlFor="perfil-membership" className="subtitulo" style={{ margin: "10px 0 0" }}>Perfil</label>
         <select id="perfil-membership" value={perfil} onChange={(e) => setPerfil(e.target.value)} style={{ width: "100%" }}>
-          {PERFIS_DE_MEMBERSHIP.map((p) => <option key={p} value={p}>{p}</option>)}
+          {/* `value` = enum enviado ao servidor; só o texto é traduzido. */}
+          {PERFIS_DE_MEMBERSHIP.map((p) => <option key={p} value={p}>{rotulo(p)}</option>)}
         </select>
 
         <label htmlFor="escopo" className="subtitulo" style={{ margin: "10px 0 0" }}>Escopo</label>
         <select id="escopo" value={escopo} onChange={(e) => setEscopo(e.target.value)} style={{ width: "100%" }}>
-          {escopos.map((e) => <option key={e} value={e}>{e}</option>)}
+          {escopos.map((e) => <option key={e} value={e}>{rotulo(e)}</option>)}
         </select>
         {selecionada !== undefined && escopos.length === 1 && (
           <p className="subtitulo" style={{ margin: "6px 0 0" }}>
-            Só <code>ORGANIZATION_ONLY</code> se aplica: {rotulo(selecionada.type)} não tem descendentes.
+            Só o escopo da própria organização se aplica: {rotulo(selecionada.type).toLowerCase()} não tem descendentes.
           </p>
         )}
 
