@@ -664,12 +664,24 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   max-width: 62ch;
 }
 
-/* `auto-fit` + `minmax` resolve o responsivo sem media query: os cards
-   crescem juntos e a última linha não fica com um card órfão esticado.
+/* `auto-fill`, NÃO `auto-fit`.
+   A diferença aparece quando há poucos cards: `auto-fit` colapsa os
+   trilhos vazios, e aí o `1fr` do único trilho restante absorve a linha
+   inteira — uma pessoa com acesso a um só produto via um card de 1000px
+   de largura. `auto-fill` mantém os trilhos vazios, então um card ocupa
+   um trilho e para de crescer. Com o container em 1012px isso limita a
+   largura do card a ~326px, que é o teto visual desta grade.
+
+   `min(272px, 100%)` é a trava de estouro: abaixo de 272px de espaço
+   útil o trilho passa a valer 100% em vez de forçar 272px e empurrar
+   uma barra de rolagem horizontal. A media query de 640px continua
+   mandando em uma coluna no celular; isto é a rede de segurança para
+   qualquer largura entre elas.
+
    `align-items: stretch` (padrão do grid) é o que iguala as alturas. */
 .launcher-grade {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(272px, 100%), 1fr));
   gap: var(--e4);
 }
 
@@ -789,7 +801,10 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   font-weight: 700;
 }
 
-/* Foco de teclado visível no card inteiro e na ação. */
+/* Foco de teclado visível na AÇÃO. O card em si não é focável e não
+   é interativo: o alvo clicável é o link, e transformar o article
+   inteiro em botão criaria um alvo sem papel semântico e roubaria
+   a seleção de texto da descrição. */
 .app-card-acao:focus-visible {
   outline: 2px solid var(--marca-media);
   outline-offset: 2px;
