@@ -154,7 +154,7 @@ describe("NodemailerInvitationEmailTransport — envio e falha", () => {
 
   const MENSAGEM = {
     to: "fulana@exemplo.invalid",
-    subject: "PCTEC Ingressa — defina sua senha de acesso",
+    subject: "Bem-vindo ao PCTEC Ingressa — crie sua senha",
     text: "corpo em texto",
     html: "<p>corpo em html</p>"
   };

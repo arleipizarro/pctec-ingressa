@@ -639,7 +639,10 @@ export function createApp(options: CreateAppOptions = {}): Express {
           smtpFrom: env.INGRESSA_SMTP_FROM,
           smtpSecure: env.INGRESSA_SMTP_SECURE,
           // TLS obrigatório em produção — nunca configurável para menos.
-          requireTls: env.NODE_ENV === "production"
+          requireTls: env.NODE_ENV === "production",
+          // Mesma base que monta o link do convite; aqui só monta a URL
+          // do logotipo no corpo do e-mail.
+          publicBaseUrl: env.INGRESSA_PUBLIC_BASE_URL
         },
         options.invitationEmailTransport
       ),
