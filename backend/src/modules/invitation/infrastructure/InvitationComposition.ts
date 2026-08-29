@@ -25,13 +25,6 @@ export interface InvitationDeliveryConfig {
   readonly smtpSecure: boolean | undefined;
   /** `true` em produção — recusa entrega por conexão não cifrada. */
   readonly requireTls: boolean;
-  /**
-   * `INGRESSA_PUBLIC_BASE_URL` — a MESMA base de onde sai o link do
-   * convite. Serve só para montar a URL absoluta do logotipo no e-mail.
-   * Opcional: tem default vazio no `env` e o corpo do e-mail continua
-   * correto sem ela.
-   */
-  readonly publicBaseUrl?: string | undefined;
 }
 
 /**
@@ -122,7 +115,6 @@ export function composeInvitationDelivery(
 
   return new SmtpInvitationDelivery(transporteEfetivo, {
     fromLabel: "PCTEC Ingressa",
-    supportContact: "a PCTEC",
-    publicBaseUrl: config.publicBaseUrl
+    supportContact: "a PCTEC"
   });
 }

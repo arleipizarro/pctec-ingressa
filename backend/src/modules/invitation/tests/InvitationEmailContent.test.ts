@@ -21,8 +21,7 @@ const LINK = `${BASE}/convite#${TOKEN}`;
 
 const OPCOES: SmtpInvitationDeliveryOptions = {
   fromLabel: "PCTEC Ingressa",
-  supportContact: "a PCTEC",
-  publicBaseUrl: BASE
+  supportContact: "a PCTEC"
 };
 
 function pedido(sobrescrever: Partial<InvitationDeliveryRequest> = {}): InvitationDeliveryRequest {
@@ -159,30 +158,74 @@ describe("escaping de conteúdo variável", () => {
   });
 });
 
-describe("logotipo — só quando a base pública é confiável", () => {
-  it("deriva a URL absoluta a partir da base configurada", () => {
-    expect(urlDoLogotipo(BASE)).toBe(`${BASE}/marca/logo-ingressa.png`);
-    expect(urlDoLogotipo(`${BASE}/`)).toBe(`${BASE}/marca/logo-ingressa.png`);
-    expect(comporEmailDeConvite(pedido(), OPCOES).html).toContain(
-      `src="${BASE}/marca/logo-ingressa.png"`
+describe("logotipo — derivado do próprio link, nunca de config paralela", () => {
+  it("usa somente a origem: descarta caminho, query, fragmento e credenciais", () => {
+    // O link real tem /convite, e o token vive no fragmento.
+    expect(urlDoLogotipo(`${BASE}/convite?origem=email&x=1#${TOKEN}`)).toBe(
+      `${BASE}/marca/logo-ingressa.png`
+    );
+    // Credenciais na URL não podem sobreviver no `src` da imagem.
+    expect(urlDoLogotipo(`https://usuario:senha@ingressa.exemplo.invalid/convite#${TOKEN}`)).toBe(
+      "https://ingressa.exemplo.invalid/marca/logo-ingressa.png"
     );
   });
 
-  it("base ausente, vazia ou inválida NÃO vira caminho relativo quebrado", () => {
-    for (const ruim of [undefined, "", "   ", "/marca", "ftp://x.invalid", "não-é-url"]) {
-      expect(urlDoLogotipo(ruim)).toBeNull();
-    }
-    const semBase = comporEmailDeConvite(pedido(), { ...OPCOES, publicBaseUrl: undefined });
-    expect(semBase.html).not.toContain("<img");
-    expect(semBase.html).not.toContain("/marca/logo-ingressa.png");
+  it("o token NUNCA aparece na URL do logotipo", () => {
+    const logo = urlDoLogotipo(LINK);
+    expect(logo).not.toBeNull();
+    expect(logo).not.toContain(TOKEN);
+    expect(logo).not.toContain("#");
+    expect(logo).not.toContain("?");
+
+    // E também não aparece dentro do atributo src no HTML renderizado.
+    const { html } = comporEmailDeConvite(pedido(), OPCOES);
+    const src = /<img[^>]*src="([^"]*)"/u.exec(html)?.[1] ?? "";
+    expect(src).toBe(`${BASE}/marca/logo-ingressa.png`);
+    expect(src).not.toContain(TOKEN);
   });
 
-  it("com imagens bloqueadas a mensagem continua se identificando e acionável", () => {
-    const { html } = comporEmailDeConvite(pedido(), { ...OPCOES, publicBaseUrl: undefined });
-    // Sem nenhuma imagem, o nome do produto e o CTA seguem em texto.
+  it("preserva a porta quando ela faz parte da origem", () => {
+    expect(urlDoLogotipo(`https://ingressa.exemplo.invalid:8443/convite#${TOKEN}`)).toBe(
+      "https://ingressa.exemplo.invalid:8443/marca/logo-ingressa.png"
+    );
+    expect(urlDoLogotipo("http://localhost:5173/convite#t")).toBe(
+      "http://localhost:5173/marca/logo-ingressa.png"
+    );
+  });
+
+  it("aceita http e https", () => {
+    expect(urlDoLogotipo("http://exemplo.invalid/convite#t")).toBe(
+      "http://exemplo.invalid/marca/logo-ingressa.png"
+    );
+    expect(urlDoLogotipo("https://exemplo.invalid/convite#t")).toBe(
+      "https://exemplo.invalid/marca/logo-ingressa.png"
+    );
+  });
+
+  it("esquema não-web, URL relativa ou lixo não viram imagem", () => {
+    for (const ruim of [
+      "ftp://exemplo.invalid/convite",
+      "file:///etc/passwd",
+      "javascript:alert(1)",
+      "/convite#token",
+      "convite",
+      "",
+      "   ",
+      "não-é-url"
+    ]) {
+      expect(urlDoLogotipo(ruim)).toBeNull();
+    }
+  });
+
+  it("sem logotipo, marca e CTA continuam legíveis — nenhum <img> quebrado", () => {
+    // Link relativo: não dá para derivar origem, então não há imagem.
+    const { html } = comporEmailDeConvite(pedido({ link: "/convite#abc" }), OPCOES);
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("/marca/logo-ingressa.png");
+    // A mensagem continua se identificando e acionável.
     expect(html).toContain("PCTEC Ingressa");
-    expect(html).toContain("Criar minha senha");
     expect(html).toContain("Central de acesso às aplicações da PCTEC");
+    expect(html).toContain("Criar minha senha");
   });
 
   it("o logo tem alt — leitor de tela e imagem bloqueada mostram a marca", () => {
