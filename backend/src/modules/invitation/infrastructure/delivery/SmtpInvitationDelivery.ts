@@ -27,14 +27,6 @@ export interface InvitationEmailTransport {
 export interface SmtpInvitationDeliveryOptions {
   readonly fromLabel: string;
   readonly supportContact: string;
-  /**
-   * Base pública da UI (`INGRESSA_PUBLIC_BASE_URL`), usada só para
-   * montar a URL ABSOLUTA do logotipo. Opcional de propósito: o valor
-   * tem default vazio no `env` e não existe gate de produção exigindo
-   * que esteja preenchido, então o e-mail precisa continuar correto sem
-   * ele. Ver `urlDoLogotipo`.
-   */
-  readonly publicBaseUrl?: string | undefined;
 }
 
 /** Paleta índigo do HUB/Ingressa. Cliente de e-mail não lê custom property. */
@@ -114,7 +106,7 @@ export function comporEmailDeConvite(
 ): InvitationEmailMessage {
   const nome = nomeConfiavel(request.fullName);
   const validade = formatarValidade(request.expiresAt);
-  const logo = urlDoLogotipo(options.publicBaseUrl);
+  const logo = urlDoLogotipo(request.link);
   const saudacao = nome === null ? "Olá." : `Olá, ${nome}.`;
 
   return {
@@ -145,32 +137,40 @@ function formatarValidade(expiresAt: Date): string {
 }
 
 /**
- * URL absoluta do logotipo — ou `null` quando não dá para derivar com
- * segurança.
+ * URL absoluta do logotipo, derivada do PRÓPRIO link do convite — ou
+ * `null` quando não dá para derivar com segurança.
  *
- * `INGRESSA_PUBLIC_BASE_URL` tem default `""` e nenhum gate de produção
- * a exige, então ela pode chegar aqui vazia ou inválida. Um `<img>` com
- * `src="/marca/logo-ingressa.png"` em e-mail é caminho relativo a lugar
- * nenhum: apareceria quebrado em todo cliente. Sem base confiável, o
- * cabeçalho cai para o nome do produto em texto — que é o que já
- * aparece de qualquer forma quando as imagens estão bloqueadas.
+ * **Por que do link, e não de uma config própria.** O link já é o
+ * endereço definitivo, montado a montante a partir de
+ * `INGRESSA_PUBLIC_BASE_URL`. Carregar a mesma base uma segunda vez até
+ * aqui, só para a imagem, seria duplicar a origem — e duas fontes para o
+ * mesmo dado é uma que pode divergir da outra.
+ *
+ * **Só `origin`, nunca concatenação da string.** `new URL(...).origin`
+ * devolve exclusivamente esquema, host e porta: `pathname`, query,
+ * fragmento (onde vive o token) e credenciais ficam de fora por
+ * construção, não por confiança em `replace`. Um `src` montado colando
+ * texto poderia arrastar o token do convite para dentro do atributo de
+ * uma imagem — que é justamente o lugar de onde ele vazaria por
+ * `Referer` ou por proxy de imagem.
+ *
+ * Esquema fora de http/https, URL relativa ou valor inválido devolvem
+ * `null`, e aí o cabeçalho cai para o nome do produto em texto — que é
+ * o que já aparece quando as imagens estão bloqueadas.
  */
-export function urlDoLogotipo(publicBaseUrl: string | undefined): string | null {
-  const base = (publicBaseUrl ?? "").trim().replace(/\/+$/, "");
-  if (base.length === 0) {
-    return null;
-  }
+export function urlDoLogotipo(link: string): string | null {
+  let convite: URL;
   try {
-    const url = new URL(base);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return null;
-    }
-    return `${base}/marca/logo-ingressa.png`;
+    convite = new URL(link);
   } catch {
-    // Base malformada não vira URL de imagem: melhor sem logo do que
-    // com um `src` inválido no e-mail de boas-vindas.
+    // Relativa ou malformada não vira `src`: melhor sem logotipo do que
+    // com uma imagem quebrada no e-mail de boas-vindas.
     return null;
   }
+  if (convite.protocol !== "http:" && convite.protocol !== "https:") {
+    return null;
+  }
+  return `${convite.origin}/marca/logo-ingressa.png`;
 }
 
 function montarTexto({
