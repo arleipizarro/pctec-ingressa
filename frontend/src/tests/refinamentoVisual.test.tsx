@@ -198,8 +198,31 @@ describe("camada de apresentação — cobertura fora do painel", () => {
     expect(rotulo("EXPIRED")).toBe("EXPIRADO");
     expect(rotulo("GRANTED")).toBe("CONCEDIDO");
     expect(rotulo("REVOKED")).toBe("REVOGADO");
-    expect(rotulo("CREATE")).toBe("CRIAÇÃO");
-    expect(rotulo("SKIP")).toBe("IGNORADO");
+    expect(rotulo("CREATE")).toBe("CRIAR");
+    expect(rotulo("SKIP")).toBe("IGNORAR");
+  });
+
+  it("traduz o vocabulário técnico restante exposto ao usuário", () => {
+    expect(rotulo("HUMAN")).toBe("PESSOA");
+    expect(rotulo("SERVICE")).toBe("SERVIÇO");
+    expect(rotulo("ORGANIZATION_ONLY")).toBe("SOMENTE ORGANIZAÇÃO");
+    expect(rotulo("ORGANIZATION_AND_DESCENDANTS")).toBe("ORGANIZAÇÃO E DESCENDENTES");
+    expect(rotulo("CUSTOMER")).toBe("CLIENTE");
+    expect(rotulo("USER")).toBe("USUÁRIO");
+    expect(rotulo("ADMIN")).toBe("ADMINISTRADOR");
+    expect(rotulo("IDENTITY")).toBe("IDENTIDADE");
+    expect(rotulo("MEMBERSHIP")).toBe("VÍNCULO");
+    expect(rotulo("EXACT_UNIQUE")).toBe("CORRESPONDÊNCIA ÚNICA");
+  });
+
+  /**
+   * Fail-visible: o mapa cresceu bastante, e a garantia que importa é a
+   * de que ele nunca engole um valor. Enum novo do servidor aparece cru.
+   */
+  it("continua devolvendo cru qualquer valor fora do mapa", () => {
+    for (const desconhecido of ["ENUM_NOVO", "PARTIALLY_LINKED", "xyz", "123"]) {
+      expect(rotulo(desconhecido)).toBe(desconhecido);
+    }
   });
 
   it("a listagem de Organizações traduz o tipo na coluna", async () => {

@@ -39,7 +39,7 @@ const ETAPAS: readonly { readonly id: Etapa; readonly rotulo: string }[] = [
   { id: "ORIGEM", rotulo: "1. Origem" },
   { id: "SELECAO", rotulo: "2. Usuários" },
   { id: "MAPEAMENTO", rotulo: "3. Mapeamento" },
-  { id: "REVISAO", rotulo: "4. Revisão do dry-run" },
+  { id: "REVISAO", rotulo: "4. Revisão da simulação" },
   { id: "RESULTADO", rotulo: "5. Resultado" }
 ];
 
@@ -651,7 +651,7 @@ function EtapaMapeamento({
           disabled={ocupado || previa === null || selecao.selectedSourceUserIds.length === 0}
           onClick={onDryRun}
         >
-          {ocupado ? "Executando…" : "Executar DRY_RUN"}
+          {ocupado ? "Executando…" : "Simular importação"}
         </button>
         <button type="button" onClick={onCancelar}>Cancelar</button>
       </div>
@@ -687,10 +687,10 @@ function EtapaRevisao({
 
   return (
     <section>
-      <h3>Resumo do dry-run</h3>
+      <h3>Resumo da simulação</h3>
       <p className="subtitulo">
         Lote <code>{lote.batchPublicId}</code> · regras <code>{lote.mappingRulesVersion}</code> ·{" "}
-        <Badge valor={lote.status} />. Nenhuma entidade foi criada: o dry-run só registra o que
+        <Badge valor={lote.status} />. Nenhuma entidade foi criada: a simulação só registra o que
         faria.
       </p>
 
@@ -716,7 +716,7 @@ function EtapaRevisao({
       <div className="secao">
         <h3>Decisões por usuário</h3>
         <p className="subtitulo">
-          Abra um usuário para ver o snapshot que iria para a trilha — campos sensíveis aparecem
+          Abra um usuário para ver o conteúdo que iria para a trilha — campos sensíveis aparecem
           como <span className="redigido">[REDIGIDO]</span>, com o nome preservado para auditoria.
         </p>
         {lote.users.map((usuario) => {
@@ -766,7 +766,7 @@ function EtapaRevisao({
           disabled={!aprovado || bloqueado || nadaAEscrever || ocupado}
           onClick={onAplicar}
         >
-          Executar APPLY
+          Executar importação
         </button>
         <button type="button" onClick={onCancelar}>Cancelar</button>
       </div>
@@ -858,7 +858,7 @@ function EtapaResultado({
         <div className="tabela-rolavel">
           <table>
             <thead>
-              <tr><th>Usuário</th><th>Identity</th><th>Status</th><th>Membership</th><th>Acesso</th></tr>
+              <tr><th>Usuário</th><th>Identidade</th><th>Status</th><th>Vínculo</th><th>Acesso</th></tr>
             </thead>
             <tbody>
               {resultado.users.map((usuario) => (

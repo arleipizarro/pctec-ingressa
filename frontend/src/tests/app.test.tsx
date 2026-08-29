@@ -151,8 +151,8 @@ describe("usuários", () => {
 
     expect(await screen.findByRole("heading", { name: "Piloto Um" })).toBeInTheDocument();
     expect(screen.getByText("FEDERADA")).toBeInTheDocument();
-    expect(screen.getByText("SISTEMA_SINTETICO")).toBeInTheDocument();
-    expect(screen.getByText("APP_SINTETICA")).toBeInTheDocument();
+    expect(screen.getByText("SISTEMA SINTETICO")).toBeInTheDocument();
+    expect(screen.getByText("APP SINTETICA")).toBeInTheDocument();
   });
 });
 
@@ -325,8 +325,8 @@ describe("conceder acesso", () => {
 describe("criar membership", () => {
   async function abrirFormulario() {
     renderizar(`/admin/usuarios/${fixtures.IDENTIDADE_PUBLIC_ID}`);
-    await userEvent.click(await screen.findByRole("button", { name: "Criar membership" }));
-    return screen.getByRole("dialog", { name: "Criar membership" });
+    await userEvent.click(await screen.findByRole("button", { name: "Criar vínculo" }));
+    return screen.getByRole("dialog", { name: "Criar vínculo" });
   }
 
   it("COMPANY não oferece AND_DESCENDANTS e explica por quê", async () => {
@@ -334,8 +334,8 @@ describe("criar membership", () => {
     await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.ORG_PUBLIC_ID);
 
     const escopo = within(dialogo).getByLabelText("Escopo");
-    expect(within(escopo).getByRole("option", { name: "ORGANIZATION_ONLY" })).toBeInTheDocument();
-    expect(within(escopo).queryByRole("option", { name: "ORGANIZATION_AND_DESCENDANTS" })).not.toBeInTheDocument();
+    expect(within(escopo).getByRole("option", { name: "SOMENTE ORGANIZAÇÃO" })).toBeInTheDocument();
+    expect(within(escopo).queryByRole("option", { name: "ORGANIZAÇÃO E DESCENDENTES" })).not.toBeInTheDocument();
     expect(within(dialogo).getByText(/não tem descendentes/i)).toBeInTheDocument();
   });
 
@@ -344,7 +344,7 @@ describe("criar membership", () => {
     await userEvent.selectOptions(within(dialogo).getByLabelText("Organização"), fixtures.GRUPO.public_id);
 
     const escopo = within(dialogo).getByLabelText("Escopo");
-    expect(within(escopo).getByRole("option", { name: "ORGANIZATION_AND_DESCENDANTS" })).toBeInTheDocument();
+    expect(within(escopo).getByRole("option", { name: "ORGANIZAÇÃO E DESCENDENTES" })).toBeInTheDocument();
   });
 
   it("trocar de grupo para empresa reverte o escopo incompatível", async () => {
@@ -365,7 +365,7 @@ describe("criar membership", () => {
     const dialogo = await abrirFormulario();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Cancelar" }));
 
-    expect(screen.queryByRole("dialog", { name: "Criar membership" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Criar vínculo" })).not.toBeInTheDocument();
     expect(criar).not.toHaveBeenCalled();
   });
 
@@ -395,7 +395,7 @@ describe("criar membership", () => {
         scope: "ORGANIZATION_ONLY"
       })
     );
-    expect(await screen.findByText("Membership criado.")).toBeInTheDocument();
+    expect(await screen.findByText("Vínculo criado.")).toBeInTheDocument();
     await waitFor(() => expect(detalhe.mock.calls.length).toBeGreaterThan(1));
   });
 
@@ -408,7 +408,7 @@ describe("criar membership", () => {
     await userEvent.click(within(dialogo).getByRole("button", { name: "Criar" }));
 
     expect(await screen.findByText(/recarregue e tente de novo/i)).toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "Criar membership" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Criar vínculo" })).toBeInTheDocument();
   });
 
   it("403 e 422 aparecem como mensagem de negócio", async () => {

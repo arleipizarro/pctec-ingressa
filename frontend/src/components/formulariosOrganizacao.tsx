@@ -127,7 +127,7 @@ export function FormularioAssociarGrupo({
         <h3>Associar a um grupo empresarial</h3>
         <p className="subtitulo">
           Esta empresa passa a pertencer ao grupo escolhido. Quem já tem vínculo no grupo com escopo
-          <strong> ORGANIZATION_AND_DESCENDANTS</strong> passará a enxergá-la. Nenhum vínculo é criado,
+          <strong> organização e descendentes</strong> passará a enxergá-la. Nenhum vínculo é criado,
           encerrado ou ampliado por esta ação.
         </p>
         <form onSubmit={enviar}>

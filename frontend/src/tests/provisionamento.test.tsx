@@ -329,7 +329,7 @@ describe("provisionamento de usuário — formulário", () => {
 
     const escopo = within(dialogo).getByLabelText("Escopo do vínculo");
     expect(escopo).toBeDisabled();
-    expect(within(escopo as HTMLSelectElement).queryByText("ORGANIZATION_AND_DESCENDANTS")).not.toBeInTheDocument();
+    expect(within(escopo as HTMLSelectElement).queryByText("ORGANIZAÇÃO E DESCENDENTES")).not.toBeInTheDocument();
   });
 
   it("em BUSINESS_GROUP o escopo oferece as duas opções", async () => {
@@ -339,7 +339,7 @@ describe("provisionamento de usuário — formulário", () => {
 
     const escopo = within(dialogo).getByLabelText("Escopo do vínculo");
     expect(escopo).not.toBeDisabled();
-    expect(within(escopo as HTMLSelectElement).getByText("ORGANIZATION_AND_DESCENDANTS")).toBeInTheDocument();
+    expect(within(escopo as HTMLSelectElement).getByText("ORGANIZAÇÃO E DESCENDENTES")).toBeInTheDocument();
   });
 
   it("lista só aplicações ACTIVE", async () => {
@@ -357,7 +357,7 @@ describe("provisionamento de usuário — formulário", () => {
     const dialogo = await abrirNovoUsuario();
 
     expect(within(dialogo).queryByLabelText(/perfil de acesso/i)).not.toBeInTheDocument();
-    expect(within(dialogo).getByText(/conceder ADMIN é uma ação/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/conceder administrador é\s+uma ação/i)).toBeInTheDocument();
   });
 
   it("exige ao menos uma aplicação para habilitar o envio", async () => {
@@ -429,7 +429,7 @@ describe("provisionamento de usuário — resultado", () => {
     const painel = await provisionar();
 
     expect(within(painel).getByText(/Pessoa Sintetica/)).toBeInTheDocument();
-    expect(within(painel).getByText(/CUSTOMER · ORGANIZATION_ONLY/)).toBeInTheDocument();
+    expect(within(painel).getByText(/CLIENTE · SOMENTE ORGANIZAÇÃO/)).toBeInTheDocument();
     expect(within(painel).getByText("APP_SINTETICA (USER)")).toBeInTheDocument();
   });
 

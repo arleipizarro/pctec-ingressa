@@ -51,7 +51,7 @@ export function UsuariosPage(): JSX.Element {
                     <tr key={identidade.public_id}>
                       <td>{identidade.full_name}</td>
                       <td>{identidade.email}</td>
-                      <td>{identidade.type}</td>
+                      <td>{rotulo(identidade.type)}</td>
                       <td><Badge valor={identidade.status} /></td>
                       <td>{identidade.login_enabled === 1 ? "habilitado" : "desabilitado"}</td>
                       <td><Link to={`/admin/usuarios/${identidade.public_id}`}>Detalhes</Link></td>

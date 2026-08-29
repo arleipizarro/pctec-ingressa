@@ -12,7 +12,7 @@ import {
   SecaoIntegracaoPortal
 } from "../components/integracaoPortal.js";
 import type { CorrespondenciaDoPortal, UsuarioProvisionado } from "../api.js";
-import { rotulo } from "../apresentacao.js";
+import { rotulo, rotuloDeAplicacao } from "../apresentacao.js";
 
 type AcaoPendente =
   | { tipo: "editar" }
@@ -278,7 +278,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.externalReferences.map((r) => (
                         <tr key={r.public_id}>
-                          <td>{r.system_code}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
+                          <td>{rotuloDeAplicacao(r.system_code)}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
                           <td><Badge valor={r.status} /></td>
                         </tr>
                       ))}
@@ -297,7 +297,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.members.map((m) => (
                         <tr key={m.public_id}>
-                          <td>{m.full_name}</td><td>{m.profile}</td><td>{m.scope}</td><td><Badge valor={m.status} /></td>
+                          <td>{m.full_name}</td><td>{rotulo(m.profile)}</td><td>{rotulo(m.scope)}</td><td><Badge valor={m.status} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -315,7 +315,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.applications.map((a) => (
                         <tr key={`${a.application_code}-${a.access_profile}`}>
-                          <td>{a.application_code}</td><td>{a.access_profile}</td><td>{a.total}</td>
+                          <td>{rotuloDeAplicacao(a.application_code)}</td><td>{rotulo(a.access_profile)}</td><td>{a.total}</td>
                         </tr>
                       ))}
                     </tbody>

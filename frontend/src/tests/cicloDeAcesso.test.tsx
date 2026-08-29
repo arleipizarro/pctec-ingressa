@@ -219,7 +219,7 @@ describe("bloqueio", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Bloquear usuário" }));
     const dialogo = await screen.findByRole("dialog");
     expect(within(dialogo).getByText(/sessões ativas são encerradas na mesma operação/i)).toBeInTheDocument();
-    expect(within(dialogo).getByText(/Memberships, acessos e referências são preservados/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/Vínculos, acessos e referências são preservados/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
 
     // `expectedVersion` sai da linha exibida — trava otimista real.
@@ -276,8 +276,8 @@ describe("desbloqueio", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Desbloquear usuário" }));
     const dialogo = await screen.findByRole("dialog");
-    expect(within(dialogo).getByText(/Sessões encerradas NÃO voltam/i)).toBeInTheDocument();
-    expect(within(dialogo).getByText(/nenhum convite, membership ou acesso é recriado/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/sessões já encerradas NÃO voltam/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/nenhum convite, vínculo ou acesso é recriado/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
 
     await waitFor(() => expect(desbloquear).toHaveBeenCalledWith(fixtures.IDENTIDADE_PUBLIC_ID, 3));

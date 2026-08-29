@@ -197,7 +197,7 @@ describe("associação a grupo", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Associar a um grupo" }));
     const dialogo = await screen.findByRole("dialog", { name: "Associar a um grupo" });
 
-    expect(within(dialogo).getByText(/ORGANIZATION_AND_DESCENDANTS/)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/organização e descendentes/)).toBeInTheDocument();
     expect(within(dialogo).getByText(/Nenhum vínculo é criado, encerrado ou ampliado/i)).toBeInTheDocument();
 
     await userEvent.type(within(dialogo).getByLabelText("Buscar grupo"), "beta");

@@ -24,7 +24,7 @@ export const MOTIVOS_DO_VINCULO: Readonly<Record<string, string>> = {
     "Este id de cliente do Portal já está vinculado a outra empresa. Confira o número antes de tentar de novo.",
   PORTAL_REFERENCE_COMPANY_REQUIRED:
     "Somente uma empresa recebe vínculo. Um grupo é coberto pelas empresas dele.",
-  PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE: "A organização precisa estar ACTIVE para ser vinculada.",
+  PORTAL_REFERENCE_ORGANIZATION_NOT_ACTIVE: "A organização precisa estar ativa para ser vinculada.",
   PORTAL_REFERENCE_LEGACY_ID_INVALID: "Informe o id do cliente no Portal como um número inteiro positivo.",
   PORTAL_REFERENCE_ORGANIZATION_NOT_FOUND: "Organização não encontrada.",
   PORTAL_REFERENCE_AMBIGUOUS:
@@ -159,7 +159,7 @@ function VinculoDaEmpresa({
         </button>
       </div>
       {portal.organizationStatus !== "ACTIVE" && (
-        <p className="subtitulo">Somente uma organização ACTIVE pode ser vinculada.</p>
+        <p className="subtitulo">Somente uma organização ativa pode ser vinculada.</p>
       )}
     </>
   );
