@@ -142,6 +142,10 @@ describe("camada de apresentação", () => {
     expect(rotuloDeIdentidades("ACTIVE")).toBe("Identidades ativas");
     expect(rotuloDeIdentidades("PENDING")).toBe("Identidades pendentes");
     expect(rotuloDeIdentidades("BLOCKED")).toBe("Identidades bloqueadas");
+    // `identitiesByStatus` faz GROUP BY sem filtro: os cinco status do
+    // domínio chegam ao painel, então os cinco precisam de concordância.
+    expect(rotuloDeIdentidades("INACTIVE")).toBe("Identidades inativas");
+    expect(rotuloDeIdentidades("DELETED")).toBe("Identidades excluídas");
     expect(rotuloDeAplicacao("PCTEC_PORTAL")).toBe("PCTEC Portal");
     expect(rotuloDePerfil("USER")).toBe("Usuário");
     expect(rotuloDePerfil("ADMIN")).toBe("Administrador");
@@ -199,7 +203,10 @@ describe("camada de apresentação — cobertura fora do painel", () => {
     expect(rotulo("GRANTED")).toBe("CONCEDIDO");
     expect(rotulo("REVOKED")).toBe("REVOGADO");
     expect(rotulo("CREATE")).toBe("CRIAR");
+    expect(rotulo("UPDATE")).toBe("ATUALIZAR");
     expect(rotulo("SKIP")).toBe("IGNORAR");
+    // Fecha os quatro estados de ImportBatchStatus desta base.
+    expect(rotulo("ABORTED")).toBe("ABORTADO");
   });
 
   it("traduz o vocabulário técnico restante exposto ao usuário", () => {
