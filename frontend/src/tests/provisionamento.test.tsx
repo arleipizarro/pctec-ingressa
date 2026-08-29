@@ -430,7 +430,7 @@ describe("provisionamento de usuário — resultado", () => {
 
     expect(within(painel).getByText(/Pessoa Sintetica/)).toBeInTheDocument();
     expect(within(painel).getByText(/CLIENTE · SOMENTE ORGANIZAÇÃO/)).toBeInTheDocument();
-    expect(within(painel).getByText("APP_SINTETICA (USER)")).toBeInTheDocument();
+    expect(within(painel).getByText("APP SINTETICA (USUÁRIO)")).toBeInTheDocument();
   });
 
   it("deixa explícito que a pessoa ainda não tem login habilitado", async () => {

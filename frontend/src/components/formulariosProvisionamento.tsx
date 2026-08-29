@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { Aplicacao, IntegracaoComOPortal, Organizacao, UsuarioProvisionado } from "../api.js";
-import { rotulo } from "../apresentacao.js";
+import { rotulo, rotuloDeAplicacao } from "../apresentacao.js";
 
 const PERFIS_DE_VINCULO = ["EMPLOYEE", "CUSTOMER", "PARTNER", "SUPPLIER", "SERVICE_ACCOUNT"] as const;
 
@@ -527,7 +527,7 @@ export function ResultadoDoProvisionamento({
           <dd>{rotulo(resultado.membership.profile)} · {rotulo(resultado.membership.scope)} · {rotulo(resultado.membership.status)}</dd>
           <dt>Acessos</dt>
           <dd>
-            {resultado.applicationAccesses.map((a) => `${a.applicationCode} (${a.accessProfile})`).join(", ")}
+            {resultado.applicationAccesses.map((a) => `${rotuloDeAplicacao(a.applicationCode)} (${rotulo(a.accessProfile)})`).join(", ")}
           </dd>
           <dt>Login habilitado</dt>
           <dd>{resultado.loginEnabled ? "sim" : "não — só após aceitar o convite"}</dd>
