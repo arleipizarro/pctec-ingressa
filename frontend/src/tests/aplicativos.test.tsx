@@ -53,13 +53,13 @@ afterEach(() => {
 describe("cards seguem exclusivamente o ApplicationAccess", () => {
   it("mostra apenas as aplicações concedidas", async () => {
     renderizar();
-    await screen.findByText("PCTEC Portal");
+    await screen.findByText("Portal do Cliente");
 
     // Escopo na SEÇÃO de aplicativos: "PCTEC Ingressa" também é o título
     // da marca no cabeçalho, e procurá-lo no documento inteiro mediria a
     // coisa errada.
-    const aplicativos = within(screen.getByRole("region", { name: "Aplicativos" }));
-    expect(aplicativos.getByText("PCTEC Portal")).toBeInTheDocument();
+    const aplicativos = within(screen.getByRole("region", { name: "Suas aplicações PCTEC" }));
+    expect(aplicativos.getByText("Portal do Cliente")).toBeInTheDocument();
     expect(aplicativos.getByText("PCTEC Helpdesk")).toBeInTheDocument();
     // Não concedida → não existe card.
     expect(aplicativos.queryByText("PCTEC Ingressa")).not.toBeInTheDocument();
@@ -70,8 +70,8 @@ describe("cards seguem exclusivamente o ApplicationAccess", () => {
     renderizar();
 
     expect(await screen.findByText("PCTEC Helpdesk")).toBeInTheDocument();
-    expect(screen.queryByText("PCTEC Portal")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Acessar Portal" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Portal do Cliente")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Acessar Portal do Cliente" })).not.toBeInTheDocument();
   });
 
   it("sem nenhum acesso, explica o que fazer em vez de mostrar tela vazia", async () => {
@@ -86,13 +86,13 @@ describe("ações dos cards", () => {
   it("Portal abre pelo fluxo SSO existente — link nativo para o start do Portal", async () => {
     renderizar();
 
-    const acao = await screen.findByRole("link", { name: "Acessar Portal" });
+    const acao = await screen.findByRole("link", { name: "Acessar Portal do Cliente" });
     expect(acao).toHaveAttribute("href", PORTAL_START);
   });
 
   it("a tela nunca monta authorize, state ou PKCE — só segue a URL do servidor", async () => {
     renderizar();
-    await screen.findByRole("link", { name: "Acessar Portal" });
+    await screen.findByRole("link", { name: "Acessar Portal do Cliente" });
 
     const html = document.body.innerHTML;
     expect(html).not.toContain("code_challenge");
@@ -100,12 +100,12 @@ describe("ações dos cards", () => {
     expect(html).not.toContain("state=");
   });
 
-  it("Helpdesk sem destino configurado mostra 'Em breve' — nenhuma URL inventada", async () => {
+  it("Helpdesk sem destino mostra 'Indisponível no momento' — nenhuma URL inventada", async () => {
     renderizar();
     await screen.findByText("PCTEC Helpdesk");
 
-    expect(screen.getByText("Em breve")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Acessar Helpdesk" })).not.toBeInTheDocument();
+    expect(screen.getByText("Indisponível no momento")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Acessar PCTEC Helpdesk" })).not.toBeInTheDocument();
   });
 
   it("Helpdesk COM destino configurado ganha o botão de acesso", async () => {
@@ -113,18 +113,125 @@ describe("ações dos cards", () => {
     vi.spyOn(api, "apps").mockResolvedValue(painel([comDestino]));
     renderizar();
 
-    expect(await screen.findByRole("link", { name: "Acessar Helpdesk" }))
+    expect(await screen.findByRole("link", { name: "Acessar PCTEC Helpdesk" }))
       .toHaveAttribute("href", "https://helpdesk.example.invalid/entrar");
+  });
+});
+
+describe("cards de aplicação — apresentação", () => {
+  const CARD_DESCONHECIDO = {
+    code: "PCTEC_FUTURO",
+    name: "PCTEC Futuro",
+    profile: "USER",
+    launchUrl: "https://futuro.example.invalid/entrar"
+  };
+
+  it("aplicação conhecida ganha nome amigável, descrição e perfil traduzido", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_PORTAL, CARD_HELPDESK]));
+    renderizar();
+
+    const secao = within(await screen.findByRole("region", { name: "Suas aplicações PCTEC" }));
+    expect(secao.getByRole("heading", { name: "Portal do Cliente", level: 3 })).toBeInTheDocument();
+    expect(secao.getByText(/Acompanhe contratos, equipamentos, informações financeiras e chamados/i))
+      .toBeInTheDocument();
+    expect(secao.getByRole("heading", { name: "PCTEC Helpdesk", level: 3 })).toBeInTheDocument();
+    expect(secao.getByText(/Registre e acompanhe solicitações, dúvidas e incidentes/i)).toBeInTheDocument();
+    // Perfil traduzido, nunca o enum cru.
+    expect(secao.getAllByText(/Perfil · Usuário/).length).toBe(2);
+    expect(secao.queryByText(/\bUSER\b/)).not.toBeInTheDocument();
+  });
+
+  it("o subtítulo diz que a lista é do perfil, não um catálogo de produtos", async () => {
+    renderizar();
+    expect(await screen.findByText(/somente os sistemas liberados para o seu perfil/i)).toBeInTheDocument();
+  });
+
+  it("aplicação desconhecida continua visível, com card genérico e o nome do servidor", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_DESCONHECIDO]));
+    renderizar();
+
+    const secao = within(await screen.findByRole("region", { name: "Suas aplicações PCTEC" }));
+    // Aparece porque o servidor autorizou — a tela não filtra por catálogo.
+    expect(secao.getByRole("heading", { name: "PCTEC Futuro", level: 3 })).toBeInTheDocument();
+    expect(secao.getByText(/liberada para o seu perfil/i)).toBeInTheDocument();
+    // E continua clicável, com a URL do servidor intacta.
+    expect(secao.getByRole("link", { name: "Acessar PCTEC Futuro" }))
+      .toHaveAttribute("href", CARD_DESCONHECIDO.launchUrl);
+  });
+
+  it("o código técnico é informação secundária — nunca o título do card", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_PORTAL]));
+    renderizar();
+
+    const secao = within(await screen.findByRole("region", { name: "Suas aplicações PCTEC" }));
+    // Presente para suporte...
+    expect(secao.getByText("PCTEC_PORTAL")).toBeInTheDocument();
+    // ...mas o título é o nome amigável, não o código.
+    const titulo = secao.getByRole("heading", { level: 3 });
+    expect(titulo).toHaveTextContent("Portal do Cliente");
+    expect(titulo).not.toHaveTextContent("PCTEC_PORTAL");
+  });
+
+  it("aplicação acessível mostra selo Disponível e o botão de acesso", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_PORTAL]));
+    renderizar();
+
+    const secao = within(await screen.findByRole("region", { name: "Suas aplicações PCTEC" }));
+    expect(secao.getByText("Disponível")).toBeInTheDocument();
+    expect(secao.getByRole("link", { name: "Acessar Portal do Cliente" })).toHaveTextContent("Acessar aplicação");
+  });
+
+  it("sem URL não há link algum — nem quebrado, nem vazio", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_HELPDESK]));
+    renderizar();
+
+    const secao = within(await screen.findByRole("region", { name: "Suas aplicações PCTEC" }));
+    expect(secao.getByText("Indisponível")).toBeInTheDocument();
+    expect(secao.getByText("Indisponível no momento")).toBeInTheDocument();
+    expect(secao.queryAllByRole("link")).toHaveLength(0);
+    // O card NÃO some: o acesso existe, o destino é que não está pronto.
+    expect(secao.getByRole("heading", { name: "PCTEC Helpdesk", level: 3 })).toBeInTheDocument();
+  });
+
+  it("a URL do servidor é preservada byte a byte, com query e tudo", async () => {
+    const comQuery = { ...CARD_PORTAL, launchUrl: `${PORTAL_START}?origem=ingressa&x=1` };
+    vi.spyOn(api, "apps").mockResolvedValue(painel([comQuery]));
+    renderizar();
+
+    expect(await screen.findByRole("link", { name: "Acessar Portal do Cliente" }))
+      .toHaveAttribute("href", `${PORTAL_START}?origem=ingressa&x=1`);
+  });
+
+  it("destino externo continua na MESMA aba — sem target nem window.open", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_PORTAL]));
+    renderizar();
+
+    const acao = await screen.findByRole("link", { name: "Acessar Portal do Cliente" });
+    expect(acao).not.toHaveAttribute("target");
+    expect(acao).not.toHaveAttribute("rel");
+  });
+
+  it("a ação é alcançável por teclado e recebe foco", async () => {
+    vi.spyOn(api, "apps").mockResolvedValue(painel([CARD_PORTAL]));
+    renderizar();
+
+    const acao = await screen.findByRole("link", { name: "Acessar Portal do Cliente" });
+    await userEvent.tab();
+    // Tabula até chegar na ação: ela está na ordem natural do documento.
+    for (let i = 0; i < 12 && document.activeElement !== acao; i += 1) {
+      await userEvent.tab();
+    }
+    expect(acao).toHaveFocus();
   });
 });
 
 describe("separação entre usuário e administração", () => {
   it("USER não vê nada de administração no launcher", async () => {
     renderizar();
-    await screen.findByText("PCTEC Portal");
+    await screen.findByText("Portal do Cliente");
 
     expect(screen.queryByText("Administrador")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Abrir administração" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Acessar PCTEC Ingressa" })).not.toBeInTheDocument();
     expect(screen.queryByText("Usuários")).not.toBeInTheDocument();
     expect(screen.queryByText("Organizações")).not.toBeInTheDocument();
   });
@@ -141,7 +248,7 @@ describe("separação entre usuário e administração", () => {
     renderizar();
 
     expect(await screen.findByText("Administrador")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Abrir administração" })).toHaveAttribute("href", "/admin");
+    expect(screen.getByRole("link", { name: "Acessar PCTEC Ingressa" })).toHaveAttribute("href", "/admin");
   });
 
   it("ADMIN continua alcançando as rotas administrativas existentes", async () => {

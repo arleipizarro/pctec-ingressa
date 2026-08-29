@@ -657,7 +657,21 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   margin: 0 0 var(--e4);
 }
 
-.launcher-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: var(--e4); }
+.launcher-subtitulo {
+  margin: -10px 0 var(--e4);
+  font-size: 0.86rem;
+  color: var(--txt-medio);
+  max-width: 62ch;
+}
+
+/* `auto-fit` + `minmax` resolve o responsivo sem media query: os cards
+   crescem juntos e a última linha não fica com um card órfão esticado.
+   `align-items: stretch` (padrão do grid) é o que iguala as alturas. */
+.launcher-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(272px, 1fr));
+  gap: var(--e4);
+}
 
 .app-card {
   display: flex;
@@ -666,48 +680,137 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   background: var(--sup-cartao);
   border: 1px solid var(--borda);
   border-radius: var(--raio-g);
-  padding: var(--e4);
+  padding: var(--e5);
   box-shadow: var(--sombra-cartao);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
-.app-card:hover { border-color: var(--borda-forte); box-shadow: var(--sombra-elevada); }
-.app-card header { display: flex; align-items: center; gap: var(--e3); }
+.app-card:hover {
+  border-color: var(--borda-forte);
+  box-shadow: var(--sombra-elevada);
+  transform: translateY(-2px);
+}
 
-.app-card-sigla {
+/* Quem desativa animação não recebe o deslocamento no hover. */
+@media (prefers-reduced-motion: reduce) {
+  .app-card { transition: none; }
+  .app-card:hover { transform: none; }
+}
+
+.app-card-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--e3);
+}
+
+.app-card-icone {
   display: grid;
   place-items: center;
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--raio-m);
   background: var(--sup-selecao);
   color: var(--marca);
-  font-weight: 800;
-  font-size: 0.82rem;
   flex: none;
 }
 
-.app-card header strong { display: block; font-size: 1rem; color: var(--txt); }
-.app-card-perfil { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; color: var(--txt-medio); }
-.app-card-descricao { flex: 1; margin: 0; font-size: 0.86rem; color: var(--txt-medio); line-height: 1.5; }
+.app-card-estado {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ok);
+  background: var(--ok-fundo);
+  border: 1px solid var(--ok-borda);
+  border-radius: var(--raio-pilula);
+  padding: 4px var(--e3);
+  white-space: nowrap;
+}
 
-.app-card-acao { align-self: flex-start; border-radius: var(--raio-m); padding: 9px var(--e4); font-size: 0.85rem; font-weight: 700; }
+.app-card-estado-off {
+  color: var(--alerta);
+  background: var(--alerta-fundo);
+  border-color: var(--alerta-borda);
+}
+
+.app-card-nome {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.3;
+  color: var(--txt);
+  letter-spacing: -0.01em;
+}
+
+/* `flex: 1` empurra meta e rodapé para baixo: com descrições de tamanhos
+   diferentes, os botões continuam alinhados na mesma linha. */
+.app-card-descricao {
+  flex: 1;
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--txt-medio);
+  line-height: 1.55;
+}
+
+.app-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--e2) var(--e3);
+  margin: 0;
+}
+
+.app-card-perfil {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--txt-medio);
+}
+
+/* Identificador para suporte e conferência: presente, discreto e nunca
+   no lugar do nome. `--txt-fraco` não serve a dado que precisa ser
+   lido com esforço, então o código fica em `--txt-medio`. */
+.app-card-codigo {
+  font-size: 0.68rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--txt-medio);
+  background: var(--sup-sutil);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  padding: 2px 6px;
+}
+
+.app-card-rodape { margin-top: var(--e1); }
+
+.app-card-acao {
+  display: inline-block;
+  border-radius: var(--raio-m);
+  padding: 10px var(--e4);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+/* Foco de teclado visível no card inteiro e na ação. */
+.app-card-acao:focus-visible {
+  outline: 2px solid var(--marca-media);
+  outline-offset: 2px;
+  box-shadow: var(--anel-foco);
+}
 
 /* Acesso existe, destino ainda não. O card continua visível — sumir
    faria a pessoa achar que perdeu o acesso. */
 .app-card-embreve {
-  align-self: flex-start;
-  font-size: 0.76rem;
-  font-weight: 800;
-  color: var(--alerta);
-  background: var(--alerta-fundo);
-  border: 1px solid var(--alerta-borda);
-  border-radius: var(--raio-pilula);
-  padding: 5px var(--e3);
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--txt-medio);
 }
 
-.app-card-indisponivel { opacity: 0.8; }
-.app-card-indisponivel:hover { border-color: var(--borda); box-shadow: var(--sombra-cartao); }
+.app-card-indisponivel { background: var(--sup-sutil); }
+.app-card-indisponivel:hover {
+  border-color: var(--borda);
+  box-shadow: var(--sombra-cartao);
+  transform: none;
+}
 
 .launcher-organizacoes { margin-top: var(--e6); }
 
