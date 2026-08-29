@@ -111,9 +111,11 @@ describe("painel", () => {
     renderizar("/admin");
 
     expect(await screen.findByRole("heading", { name: "Painel" })).toBeInTheDocument();
-    expect(screen.getByText("Identidades ACTIVE")).toBeInTheDocument();
-    expect(screen.getByText("Memberships ativos")).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent(/1 CONFLICT/);
+    // Rótulos passam pela camada de apresentação: o enum do servidor
+    // continua ACTIVE/CONFLICT, só o texto da tela é que muda.
+    expect(screen.getByText("Identidades ativas")).toBeInTheDocument();
+    expect(screen.getByText("Vínculos ativos")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/1 CONFLITO/);
     expect(screen.getByText("regras-v2")).toBeInTheDocument();
   });
 

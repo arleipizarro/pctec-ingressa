@@ -133,6 +133,26 @@ a:hover { text-decoration: underline; }
   padding: 0 var(--e4);
 }
 
+/* Botão de fechar a gaveta. `margin-left: auto` encosta no fim da linha
+   sem tirar o logotipo e o título do alinhamento à esquerda. Não existe
+   no desktop, onde o menu é coluna fixa e não fecha. */
+.menu-fechar {
+  display: none;
+  place-items: center;
+  margin-left: auto;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--raio-p);
+  background: var(--sup-marca-escura);
+  border: 1px solid var(--sup-marca-ativa);
+  color: var(--txt-invertido);
+}
+
+.menu-fechar:hover:not(:disabled) { background: var(--sup-marca-ativa); border-color: var(--txt-invertido); }
+.menu-fechar:focus-visible { outline-color: var(--txt-invertido); }
+
 .sidebar-simbolo {
   flex: none;
   width: 40px;
@@ -148,6 +168,11 @@ a:hover { text-decoration: underline; }
   margin: 0;
   letter-spacing: 0.03em;
   line-height: 1.25;
+  min-width: 0;
+  /* `break-word`, não `anywhere`: `anywhere` encolhe a largura
+     min-content do elemento, e aí o flex do cabeçalho espremia o título
+     até ele quebrar em duas linhas mesmo havendo espaço. */
+  overflow-wrap: break-word;
 }
 
 .sidebar h1 small {
@@ -236,14 +261,21 @@ h2 { margin: 0 0 var(--e1); font-size: 1.4rem; letter-spacing: -0.01em; color: v
 /* ===================================================================
    Cartões
    =================================================================== */
+/* Grade de KPIs em contagem FIXA de colunas, não em `auto-fill`.
+   O `auto-fill` anterior cabia cinco cartões na largura de 1440px e
+   deixava o sexto sozinho numa segunda linha. Três colunas fecham os
+   seis cartões em 3x2 exatos. */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: var(--e4);
   margin-bottom: var(--e5);
+  align-items: stretch;
 }
 
 .card {
+  display: flex;
+  flex-direction: column;
   background: var(--sup-cartao);
   border: 1px solid var(--borda);
   border-radius: var(--raio-g);
@@ -259,7 +291,9 @@ h2 { margin: 0 0 var(--e1); font-size: 1.4rem; letter-spacing: -0.01em; color: v
   color: var(--txt-medio);
 }
 
-.card .valor { font-size: 2rem; font-weight: 800; margin-top: var(--e1); color: var(--marca); letter-spacing: -0.02em; }
+/* `margin-top: auto` alinha os números pela base do cartão mesmo quando
+   um rótulo ocupa duas linhas e o vizinho ocupa uma. */
+.card .valor { font-size: 2rem; font-weight: 800; margin-top: auto; padding-top: var(--e1); color: var(--marca); letter-spacing: -0.02em; }
 
 /* ===================================================================
    Tabelas
@@ -475,10 +509,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
   box-shadow: var(--sombra-modal);
 }
 
-.login-marca { display: grid; justify-items: center; gap: var(--e3); margin-bottom: var(--e2); }
+/* Só a marca e o subtítulo. O lockup já traz "PCTEC INGRESSA"
+   desenhado, então o <h1> que repetia o nome saiu; o espaçamento aqui é
+   o do par imagem/subtítulo, não a sobra de um título removido. */
+.login-marca { display: grid; justify-items: center; gap: var(--e4); margin-bottom: var(--e4); }
 .login-marca img { width: 168px; height: auto; }
 
-.login h1 { margin: 0; font-size: 1.25rem; color: var(--marca); text-align: center; letter-spacing: -0.01em; }
 .login .subtitulo { text-align: center; margin: 0; }
 .login label { font-size: 0.82rem; font-weight: 700; color: var(--txt-medio); }
 .login button.primario { margin-top: var(--e2); padding: 11px var(--e4); }
@@ -712,8 +748,25 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
 /* ===================================================================
    Responsivo
    =================================================================== */
+/* Tablet: duas colunas. Três ficariam estreitas demais para rótulos
+   como "PCTEC INGRESSA · ADMINISTRADOR". */
+@media (max-width: 1100px) {
+  .cards { grid-template-columns: repeat(2, 1fr); }
+}
+
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
+
+  /* O "X" só faz sentido onde o menu é gaveta. */
+  .menu-fechar { display: grid; }
+
+  /* O botão de fechar consome 40px da linha do cabeçalho, e a 248px o
+     título sobrava 128px para 132px de texto — quebrava em duas linhas
+     por 4px. A gaveta ganha 28px em vez de o título encolher: em 390px
+     ela ainda deixa mais de 100px de fundo visível para o toque de
+     fechar. */
+  .sidebar { width: min(276px, 82vw); }
+  .sidebar-marca { gap: var(--e2); }
 
   /* O menu vira gaveta: fora da tela por padrão, sobreposta quando
      aberta. Some do fluxo do documento, então o conteúdo ocupa a
@@ -721,7 +774,6 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    width: min(var(--larg-menu), 82vw);
     z-index: 50;
     transform: translateX(-100%);
     transition: transform 0.2s ease;
@@ -755,6 +807,15 @@ details[open] > summary { font-weight: 800; color: var(--txt); }
   .cards { grid-template-columns: 1fr; }
   h2 { font-size: 1.2rem; }
   .acoes-topo { gap: var(--e2); }
+}
+
+/* Seis colunas numa fileira só — mas apenas a partir da largura em que
+   o rótulo mais longo ("PCTEC INGRESSA · ADMINISTRADOR", ~262px no
+   tamanho e no espaçamento usados) ainda cabe numa linha. Abaixo disso
+   ele quebraria em duas, que é exatamente o que a regra de legibilidade
+   proíbe — por isso o corte é em 2100px e não num valor redondo menor. */
+@media (min-width: 2100px) {
+  .cards { grid-template-columns: repeat(6, 1fr); }
 }
 
 /* Sem animação para quem pediu para não ter. Nenhuma informação depende
