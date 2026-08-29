@@ -11,6 +11,7 @@ import {
   SecaoIntegracaoPortal
 } from "../components/integracaoPortal.js";
 import type { UsuarioProvisionado } from "../api.js";
+import { rotulo, rotuloDeAplicacao } from "../apresentacao.js";
 
 type AcaoPendente =
   | { tipo: "editar" }
@@ -142,7 +143,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
         {dados !== null && (
           <>
             <h2>{dados.legal_name}</h2>
-            <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
+            <p className="subtitulo">{rotulo(dados.type)} · <Badge valor={dados.status} /></p>
 
             {mensagem !== null && (
               <div className={`aviso ${mensagem.tipo === "ok" ? "aviso-ok" : "aviso-erro"}`} role="alert">{mensagem.texto}</div>
@@ -192,14 +193,14 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                         <tr key={`p-${o.public_id}`}>
                           <td>Grupo</td>
                           <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
-                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                          <td>{rotulo(o.type)}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}
                       {dados.children.map((o) => (
                         <tr key={`f-${o.public_id}`}>
                           <td>Empresa</td>
                           <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
-                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                          <td>{rotulo(o.type)}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -222,7 +223,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.externalReferences.map((r) => (
                         <tr key={r.public_id}>
-                          <td>{r.system_code}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
+                          <td>{rotuloDeAplicacao(r.system_code)}</td><td>{r.entity_type}</td><td>{r.legacy_id}</td>
                           <td><Badge valor={r.status} /></td>
                         </tr>
                       ))}
@@ -241,7 +242,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.members.map((m) => (
                         <tr key={m.public_id}>
-                          <td>{m.full_name}</td><td>{m.profile}</td><td>{m.scope}</td><td><Badge valor={m.status} /></td>
+                          <td>{m.full_name}</td><td>{rotulo(m.profile)}</td><td>{rotulo(m.scope)}</td><td><Badge valor={m.status} /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -259,7 +260,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                     <tbody>
                       {dados.applications.map((a) => (
                         <tr key={`${a.application_code}-${a.access_profile}`}>
-                          <td>{a.application_code}</td><td>{a.access_profile}</td><td>{a.total}</td>
+                          <td>{rotuloDeAplicacao(a.application_code)}</td><td>{rotulo(a.access_profile)}</td><td>{a.total}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -62,8 +62,8 @@ async function avancarAte(destino: "SELECAO" | "MAPEAMENTO" | "PREVIA" | "REVISA
   if (destino === "PREVIA") {
     return;
   }
-  await userEvent.click(screen.getByRole("button", { name: "Executar DRY_RUN" }));
-  await screen.findByRole("heading", { name: "Resumo do dry-run" });
+  await userEvent.click(screen.getByRole("button", { name: "Simular importação" }));
+  await screen.findByRole("heading", { name: "Resumo da simulação" });
 }
 
 describe("entrada do assistente", () => {
@@ -247,7 +247,7 @@ describe("etapa 3 — mapeamento proposto", () => {
   it("mudar a seleção depois da prévia apaga o que deixou de valer", async () => {
     renderizar();
     await avancarAte("PREVIA");
-    expect(screen.getByRole("button", { name: "Executar DRY_RUN" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Simular importação" })).toBeEnabled();
 
     await userEvent.click(screen.getByRole("button", { name: "Voltar" }));
     await userEvent.click(await screen.findByLabelText(`Importar ${fixtures.USUARIO_ELEGIVEL_DOIS.name}`));
@@ -255,7 +255,7 @@ describe("etapa 3 — mapeamento proposto", () => {
 
     // Sem prévia recalculada, o dry-run fica indisponível: a tela nunca
     // executa sobre um plano que já não corresponde à seleção.
-    expect(await screen.findByRole("button", { name: "Executar DRY_RUN" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Simular importação" })).toBeDisabled();
   });
 
   it("erro no dry-run vira alerta e a etapa não avança", async () => {
@@ -263,10 +263,10 @@ describe("etapa 3 — mapeamento proposto", () => {
     renderizar();
     await avancarAte("PREVIA");
 
-    await userEvent.click(screen.getByRole("button", { name: "Executar DRY_RUN" }));
+    await userEvent.click(screen.getByRole("button", { name: "Simular importação" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/mudou desde que a tela carregou/);
-    expect(screen.queryByRole("heading", { name: "Resumo do dry-run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Resumo da simulação" })).not.toBeInTheDocument();
   });
 });
 
@@ -275,7 +275,9 @@ describe("etapa 4 — revisão do dry-run", () => {
     renderizar();
     await avancarAte("REVISAO");
 
-    for (const acao of ["CREATE", "SKIP", "CONFLICT", "QUARANTINE"]) {
+    // Os rótulos EXIBIDOS. O enum continua no payload — o teste de
+    // "não vaza CREATE no corpo" acima é quem cuida disso.
+    for (const acao of ["CRIAR", "IGNORAR", "CONFLITO", "QUARENTENA"]) {
       expect(screen.getAllByText(acao).length).toBeGreaterThan(0);
     }
     expect(screen.getByText("10")).toBeInTheDocument();
@@ -314,7 +316,7 @@ describe("etapa 4 — revisão do dry-run", () => {
 
     expect(screen.getAllByRole("alert")[0]).toHaveTextContent(/contradiz o vínculo já existente/);
     expect(screen.getByRole("checkbox", { name: /aprovo este lote/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Executar APPLY" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Executar importação" })).toBeDisabled();
   });
 
   it("lote sem nada a escrever não pode ser aplicado", async () => {
@@ -324,18 +326,18 @@ describe("etapa 4 — revisão do dry-run", () => {
     await avancarAte("REVISAO");
 
     expect(screen.getByText(/Nada a escrever/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Executar APPLY" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Executar importação" })).toBeDisabled();
   });
 
   it("sem aprovar o lote, o APPLY continua indisponível", async () => {
     renderizar();
     await avancarAte("REVISAO");
 
-    expect(screen.getByRole("button", { name: "Executar APPLY" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Executar importação" })).toBeDisabled();
 
     await userEvent.click(screen.getByRole("checkbox", { name: /aprovo este lote/ }));
 
-    expect(screen.getByRole("button", { name: "Executar APPLY" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Executar importação" })).toBeEnabled();
   });
 });
 
@@ -343,7 +345,7 @@ describe("confirmação forte do APPLY", () => {
   async function abrirConfirmacao(): Promise<void> {
     await avancarAte("REVISAO");
     await userEvent.click(screen.getByRole("checkbox", { name: /aprovo este lote/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Executar APPLY" }));
+    await userEvent.click(screen.getByRole("button", { name: "Executar importação" }));
     await screen.findByRole("dialog", { name: "Aplicar a importação" });
   }
 
@@ -396,7 +398,7 @@ describe("confirmação forte do APPLY", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(api.helpdeskApply).not.toHaveBeenCalled();
     // A revisão continua na tela, com a aprovação preservada.
-    expect(screen.getByRole("heading", { name: "Resumo do dry-run" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Resumo da simulação" })).toBeInTheDocument();
   });
 });
 
@@ -404,7 +406,7 @@ describe("etapa 5 — resultado", () => {
   async function aplicar(): Promise<void> {
     await avancarAte("REVISAO");
     await userEvent.click(screen.getByRole("checkbox", { name: /aprovo este lote/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Executar APPLY" }));
+    await userEvent.click(screen.getByRole("button", { name: "Executar importação" }));
     await screen.findByRole("dialog", { name: "Aplicar a importação" });
     await userEvent.type(screen.getByLabelText("Confirmação"), "APLICAR");
     await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
@@ -426,7 +428,7 @@ describe("etapa 5 — resultado", () => {
     await aplicar();
 
     expect(screen.getAllByText("ativada agora")).toHaveLength(2);
-    expect(screen.getAllByText("ACTIVE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ATIVO").length).toBeGreaterThan(0);
   });
 
   it("oferece o caminho para a trilha completa do lote", async () => {

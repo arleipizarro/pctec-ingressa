@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado } from "../components/ui.js";
+import { rotulo, rotuloDeAcesso, rotuloDeIdentidades } from "../apresentacao.js";
 
 export function DashboardPage(): JSX.Element {
   const { dados, carregando, erro } = usarRecurso(() => api.summary(), []);
@@ -16,17 +17,17 @@ export function DashboardPage(): JSX.Element {
             <div className="cards">
               {dados.identitiesByStatus.map((linha) => (
                 <div className="card" key={`i-${linha.status}`}>
-                  <div className="rotulo">Identidades {linha.status}</div>
+                  <div className="rotulo">{rotuloDeIdentidades(linha.status)}</div>
                   <div className="valor">{linha.total}</div>
                 </div>
               ))}
               <div className="card">
-                <div className="rotulo">Memberships ativos</div>
+                <div className="rotulo">Vínculos ativos</div>
                 <div className="valor">{dados.activeMemberships}</div>
               </div>
               {dados.grantedAccessesByApplication.map((linha) => (
                 <div className="card" key={`a-${linha.applicationCode}-${linha.accessProfile}`}>
-                  <div className="rotulo">{linha.applicationCode} · {linha.accessProfile}</div>
+                  <div className="rotulo">{rotuloDeAcesso(linha.applicationCode, linha.accessProfile)}</div>
                   <div className="valor">{linha.total}</div>
                 </div>
               ))}
@@ -35,7 +36,7 @@ export function DashboardPage(): JSX.Element {
             {dados.importAlerts.length > 0 && (
               <div className="aviso aviso-erro" role="alert">
                 Importações com pendência:{" "}
-                {dados.importAlerts.map((a) => `${a.total} ${a.action}`).join(" · ")}
+                {dados.importAlerts.map((a) => `${a.total} ${rotulo(a.action)}`).join(" · ")}
               </div>
             )}
 
@@ -47,7 +48,7 @@ export function DashboardPage(): JSX.Element {
                   <tbody>
                     {dados.organizationsByTypeStatus.map((linha) => (
                       <tr key={`${linha.type}-${linha.status}`}>
-                        <td>{linha.type}</td>
+                        <td>{rotulo(linha.type)}</td>
                         <td><Badge valor={linha.status} /></td>
                         <td>{linha.total}</td>
                       </tr>

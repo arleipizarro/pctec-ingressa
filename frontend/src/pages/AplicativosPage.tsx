@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AplicativoCard, type OrganizacaoDoUsuario } from "../api.js";
 import type { Sessao } from "../auth.js";
 import { CODIGO_INGRESSA, encerrarSessao } from "../auth.js";
+import { rotulo } from "../apresentacao.js";
 
 const CODIGO_PORTAL = "PCTEC_PORTAL";
 const CODIGO_HELPDESK = "PCTEC_HELPDESK";
@@ -113,7 +114,7 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
     <div className="launcher">
       <header className="launcher-topo">
         <div className="launcher-marca">
-          <span className="launcher-logo" aria-hidden="true">PC</span>
+          <img className="launcher-logo" src="/marca/marca-ingressa.png" alt="" width={44} height={44} />
           <div>
             <h1>PCTEC Ingressa</h1>
             <p>Meus aplicativos</p>
@@ -173,7 +174,7 @@ function CardDeAplicativo({ card }: { card: AplicativoCard }): JSX.Element {
         <span className="app-card-sigla" aria-hidden="true">{card.name.slice(0, 2).toUpperCase()}</span>
         <div>
           <strong>{card.name}</strong>
-          <span className="app-card-perfil">{card.profile}</span>
+          <span className="app-card-perfil">{rotulo(card.profile)}</span>
         </div>
       </header>
       <p className="app-card-descricao">{descricao}</p>

@@ -55,8 +55,14 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
   return (
     <div className="login">
       <form onSubmit={entrar}>
-        <h1>PCTEC Ingressa</h1>
-        <p className="subtitulo" style={{ margin: 0 }}>Acesso às aplicações PCTEC</p>
+        <div className="login-marca">
+          {/* O lockup já traz "PCTEC INGRESSA" desenhado: repetir o nome
+              num <h1> abaixo era a mesma informação duas vezes. Como a
+              imagem passou a ser a única identificação da tela, ela
+              deixou de ser decorativa e carrega o nome no `alt`. */}
+          <img src="/marca/logo-ingressa.png" alt="PCTEC Ingressa" width={168} height={184} />
+          <p className="subtitulo">Acesso às aplicações PCTEC</p>
+        </div>
         {retomada !== null && (
           <div className="aviso aviso-alerta" role="status">
             Entre para continuar até o aplicativo que você pediu.

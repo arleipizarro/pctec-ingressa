@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
+import { rotulo } from "../apresentacao.js";
 
 const ACOES = ["", "CREATE", "SKIP", "CONFLICT", "QUARANTINE"];
 
@@ -28,7 +29,8 @@ export function LoteDetalhePage(): JSX.Element {
 
       <div className="barra">
         <select aria-label="Filtrar por ação" value={acao} onChange={(e) => { setAcao(e.target.value); setOffset(0); }}>
-          {ACOES.map((a) => <option key={a} value={a}>{a === "" ? "Todas as ações" : a}</option>)}
+          {/* `value` intacto — é o filtro `action` da API. */}
+          {ACOES.map((a) => <option key={a} value={a}>{a === "" ? "Todas as ações" : rotulo(a)}</option>)}
         </select>
       </div>
 
@@ -38,13 +40,13 @@ export function LoteDetalhePage(): JSX.Element {
             <div className="tabela-rolavel">
               <table>
                 <thead>
-                  <tr><th>Origem</th><th>Entidade</th><th>Ação</th><th>Motivo</th><th>Destino</th><th>Snapshot</th></tr>
+                  <tr><th>Origem</th><th>Entidade</th><th>Ação</th><th>Motivo</th><th>Destino</th><th>Conteúdo</th></tr>
                 </thead>
                 <tbody>
                   {dados.items.map((item) => (
                     <tr key={item.public_id}>
                       <td>{item.source_entity_type}:{item.source_legacy_id}</td>
-                      <td>{item.entity_kind}</td>
+                      <td>{rotulo(item.entity_kind)}</td>
                       <td><Badge valor={item.action} /></td>
                       <td>{item.reason_code ?? "—"}</td>
                       <td>{item.target_public_id === null ? "—" : <code>{item.target_public_id.slice(0, 8)}…</code>}</td>

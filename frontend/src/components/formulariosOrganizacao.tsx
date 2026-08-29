@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { Organizacao } from "../api.js";
+import { rotulo } from "../apresentacao.js";
 
 /**
  * Correção de nomes.
@@ -63,7 +64,7 @@ export function FormularioEditarOrganizacao({
 
           <dl className="chave-valor">
             <dt>publicId</dt><dd><code>{organizacao.public_id}</code> (não editável)</dd>
-            <dt>Tipo</dt><dd>{organizacao.type} (não editável)</dd>
+            <dt>Tipo</dt><dd>{rotulo(organizacao.type)} (não editável)</dd>
           </dl>
 
           <div className="acoes">
@@ -126,7 +127,7 @@ export function FormularioAssociarGrupo({
         <h3>Associar a um grupo empresarial</h3>
         <p className="subtitulo">
           Esta empresa passa a pertencer ao grupo escolhido. Quem já tem vínculo no grupo com escopo
-          <strong> ORGANIZATION_AND_DESCENDANTS</strong> passará a enxergá-la. Nenhum vínculo é criado,
+          <strong> organização e descendentes</strong> passará a enxergá-la. Nenhum vínculo é criado,
           encerrado ou ampliado por esta ação.
         </p>
         <form onSubmit={enviar}>

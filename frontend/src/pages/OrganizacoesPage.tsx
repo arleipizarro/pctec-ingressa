@@ -4,6 +4,7 @@ import { api, ApiError } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
 import { FormularioNovaOrganizacao } from "../components/formulariosProvisionamento.js";
+import { rotulo } from "../apresentacao.js";
 
 export function OrganizacoesPage(): JSX.Element {
   const [tipo, setTipo] = useState("");
@@ -82,8 +83,10 @@ export function OrganizacoesPage(): JSX.Element {
           onChange={(e) => { setBusca(e.target.value); setOffset(0); }} />
         <select aria-label="Filtrar por tipo" value={tipo} onChange={(e) => { setTipo(e.target.value); setOffset(0); }}>
           <option value="">Todos os tipos</option>
-          <option value="BUSINESS_GROUP">BUSINESS_GROUP</option>
-          <option value="COMPANY">COMPANY</option>
+          {/* O `value` é o que vai para o servidor no parâmetro `type`:
+              continua sendo o enum. Só o texto visível é traduzido. */}
+          <option value="BUSINESS_GROUP">{rotulo("BUSINESS_GROUP")}</option>
+          <option value="COMPANY">{rotulo("COMPANY")}</option>
         </select>
       </div>
 
@@ -98,7 +101,7 @@ export function OrganizacoesPage(): JSX.Element {
                     <tr key={o.public_id}>
                       <td>{o.legal_name}</td>
                       <td>{o.trade_name ?? "—"}</td>
-                      <td>{o.type}</td>
+                      <td>{rotulo(o.type)}</td>
                       <td><Badge valor={o.status} /></td>
                       <td><Link to={`/admin/organizacoes/${o.public_id}`}>Detalhes</Link></td>
                     </tr>

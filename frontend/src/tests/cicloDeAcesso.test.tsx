@@ -138,26 +138,26 @@ describe("convite de acesso", () => {
   it("pendente pode ser revogado", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_PENDENTE] });
     renderizar();
-    await screen.findByText("PENDING");
+    await screen.findByText("PENDENTE");
 
-    expect(linhaDoConvite("PENDING").getByRole("button", { name: "Revogar" })).toBeInTheDocument();
+    expect(linhaDoConvite("PENDENTE").getByRole("button", { name: "Revogar" })).toBeInTheDocument();
   });
 
   it("expirado NÃO oferece revogação — não mudaria nada e o servidor recusaria", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_EXPIRADO] });
     renderizar();
-    await screen.findByText("EXPIRED");
+    await screen.findByText("EXPIRADO");
 
-    expect(linhaDoConvite("EXPIRED").queryByRole("button", { name: "Revogar" })).not.toBeInTheDocument();
+    expect(linhaDoConvite("EXPIRADO").queryByRole("button", { name: "Revogar" })).not.toBeInTheDocument();
   });
 
   it("revogar convite chama a API com o convite certo", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_PENDENTE] });
     const revogar = vi.spyOn(api, "revokeInvitation").mockResolvedValue(undefined);
     renderizar();
-    await screen.findByText("PENDING");
+    await screen.findByText("PENDENTE");
 
-    await userEvent.click(linhaDoConvite("PENDING").getByRole("button", { name: "Revogar" }));
+    await userEvent.click(linhaDoConvite("PENDENTE").getByRole("button", { name: "Revogar" }));
     const dialogo = await screen.findByRole("dialog");
     expect(within(dialogo).getByText(/link deixa de valer imediatamente/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
@@ -219,7 +219,7 @@ describe("bloqueio", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Bloquear usuário" }));
     const dialogo = await screen.findByRole("dialog");
     expect(within(dialogo).getByText(/sessões ativas são encerradas na mesma operação/i)).toBeInTheDocument();
-    expect(within(dialogo).getByText(/Memberships, acessos e referências são preservados/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/Vínculos, acessos e referências são preservados/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
 
     // `expectedVersion` sai da linha exibida — trava otimista real.
@@ -276,8 +276,8 @@ describe("desbloqueio", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Desbloquear usuário" }));
     const dialogo = await screen.findByRole("dialog");
-    expect(within(dialogo).getByText(/Sessões encerradas NÃO voltam/i)).toBeInTheDocument();
-    expect(within(dialogo).getByText(/nenhum convite, membership ou acesso é recriado/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/sessões já encerradas NÃO voltam/i)).toBeInTheDocument();
+    expect(within(dialogo).getByText(/nenhum convite, vínculo ou acesso é recriado/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
 
     await waitFor(() => expect(desbloquear).toHaveBeenCalledWith(fixtures.IDENTIDADE_PUBLIC_ID, 3));
