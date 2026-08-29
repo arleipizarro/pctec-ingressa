@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
+import { rotulo } from "../apresentacao.js";
 
 const STATUS = ["", "ACTIVE", "PENDING", "BLOCKED", "INACTIVE"];
 
@@ -32,7 +33,8 @@ export function UsuariosPage(): JSX.Element {
           onChange={(e) => { setBusca(e.target.value); setOffset(0); }}
         />
         <select aria-label="Filtrar por status" value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }}>
-          {STATUS.map((s) => <option key={s} value={s}>{s === "" ? "Todos os status" : s}</option>)}
+          {/* `value` intacto — é o filtro `status` da API. */}
+          {STATUS.map((s) => <option key={s} value={s}>{s === "" ? "Todos os status" : rotulo(s)}</option>)}
         </select>
       </div>
 

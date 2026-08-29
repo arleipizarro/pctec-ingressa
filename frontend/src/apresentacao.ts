@@ -19,14 +19,43 @@
  */
 
 /**
- * Rótulos de valores que aparecem em selo (`<Badge>`) ou em célula de
- * tabela. Em CAIXA ALTA porque é assim que o selo se apresenta e o
- * elemento não aplica `text-transform`.
+ * Rótulos de valores que aparecem em selo (`<Badge>`), em célula de
+ * tabela ou no texto de uma `<option>`. Em CAIXA ALTA porque é assim
+ * que o selo se apresenta e o elemento não aplica `text-transform`.
  *
- * Estados de identidade (ACTIVE, PENDING, BLOCKED…) NÃO entram aqui: o
- * selo já os mostra e traduzi-los mudaria telas fora deste escopo.
+ * O critério de fronteira: está aqui TODO valor que o `<Badge>`
+ * classifica, mais `EXPIRED` e `INACTIVE`, que dividem coluna com eles.
+ * Traduzir só parte de uma coluna deixaria o widget meio em português.
+ *
+ * O que NÃO está aqui continua saindo cru de propósito, e cada um forma
+ * uma coluna internamente coerente: os estados da reconciliação
+ * (`EXACT_UNIQUE`, `NOT_FOUND`…), o tipo de identidade (`HUMAN`,
+ * `SERVICE`), o escopo (`ORGANIZATION_ONLY`) e o perfil de vínculo
+ * (`CUSTOMER`). São vocabulários próprios — não um esquecimento.
  */
 const ROTULOS: Readonly<Record<string, string>> = {
+  // Situação de identidade, organização e vínculo.
+  //
+  // Os quatro andam juntos no MESMO seletor e na MESMA coluna (ver o
+  // filtro de status em UsuariosPage), e `ACTIVE`/`INACTIVE` saem do
+  // mesmo ternário em NovaImportacaoPage. Traduzir só um deles produz
+  // um widget meio em português e meio em inglês — por isso a família
+  // entra inteira, não só `ACTIVE`.
+  ACTIVE: "ATIVO",
+  INACTIVE: "INATIVO",
+  PENDING: "PENDENTE",
+  BLOCKED: "BLOQUEADO",
+  // `EXPIRED` divide coluna com `PENDING` na lista de convites.
+  EXPIRED: "EXPIRADO",
+  // Situação de acesso a aplicação — mesma coluna, mesma tabela.
+  GRANTED: "CONCEDIDO",
+  REVOKED: "REVOGADO",
+  // Execução de lote, ao lado de COMPLETED/FAILED.
+  RUNNING: "EM EXECUÇÃO",
+  // Ação do item de lote: divide seletor e cartões com CONFLICT e
+  // QUARANTINE, que já estavam traduzidos desde a rodada anterior.
+  CREATE: "CRIAÇÃO",
+  SKIP: "IGNORADO",
   // Modo do lote de importação
   DRY_RUN: "SIMULAÇÃO",
   APPLY: "APLICAÇÃO",

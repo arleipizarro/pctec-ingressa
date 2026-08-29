@@ -12,6 +12,7 @@ import {
   SecaoIntegracaoPortal
 } from "../components/integracaoPortal.js";
 import type { CorrespondenciaDoPortal, UsuarioProvisionado } from "../api.js";
+import { rotulo } from "../apresentacao.js";
 
 type AcaoPendente =
   | { tipo: "editar" }
@@ -193,7 +194,7 @@ export function OrganizacaoDetalhePage(): JSX.Element {
         {dados !== null && (
           <>
             <h2>{dados.legal_name}</h2>
-            <p className="subtitulo">{dados.type} · <Badge valor={dados.status} /></p>
+            <p className="subtitulo">{rotulo(dados.type)} · <Badge valor={dados.status} /></p>
 
             {mensagem === null && avisoDaCriacao !== null && (
               <div className="aviso aviso-alerta" role="status" data-testid="aviso-da-criacao">{avisoDaCriacao}</div>
@@ -247,14 +248,14 @@ export function OrganizacaoDetalhePage(): JSX.Element {
                         <tr key={`p-${o.public_id}`}>
                           <td>Grupo</td>
                           <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
-                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                          <td>{rotulo(o.type)}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}
                       {dados.children.map((o) => (
                         <tr key={`f-${o.public_id}`}>
                           <td>Empresa</td>
                           <td><Link to={`/admin/organizacoes/${o.public_id}`}>{o.legal_name}</Link></td>
-                          <td>{o.type}</td><td><Badge valor={o.status} /></td>
+                          <td>{rotulo(o.type)}</td><td><Badge valor={o.status} /></td>
                         </tr>
                       ))}
                     </tbody>

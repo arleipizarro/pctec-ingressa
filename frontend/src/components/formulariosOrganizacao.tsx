@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import type { Organizacao } from "../api.js";
+import { rotulo } from "../apresentacao.js";
 
 /**
  * Correção de nomes.
@@ -63,7 +64,7 @@ export function FormularioEditarOrganizacao({
 
           <dl className="chave-valor">
             <dt>publicId</dt><dd><code>{organizacao.public_id}</code> (não editável)</dd>
-            <dt>Tipo</dt><dd>{organizacao.type} (não editável)</dd>
+            <dt>Tipo</dt><dd>{rotulo(organizacao.type)} (não editável)</dd>
           </dl>
 
           <div className="acoes">

@@ -275,7 +275,9 @@ describe("etapa 4 — revisão do dry-run", () => {
     renderizar();
     await avancarAte("REVISAO");
 
-    for (const acao of ["CREATE", "SKIP", "CONFLICT", "QUARANTINE"]) {
+    // Os rótulos EXIBIDOS. O enum continua no payload — o teste de
+    // "não vaza CREATE no corpo" acima é quem cuida disso.
+    for (const acao of ["CRIAÇÃO", "IGNORADO", "CONFLITO", "QUARENTENA"]) {
       expect(screen.getAllByText(acao).length).toBeGreaterThan(0);
     }
     expect(screen.getByText("10")).toBeInTheDocument();
@@ -426,7 +428,7 @@ describe("etapa 5 — resultado", () => {
     await aplicar();
 
     expect(screen.getAllByText("ativada agora")).toHaveLength(2);
-    expect(screen.getAllByText("ACTIVE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("ATIVO").length).toBeGreaterThan(0);
   });
 
   it("oferece o caminho para a trilha completa do lote", async () => {
