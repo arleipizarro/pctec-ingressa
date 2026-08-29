@@ -113,7 +113,7 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
     <div className="launcher">
       <header className="launcher-topo">
         <div className="launcher-marca">
-          <span className="launcher-logo" aria-hidden="true">PC</span>
+          <img className="launcher-logo" src="/marca/marca-ingressa.png" alt="" width={44} height={44} />
           <div>
             <h1>PCTEC Ingressa</h1>
             <p>Meus aplicativos</p>

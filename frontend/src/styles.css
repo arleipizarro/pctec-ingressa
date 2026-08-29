@@ -1,174 +1,769 @@
-/* Identidade visual PCTEC Ingressa — azul institucional, superfícies
-   claras, tipografia de sistema. Sem framework: o MVP não precisa de
-   um, e cada dependência a mais é uma superfície a manter. */
+/* Identidade visual PCTEC Ingressa — mesma família do PCTEC HUB.
+ *
+ * Toda a paleta abaixo foi extraída do HUB, não estimada: a fonte é
+ * `frontend/src/pages/Produtos/theme.jsx` (objeto `C`), idêntico nas
+ * quatro cópias de release do HUB, complementado pelos tokens de estado
+ * e de foco usados em `pages/Clientes.jsx` e `pages/Login.jsx`.
+ *
+ * Regra de manutenção: nenhuma cor literal fora deste bloco `:root`.
+ * Quem precisar de um tom novo adiciona um token semântico aqui — cor
+ * solta espalhada pelo arquivo foi exatamente o que esta rodada removeu.
+ */
 :root {
-  --pctec-azul: #123a6b;
-  --pctec-azul-claro: #1e5aa8;
-  --pctec-fundo: #f4f6f9;
-  --pctec-superficie: #ffffff;
-  --pctec-borda: #d8dee7;
-  --pctec-texto: #1c2530;
-  --pctec-texto-fraco: #5b6675;
-  --pctec-ok: #1b7a4b;
-  --pctec-alerta: #a86a00;
-  --pctec-erro: #b3261e;
-  --pctec-neutro: #64748b;
+  /* --- Marca e ação (HUB: acc1/acc2/acc3 + txt1) -------------------- */
+  --marca-profunda: #1e1040; /* HUB txt1  — topo da hierarquia */
+  --marca: #3d2080;          /* HUB acc1  — navegação e ação principal */
+  --marca-media: #5b3fa6;    /* HUB acc2  — destaque, foco, links */
+  --marca-suave: #7c62b0;    /* HUB acc3  — apoio */
+
+  /* --- Superfícies (HUB: pageBg/cardBg + tons de seleção) ----------- */
+  --sup-pagina: #f5f4fa;
+  --sup-cartao: #ffffff;
+  --sup-sutil: #f8f5ff;    /* HUB: hover de linha de tabela */
+  --sup-selecao: #f0ebff;  /* HUB: cabeçalho de tabela, item ativo */
+  --sup-marca-escura: rgba(255, 255, 255, 0.1);
+  --sup-marca-ativa: rgba(255, 255, 255, 0.16);
+  /* Sombreado que cobre a página atrás de modal e da gaveta de menu —
+     o mesmo índigo de `--marca-profunda` em duas intensidades. */
+  --sombreado: rgba(30, 16, 64, 0.5);
+  --sombreado-leve: rgba(30, 16, 64, 0.45);
+
+  /* --- Bordas (HUB: border/borderH) -------------------------------- */
+  --borda: #e2daf0;
+  --borda-forte: #c9b8f0;
+
+  /* --- Texto (HUB: txt1/txt2/txt3) ---------------------------------
+   * `--txt-fraco` (#8b7db0) atinge 3.71:1 sobre branco: serve a texto
+   * grande e a elementos decorativos, nunca a rótulo ou dado. Rótulos,
+   * cabeçalhos de tabela e textos de apoio usam `--txt-medio` (9.66:1).
+   */
+  --txt: #1e1040;
+  --txt-medio: #4b3d6a;
+  --txt-fraco: #8b7db0;
+  --txt-invertido: #ffffff;
+  --txt-invertido-fraco: rgba(255, 255, 255, 0.82);
+
+  /* --- Estados (HUB: ok/err/warn + azul de informação) -------------- */
+  --ok: #166534;      --ok-fundo: #f0fdf4;      --ok-borda: #86efac;
+  --alerta: #92400e;  --alerta-fundo: #fffbeb;  --alerta-borda: #fcd34d;
+  --erro: #991b1b;    --erro-fundo: #fff0f0;    --erro-borda: #fca5a5;
+  --info: #1d4ed8;    --info-fundo: #eff6ff;    --info-borda: #bfdbfe;
+  --neutro: #374151;  --neutro-fundo: #f5f5f5;  --neutro-borda: #d1d5db;
+
+  /* --- Raios (HUB: 8/10/12/16/99 são os valores dominantes) --------- */
+  --raio-p: 8px;
+  --raio-m: 10px;
+  --raio-g: 12px;
+  --raio-gg: 16px;
+  --raio-pilula: 999px;
+
+  /* --- Sombras (HUB) ------------------------------------------------ */
+  --sombra-cartao: 0 2px 10px rgba(61, 32, 128, 0.07);
+  --sombra-elevada: 0 4px 14px rgba(61, 32, 128, 0.2);
+  --sombra-modal: 0 24px 64px rgba(61, 32, 128, 0.2);
+
+  /* --- Foco ---------------------------------------------------------
+   * O HUB usa `0 0 0 3px rgba(91,63,166,0.12)`. A opacidade dele é fraca
+   * demais para foco de teclado visível, então o anel aqui é o mesmo
+   * tom em intensidade utilizável. É o único desvio deliberado.
+   */
+  --anel-foco: 0 0 0 3px rgba(91, 63, 166, 0.38);
+
+  /* --- Tipografia (HUB: Login.jsx) ---------------------------------- */
+  --fonte: "Nunito", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* --- Espaçamento -------------------------------------------------- */
+  --e1: 4px;
+  --e2: 8px;
+  --e3: 12px;
+  --e4: 16px;
+  --e5: 24px;
+  --e6: 32px;
+
+  --larg-menu: 248px;
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; background: var(--pctec-fundo); color: var(--pctec-texto); }
-a { color: var(--pctec-azul-claro); text-decoration: none; }
+
+body {
+  margin: 0;
+  font-family: var(--fonte);
+  background: var(--sup-pagina);
+  color: var(--txt);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--marca-media); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-.layout { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
-.sidebar { background: var(--pctec-azul); color: #fff; padding: 20px 0; }
-.sidebar h1 { font-size: 1.05rem; margin: 0 20px 24px; letter-spacing: .04em; }
-.sidebar h1 small { display: block; font-weight: 400; opacity: .75; font-size: .75rem; }
-.sidebar nav a { display: block; color: #dce6f4; padding: 10px 20px; border-left: 3px solid transparent; }
-.sidebar nav a.ativo { background: rgba(255,255,255,.12); border-left-color: #fff; color: #fff; }
-.sidebar nav a:hover { text-decoration: none; background: rgba(255,255,255,.08); }
+/* Foco de teclado visível em tudo que recebe foco. `:focus-visible`
+   mantém o anel fora do clique de mouse sem nunca escondê-lo de quem
+   navega por teclado. */
+:focus-visible {
+  outline: 2px solid var(--marca-media);
+  outline-offset: 2px;
+  border-radius: var(--raio-p);
+}
 
-.conteudo { display: flex; flex-direction: column; }
-header.topo { display: flex; justify-content: space-between; align-items: center; gap: 16px;
-  background: var(--pctec-superficie); border-bottom: 1px solid var(--pctec-borda); padding: 12px 24px; }
-header.topo .usuario { font-size: .85rem; color: var(--pctec-texto-fraco); }
-main { padding: 24px; }
+/* ===================================================================
+   Estrutura: menu lateral + conteúdo
+   =================================================================== */
+.layout {
+  display: grid;
+  grid-template-columns: var(--larg-menu) 1fr;
+  min-height: 100vh;
+}
 
-h2 { margin: 0 0 4px; font-size: 1.35rem; }
-.subtitulo { color: var(--pctec-texto-fraco); margin: 0 0 20px; font-size: .9rem; }
+.sidebar {
+  background: var(--marca);
+  color: var(--txt-invertido);
+  padding: var(--e5) 0 var(--e4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--e5);
+}
 
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-.card { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 8px; padding: 16px; }
-.card .rotulo { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pctec-texto-fraco); }
-.card .valor { font-size: 1.9rem; font-weight: 600; margin-top: 6px; }
+/* Marca do menu: símbolo em ladrilho branco. O PNG de origem tem fundo
+   branco e a remoção automática produziria halo sobre o índigo — o
+   ladrilho resolve isso sem tocar no desenho. */
+.sidebar-marca {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  padding: 0 var(--e4);
+}
 
-table { width: 100%; border-collapse: collapse; background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 8px; overflow: hidden; }
-th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--pctec-borda); font-size: .9rem; vertical-align: middle; }
-th { background: #eef2f7; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--pctec-texto-fraco); }
+.sidebar-simbolo {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--raio-g);
+  background: var(--sup-cartao);
+  padding: 5px;
+  box-shadow: var(--sombra-elevada);
+}
+
+.sidebar h1 {
+  font-size: 0.98rem;
+  margin: 0;
+  letter-spacing: 0.03em;
+  line-height: 1.25;
+}
+
+.sidebar h1 small {
+  display: block;
+  font-weight: 400;
+  opacity: 0.72;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sidebar nav { display: flex; flex-direction: column; gap: 2px; padding: 0 var(--e2); }
+
+.sidebar nav a {
+  display: block;
+  color: var(--txt-invertido-fraco);
+  padding: 10px var(--e3);
+  border-radius: var(--raio-m);
+  font-size: 0.9rem;
+  font-weight: 600;
+  border-left: 3px solid transparent;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.sidebar nav a:hover { text-decoration: none; background: var(--sup-marca-escura); color: var(--txt-invertido); }
+
+/* Item ativo: fundo + barra lateral + peso. Três sinais, nenhum deles
+   dependente só de cor. */
+.sidebar nav a.ativo {
+  background: var(--sup-marca-ativa);
+  border-left-color: var(--txt-invertido);
+  color: var(--txt-invertido);
+  font-weight: 800;
+}
+
+.sidebar nav a:focus-visible { outline-color: var(--txt-invertido); }
+
+.conteudo { display: flex; flex-direction: column; min-width: 0; }
+
+header.topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--e4);
+  background: var(--sup-cartao);
+  border-bottom: 1px solid var(--borda);
+  padding: var(--e3) var(--e5);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+header.topo .usuario { font-size: 0.85rem; color: var(--txt-medio); }
+header.topo .usuario strong { color: var(--txt); }
+
+main { padding: var(--e5); min-width: 0; }
+
+/* Botão de menu — só existe no layout estreito. */
+.menu-alternar {
+  display: none;
+  align-items: center;
+  gap: var(--e2);
+  background: var(--sup-cartao);
+  border: 1.5px solid var(--borda);
+  border-radius: var(--raio-m);
+  color: var(--txt);
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 8px var(--e3);
+}
+
+.menu-alternar-barras { display: block; width: 16px; height: 2px; background: currentColor; box-shadow: 0 5px 0 currentColor, 0 -5px 0 currentColor; }
+
+.menu-fundo { display: none; }
+
+/* ===================================================================
+   Títulos e seções
+   =================================================================== */
+h2 { margin: 0 0 var(--e1); font-size: 1.4rem; letter-spacing: -0.01em; color: var(--txt); }
+
+.subtitulo { color: var(--txt-medio); margin: 0 0 var(--e5); font-size: 0.9rem; line-height: 1.5; }
+
+.secao { margin-top: var(--e6); }
+.secao h3 { margin: 0 0 var(--e3); font-size: 1.05rem; color: var(--txt); }
+
+/* ===================================================================
+   Cartões
+   =================================================================== */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: var(--e4);
+  margin-bottom: var(--e5);
+}
+
+.card {
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  padding: var(--e4) var(--e4) var(--e3);
+  box-shadow: var(--sombra-cartao);
+}
+
+.card .rotulo {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+  color: var(--txt-medio);
+}
+
+.card .valor { font-size: 2rem; font-weight: 800; margin-top: var(--e1); color: var(--marca); letter-spacing: -0.02em; }
+
+/* ===================================================================
+   Tabelas
+   =================================================================== */
+.tabela-rolavel {
+  overflow-x: auto;
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  box-shadow: var(--sombra-cartao);
+}
+
+/* A tabela dentro do invólucro rolável não repete borda nem sombra. */
+.tabela-rolavel > table { border: none; border-radius: 0; box-shadow: none; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+  box-shadow: var(--sombra-cartao);
+}
+
+th, td {
+  text-align: left;
+  padding: 11px var(--e3);
+  border-bottom: 1px solid var(--borda);
+  font-size: 0.88rem;
+  vertical-align: middle;
+}
+
+th {
+  background: var(--sup-selecao);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 800;
+  color: var(--txt-medio);
+  white-space: nowrap;
+}
+
+tbody tr { transition: background-color 0.12s; }
+tbody tr:hover td { background: var(--sup-sutil); }
 tbody tr:last-child td { border-bottom: none; }
-.tabela-rolavel { overflow-x: auto; }
 
-.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 600; letter-spacing: .02em; }
-.badge-ok { background: #e3f3ea; color: var(--pctec-ok); }
-.badge-alerta { background: #fdf1de; color: var(--pctec-alerta); }
-.badge-erro { background: #fbe6e5; color: var(--pctec-erro); }
-.badge-neutro { background: #eceff3; color: var(--pctec-neutro); }
+/* ===================================================================
+   Selos de status
+   =================================================================== */
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: var(--raio-pilula);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
 
-.barra { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-input, select, button { font: inherit; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--pctec-borda); background: #fff; }
-button { cursor: pointer; }
-button.primario { background: var(--pctec-azul); color: #fff; border-color: var(--pctec-azul); }
-button.perigo { background: #fff; color: var(--pctec-erro); border-color: var(--pctec-erro); }
-button:disabled { opacity: .55; cursor: not-allowed; }
+/* Cada estado tem rótulo textual próprio (ACTIVE, BLOCKED, …) além de
+   cor e borda: a cor reforça, nunca carrega sozinha a informação. */
+.badge-ok { background: var(--ok-fundo); color: var(--ok); border-color: var(--ok-borda); }
+.badge-alerta { background: var(--alerta-fundo); color: var(--alerta); border-color: var(--alerta-borda); }
+.badge-erro { background: var(--erro-fundo); color: var(--erro); border-color: var(--erro-borda); }
+.badge-neutro { background: var(--neutro-fundo); color: var(--neutro); border-color: var(--neutro-borda); }
+.badge-info { background: var(--info-fundo); color: var(--info); border-color: var(--info-borda); }
 
-.aviso { padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; font-size: .9rem; }
-.aviso-erro { background: #fbe6e5; color: var(--pctec-erro); }
-.aviso-ok { background: #e3f3ea; color: var(--pctec-ok); }
-.vazio { padding: 28px; text-align: center; color: var(--pctec-texto-fraco); background: var(--pctec-superficie); border: 1px dashed var(--pctec-borda); border-radius: 8px; }
+/* ===================================================================
+   Barras de filtro, campos e botões
+   =================================================================== */
+.barra { display: flex; gap: var(--e2); flex-wrap: wrap; margin-bottom: var(--e4); align-items: center; }
 
-.login { display: grid; place-items: center; min-height: 100vh; }
-.login form { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 10px; padding: 28px; width: min(380px, 92vw); display: grid; gap: 12px; }
-.login h1 { margin: 0; font-size: 1.3rem; color: var(--pctec-azul); }
-.login label { font-size: .85rem; color: var(--pctec-texto-fraco); }
+input, select, textarea, button {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 9px var(--e3);
+  border-radius: var(--raio-m);
+  border: 1.5px solid var(--borda);
+  background: var(--sup-cartao);
+  color: var(--txt);
+}
 
-.modal-fundo { position: fixed; inset: 0; background: rgba(18,25,35,.45); display: grid; place-items: center; padding: 16px; }
-.modal { background: var(--pctec-superficie); border-radius: 10px; padding: 22px; width: min(460px, 96vw); }
-.modal h3 { margin: 0 0 8px; }
-.modal .acoes { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+input, select, textarea { transition: border-color 0.15s, box-shadow 0.15s; }
 
-.secao { margin-top: 28px; }
-.secao h3 { margin: 0 0 10px; font-size: 1.05rem; }
-.chave-valor { display: grid; grid-template-columns: 200px 1fr; gap: 6px 16px; font-size: .9rem; }
-.chave-valor dt { color: var(--pctec-texto-fraco); }
+input:hover:not(:disabled), select:hover:not(:disabled), textarea:hover:not(:disabled) { border-color: var(--borda-forte); }
+
+/* Foco de campo: borda da marca + anel. Espelha o padrão do HUB
+   (`focusIn` em Clientes.jsx), com opacidade utilizável. */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--marca-media);
+  box-shadow: var(--anel-foco);
+}
+
+input::placeholder, textarea::placeholder { color: var(--txt-fraco); }
+
+button { cursor: pointer; font-weight: 700; transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s; }
+button:hover:not(:disabled) { border-color: var(--borda-forte); background: var(--sup-sutil); }
+
+/* Ação principal — mesmo gradiente do CTA do HUB (Login.jsx). */
+button.primario, .botao-primario, .app-card-acao {
+  background: linear-gradient(135deg, var(--marca), var(--marca-media));
+  color: var(--txt-invertido);
+  border: 1.5px solid transparent;
+  box-shadow: var(--sombra-elevada);
+}
+
+button.primario:hover:not(:disabled), .botao-primario:hover, .app-card-acao:hover {
+  background: linear-gradient(135deg, var(--marca-media), var(--marca-suave));
+  border-color: transparent;
+  text-decoration: none;
+}
+
+button.perigo { background: var(--sup-cartao); color: var(--erro); border-color: var(--erro-borda); }
+button.perigo:hover:not(:disabled) { background: var(--erro-fundo); border-color: var(--erro); }
+
+button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+
+/* Link com aparência de botão primário: a ação é NAVEGAÇÃO, então o
+   elemento continua sendo <a> — só a aparência é emprestada. */
+.botao-primario {
+  display: inline-block;
+  padding: 9px var(--e4);
+  border-radius: var(--raio-m);
+  font-size: 0.9rem;
+}
+
+.botao-link { display: inline-block; margin-top: var(--e3); }
+
+.ligacao {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--marca-media);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ligacao:hover { background: none; color: var(--marca); }
+
+/* ===================================================================
+   Avisos — erro, alerta, sucesso, informação
+   =================================================================== */
+.aviso {
+  padding: var(--e3) var(--e4);
+  border-radius: var(--raio-m);
+  margin-bottom: var(--e4);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  border-left-width: 4px;
+}
+
+/* Fundo, borda e a própria mensagem distinguem os tipos — não só o tom. */
+.aviso-erro { background: var(--erro-fundo); color: var(--erro); border-color: var(--erro-borda); }
+.aviso-ok { background: var(--ok-fundo); color: var(--ok); border-color: var(--ok-borda); }
+.aviso-alerta { background: var(--alerta-fundo); color: var(--alerta); border-color: var(--alerta-borda); }
+.aviso-info { background: var(--info-fundo); color: var(--info); border-color: var(--info-borda); }
+
+/* ===================================================================
+   Estado vazio e carregamento
+   =================================================================== */
+.vazio {
+  padding: var(--e6) var(--e5);
+  text-align: center;
+  color: var(--txt-medio);
+  background: var(--sup-cartao);
+  border: 1px dashed var(--borda-forte);
+  border-radius: var(--raio-g);
+  font-size: 0.9rem;
+}
+
+/* Indicador de carregamento: o ponto pulsante é reforço do texto
+   "Carregando…", que continua sendo a informação real. */
+.vazio[role="status"]::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--e2);
+  border-radius: 50%;
+  background: var(--marca-media);
+  animation: pulso 1.1s ease-in-out infinite;
+}
+
+@keyframes pulso {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* ===================================================================
+   Login
+   =================================================================== */
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--e5) var(--e4);
+  background: var(--sup-pagina);
+}
+
+.login form {
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-gg);
+  padding: var(--e6) var(--e5) var(--e5);
+  width: min(400px, 100%);
+  display: grid;
+  gap: var(--e3);
+  box-shadow: var(--sombra-modal);
+}
+
+.login-marca { display: grid; justify-items: center; gap: var(--e3); margin-bottom: var(--e2); }
+.login-marca img { width: 168px; height: auto; }
+
+.login h1 { margin: 0; font-size: 1.25rem; color: var(--marca); text-align: center; letter-spacing: -0.01em; }
+.login .subtitulo { text-align: center; margin: 0; }
+.login label { font-size: 0.82rem; font-weight: 700; color: var(--txt-medio); }
+.login button.primario { margin-top: var(--e2); padding: 11px var(--e4); }
+
+/* ===================================================================
+   Modais
+   =================================================================== */
+.modal-fundo {
+  position: fixed;
+  inset: 0;
+  background: var(--sombreado);
+  display: grid;
+  place-items: center;
+  padding: var(--e4);
+  z-index: 60;
+}
+
+.modal {
+  background: var(--sup-cartao);
+  border-radius: var(--raio-gg);
+  padding: var(--e5);
+  width: min(480px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: var(--sombra-modal);
+}
+
+.modal h3 { margin: 0 0 var(--e2); font-size: 1.1rem; }
+.modal .acoes { display: flex; gap: var(--e2); justify-content: flex-end; margin-top: var(--e5); flex-wrap: wrap; }
+
+/* ===================================================================
+   Listas de chave/valor — detalhe de organização e de usuário
+   =================================================================== */
+.chave-valor {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  gap: var(--e2) var(--e4);
+  font-size: 0.9rem;
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  padding: var(--e4);
+  box-shadow: var(--sombra-cartao);
+  margin: 0;
+}
+
+.chave-valor dt { color: var(--txt-medio); font-weight: 700; }
 .chave-valor dd { margin: 0; }
-.redigido { color: var(--pctec-alerta); font-style: italic; }
 
-@media (max-width: 860px) {
-  .layout { grid-template-columns: 1fr; }
-  .sidebar { display: flex; flex-wrap: wrap; align-items: center; padding: 12px; gap: 4px; }
-  .sidebar h1 { margin: 0 16px 0 4px; }
-  .sidebar nav { display: flex; flex-wrap: wrap; }
-  .sidebar nav a { padding: 8px 12px; border-left: none; border-bottom: 3px solid transparent; }
-  .sidebar nav a.ativo { border-left-color: transparent; border-bottom-color: #fff; }
-  .chave-valor { grid-template-columns: 1fr; }
+/* A lista aparece de duas formas: pares `dt`/`dd` soltos (detalhe de
+   organização) e pares agrupados num `<div>` (contagens da
+   reconciliação). No segundo caso o item da grade é o `<div>`, então
+   um rótulo longo como DOCUMENT_MISSING_OR_INVALID invadia a coluna
+   vizinha. `min-width: 0` mais a quebra abaixo mantêm o rótulo dentro
+   da própria célula; a grade de cartões é o ajuste fino. */
+.chave-valor > div { min-width: 0; }
+.chave-valor dt, .chave-valor dd { overflow-wrap: anywhere; }
+
+.chave-valor:has(> div) { grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); }
+
+.redigido { color: var(--alerta); font-style: italic; }
+
+.painel-resultado {
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  padding: var(--e4);
+  margin-bottom: var(--e5);
+  box-shadow: var(--sombra-cartao);
 }
+.painel-resultado h3 { margin: 0 0 var(--e2); font-size: 1rem; }
 
-/* Link que age como botão primário — a ação de entrada do assistente é
-   uma NAVEGAÇÃO, não uma mutação, então o elemento certo é <a>. Só a
-   aparência é emprestada do botão. */
-.botao-primario { display: inline-block; padding: 8px 14px; border-radius: 6px;
-  background: var(--pctec-azul); color: #fff; border: 1px solid var(--pctec-azul); font-size: .9rem; }
-.botao-primario:hover { text-decoration: none; opacity: .92; }
-details > summary { cursor: pointer; padding: 8px 0; font-size: .92rem; }
-details[open] > summary { font-weight: 600; }
-
-/* --- Launcher "Meus aplicativos" ---------------------------------------
-   Página inicial de quem entra. Sem sidebar: a navegação administrativa
-   só faz sentido para ADMIN, e a maioria das pessoas que chega aqui não
-   pode abrir nenhum item dela. */
-.launcher { max-width: 1040px; margin: 0 auto; padding: 28px 24px 56px; }
-
-.launcher-topo { display: flex; justify-content: space-between; align-items: center; gap: 16px;
-  flex-wrap: wrap; padding-bottom: 20px; margin-bottom: 28px; border-bottom: 1px solid var(--pctec-borda); }
-.launcher-marca { display: flex; align-items: center; gap: 12px; }
-.launcher-logo { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px;
-  background: var(--pctec-azul); color: #fff; font-weight: 800; font-size: .95rem; letter-spacing: .02em; }
-.launcher-marca h1 { margin: 0; font-size: 1.05rem; letter-spacing: .03em; color: var(--pctec-azul); }
-.launcher-marca p { margin: 2px 0 0; font-size: .82rem; color: var(--pctec-texto-fraco); }
-
-.launcher-usuario { display: flex; align-items: center; gap: 10px; }
-.launcher-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
-  background: #eef2f7; color: var(--pctec-azul); font-size: .78rem; font-weight: 700; }
-.launcher-identificacao { display: flex; flex-direction: column; line-height: 1.25; }
-.launcher-identificacao strong { font-size: .88rem; }
-.launcher-selo { font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; color: var(--pctec-azul-claro); font-weight: 700; }
-
-.launcher-secao { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em;
-  color: var(--pctec-texto-fraco); margin: 0 0 12px; }
-.launcher-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 16px; }
-
-.app-card { display: flex; flex-direction: column; gap: 10px; background: var(--pctec-superficie);
-  border: 1px solid var(--pctec-borda); border-radius: 12px; padding: 18px; }
-.app-card:hover { border-color: var(--pctec-azul-claro); box-shadow: 0 3px 14px rgba(18,58,107,.09); }
-.app-card header { display: flex; align-items: center; gap: 10px; }
-.app-card-sigla { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px;
-  background: #eef2f7; color: var(--pctec-azul); font-weight: 700; font-size: .82rem; }
-.app-card header strong { display: block; font-size: 1rem; color: var(--pctec-azul); }
-.app-card-perfil { font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; color: var(--pctec-texto-fraco); }
-.app-card-descricao { flex: 1; margin: 0; font-size: .86rem; color: var(--pctec-texto-fraco); }
-.app-card-acao { align-self: flex-start; background: var(--pctec-azul); color: #fff; border-radius: 8px;
-  padding: 8px 14px; font-size: .85rem; font-weight: 600; }
-.app-card-acao:hover { background: var(--pctec-azul-claro); text-decoration: none; }
-/* Acesso existe, destino ainda não. O card continua visível — sumir
-   faria a pessoa achar que perdeu o acesso. */
-.app-card-embreve { align-self: flex-start; font-size: .78rem; font-weight: 600; color: var(--pctec-alerta);
-  background: #fdf1de; border-radius: 999px; padding: 5px 12px; }
-.app-card-indisponivel { opacity: .78; }
-.app-card-indisponivel:hover { border-color: var(--pctec-borda); box-shadow: none; }
-
-.launcher-organizacoes { margin-top: 34px; }
-.lista-organizacoes { list-style: none; margin: 0; padding: 0; display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
-.lista-organizacoes li { display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  background: var(--pctec-superficie); border: 1px solid var(--pctec-borda); border-radius: 8px; padding: 10px 14px; }
-.organizacao-nome { font-size: .88rem; }
-.organizacao-tipo { font-size: .7rem; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--pctec-texto-fraco); background: #eef2f7; border-radius: 999px; padding: 2px 8px; }
-
-.ligacao { background: none; border: none; padding: 0; color: var(--pctec-azul-claro);
-  font: inherit; text-decoration: underline; cursor: pointer; }
-
-@media (max-width: 640px) {
-  .launcher { padding: 20px 16px 40px; }
-  .launcher-topo { align-items: flex-start; }
-  .launcher-grade, .lista-organizacoes { grid-template-columns: 1fr; }
-}
-
-.acoes-topo { display: flex; align-items: center; gap: 12px; }
-.botao-link { display: inline-block; margin-top: 12px; }
-.painel-resultado { background: var(--pctec-superficie); border: 1px solid var(--pctec-borda);
-  border-radius: 8px; padding: 16px; margin-bottom: 20px; }
-.painel-resultado h3 { margin: 0 0 8px; font-size: 1rem; }
 /* O link do convite quebra em qualquer ponto: um token de 43 caracteres
    numa célula estreita ficaria cortado, e um link cortado é inútil. */
-.link-convite { font-size: .78rem; word-break: break-all; }
+.link-convite { font-size: 0.78rem; word-break: break-all; color: var(--txt-medio); }
+
+.acoes-topo { display: flex; align-items: center; gap: var(--e3); }
+
+details > summary { cursor: pointer; padding: var(--e2) 0; font-size: 0.92rem; color: var(--marca-media); font-weight: 600; }
+details[open] > summary { font-weight: 800; color: var(--txt); }
+
+/* ===================================================================
+   Launcher "Meus aplicativos"
+   Página inicial de quem entra. Sem menu lateral: a navegação
+   administrativa só faz sentido para ADMIN, e a maioria das pessoas que
+   chega aqui não pode abrir nenhum item dela.
+   =================================================================== */
+.launcher { max-width: 1060px; margin: 0 auto; padding: var(--e6) var(--e5) 56px; }
+
+.launcher-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--e4);
+  flex-wrap: wrap;
+  padding-bottom: var(--e5);
+  margin-bottom: var(--e6);
+  border-bottom: 1px solid var(--borda);
+}
+
+.launcher-marca { display: flex; align-items: center; gap: var(--e3); }
+
+.launcher-logo {
+  display: block;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--raio-g);
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  padding: 4px;
+}
+
+.launcher-marca h1 { margin: 0; font-size: 1.1rem; letter-spacing: -0.01em; color: var(--marca); }
+.launcher-marca p { margin: 2px 0 0; font-size: 0.82rem; color: var(--txt-medio); }
+
+.launcher-usuario { display: flex; align-items: center; gap: var(--e3); }
+
+.launcher-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--sup-selecao);
+  color: var(--marca);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.launcher-identificacao { display: flex; flex-direction: column; line-height: 1.3; }
+.launcher-identificacao strong { font-size: 0.88rem; }
+.launcher-selo { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--marca-media); font-weight: 800; }
+
+.launcher-secao {
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 800;
+  color: var(--txt-medio);
+  margin: 0 0 var(--e4);
+}
+
+.launcher-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: var(--e4); }
+
+.app-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--e3);
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  padding: var(--e4);
+  box-shadow: var(--sombra-cartao);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.app-card:hover { border-color: var(--borda-forte); box-shadow: var(--sombra-elevada); }
+.app-card header { display: flex; align-items: center; gap: var(--e3); }
+
+.app-card-sigla {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--raio-m);
+  background: var(--sup-selecao);
+  color: var(--marca);
+  font-weight: 800;
+  font-size: 0.82rem;
+  flex: none;
+}
+
+.app-card header strong { display: block; font-size: 1rem; color: var(--txt); }
+.app-card-perfil { font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 800; color: var(--txt-medio); }
+.app-card-descricao { flex: 1; margin: 0; font-size: 0.86rem; color: var(--txt-medio); line-height: 1.5; }
+
+.app-card-acao { align-self: flex-start; border-radius: var(--raio-m); padding: 9px var(--e4); font-size: 0.85rem; font-weight: 700; }
+
+/* Acesso existe, destino ainda não. O card continua visível — sumir
+   faria a pessoa achar que perdeu o acesso. */
+.app-card-embreve {
+  align-self: flex-start;
+  font-size: 0.76rem;
+  font-weight: 800;
+  color: var(--alerta);
+  background: var(--alerta-fundo);
+  border: 1px solid var(--alerta-borda);
+  border-radius: var(--raio-pilula);
+  padding: 5px var(--e3);
+}
+
+.app-card-indisponivel { opacity: 0.8; }
+.app-card-indisponivel:hover { border-color: var(--borda); box-shadow: var(--sombra-cartao); }
+
+.launcher-organizacoes { margin-top: var(--e6); }
+
+.lista-organizacoes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: var(--e2);
+}
+
+.lista-organizacoes li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--e2);
+  background: var(--sup-cartao);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-m);
+  padding: 10px var(--e3);
+}
+
+.organizacao-nome { font-size: 0.88rem; }
+
+.organizacao-tipo {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 800;
+  color: var(--txt-medio);
+  background: var(--sup-selecao);
+  border-radius: var(--raio-pilula);
+  padding: 3px var(--e2);
+  white-space: nowrap;
+}
+
+/* ===================================================================
+   Responsivo
+   =================================================================== */
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+
+  /* O menu vira gaveta: fora da tela por padrão, sobreposta quando
+     aberta. Some do fluxo do documento, então o conteúdo ocupa a
+     largura inteira em vez de disputar espaço com a navegação. */
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(var(--larg-menu), 82vw);
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    overflow-y: auto;
+    box-shadow: var(--sombra-modal);
+  }
+
+  .sidebar.aberto { transform: translateX(0); }
+
+  .menu-fundo { display: block; position: fixed; inset: 0; background: var(--sombreado-leve); z-index: 40; }
+
+  .menu-alternar { display: inline-flex; }
+
+  /* Botão de menu e ações não cabem na mesma linha que a identificação
+     em 390px: a identificação desce para a própria linha em vez de
+     empurrar as ações para fora da tela. */
+  header.topo { padding: var(--e3) var(--e4); flex-wrap: wrap; row-gap: var(--e2); }
+  header.topo .usuario { font-size: 0.8rem; order: 3; flex: 1 0 100%; }
+  .acoes-topo { margin-left: auto; }
+
+  main { padding: var(--e4); }
+
+  .chave-valor { grid-template-columns: 1fr; gap: var(--e1) 0; }
+  .chave-valor dd { margin-bottom: var(--e2); }
+}
+
+@media (max-width: 640px) {
+  .launcher { padding: var(--e5) var(--e4) 40px; }
+  .launcher-topo { align-items: flex-start; }
+  .launcher-grade, .lista-organizacoes { grid-template-columns: 1fr; }
+  .cards { grid-template-columns: 1fr; }
+  h2 { font-size: 1.2rem; }
+  .acoes-topo { gap: var(--e2); }
+}
+
+/* Sem animação para quem pediu para não ter. Nenhuma informação depende
+   de movimento, então desligar tudo é seguro. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .sidebar { transition: none; }
+}

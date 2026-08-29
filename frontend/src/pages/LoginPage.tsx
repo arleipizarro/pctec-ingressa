@@ -55,8 +55,13 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
   return (
     <div className="login">
       <form onSubmit={entrar}>
-        <h1>PCTEC Ingressa</h1>
-        <p className="subtitulo" style={{ margin: 0 }}>Acesso às aplicações PCTEC</p>
+        <div className="login-marca">
+          {/* Lockup completo da marca. O <h1> logo abaixo já nomeia o
+              produto, então a imagem entra como decorativa. */}
+          <img src="/marca/logo-ingressa.png" alt="" width={168} height={184} />
+          <h1>PCTEC Ingressa</h1>
+          <p className="subtitulo">Acesso às aplicações PCTEC</p>
+        </div>
         {retomada !== null && (
           <div className="aviso aviso-alerta" role="status">
             Entre para continuar até o aplicativo que você pediu.
