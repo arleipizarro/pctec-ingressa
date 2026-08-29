@@ -50,11 +50,12 @@ const ROTULOS: Readonly<Record<string, string>> = {
   // Situação de acesso a aplicação — mesma coluna, mesma tabela.
   GRANTED: "CONCEDIDO",
   REVOKED: "REVOGADO",
-  // Execução de lote, ao lado de COMPLETED/FAILED.
+  // Execução de lote, ao lado de COMPLETED/FAILED/ABORTED.
   RUNNING: "EM EXECUÇÃO",
   // Ação do item de lote: divide seletor e cartões com CONFLICT e
   // QUARANTINE, que já estavam traduzidos desde a rodada anterior.
   CREATE: "CRIAR",
+  UPDATE: "ATUALIZAR",
   SKIP: "IGNORAR",
   // Modo do lote de importação
   DRY_RUN: "SIMULAÇÃO",
@@ -62,6 +63,7 @@ const ROTULOS: Readonly<Record<string, string>> = {
   // Desfecho do lote
   COMPLETED: "CONCLUÍDO",
   FAILED: "FALHOU",
+  ABORTED: "ABORTADO",
   // Pendências de importação
   CONFLICT: "CONFLITO",
   QUARANTINE: "QUARENTENA",
@@ -76,6 +78,8 @@ const ROTULOS: Readonly<Record<string, string>> = {
   EMPLOYEE: "COLABORADOR",
   PARTNER: "PARCEIRO",
   SUPPLIER: "FORNECEDOR",
+  // Consta em PERFIS_DE_VINCULO e aparecia cru no seletor.
+  SERVICE_ACCOUNT: "CONTA DE SERVIÇO",
   // Perfil de acesso a uma aplicação
   USER: "USUÁRIO",
   ADMIN: "ADMINISTRADOR",
@@ -148,7 +152,9 @@ export function rotuloDeAcesso(codigo: string, perfil: string): string {
 const IDENTIDADES: Readonly<Record<string, string>> = {
   ACTIVE: "ativas",
   PENDING: "pendentes",
-  BLOCKED: "bloqueadas"
+  BLOCKED: "bloqueadas",
+  INACTIVE: "inativas",
+  DELETED: "excluídas"
 };
 
 export function rotuloDeIdentidades(status: string): string {
