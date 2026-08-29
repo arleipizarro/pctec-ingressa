@@ -139,7 +139,8 @@ type EstadoDasOrganizacoes =
  * lá que nascem `state` e `code_verifier`. O Ingressa não pode gerá-los
  * pelo cliente: um verifier que passou por aqui não prova mais nada.
  *
- * Produto sem destino configurado aparece como **"Em breve"**, nunca com
+ * Produto sem destino configurado aparece como **"Indisponível no
+ * momento"**, nunca com
  * um endereço inventado: enquanto não houver um caminho de entrada
  * seguro e pronto, oferecer um botão seria prometer o que não existe.
  */
