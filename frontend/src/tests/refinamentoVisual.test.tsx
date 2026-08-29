@@ -189,6 +189,61 @@ describe("camada de apresentação", () => {
   });
 });
 
+describe("camada de apresentação — cobertura fora do painel", () => {
+  it("ACTIVE aparece como ATIVO no selo, e o valor do servidor escolhe a cor", () => {
+    expect(rotulo("ACTIVE")).toBe("ATIVO");
+    expect(rotulo("INACTIVE")).toBe("INATIVO");
+    expect(rotulo("PENDING")).toBe("PENDENTE");
+    expect(rotulo("BLOCKED")).toBe("BLOQUEADO");
+    expect(rotulo("EXPIRED")).toBe("EXPIRADO");
+    expect(rotulo("GRANTED")).toBe("CONCEDIDO");
+    expect(rotulo("REVOKED")).toBe("REVOGADO");
+    expect(rotulo("CREATE")).toBe("CRIAÇÃO");
+    expect(rotulo("SKIP")).toBe("IGNORADO");
+  });
+
+  it("a listagem de Organizações traduz o tipo na coluna", async () => {
+    renderizar("/admin/organizacoes");
+
+    expect(await screen.findByText("EMPRESA")).toBeInTheDocument();
+    expect(screen.queryByText("COMPANY")).not.toBeInTheDocument();
+    expect(screen.queryByText("BUSINESS_GROUP")).not.toBeInTheDocument();
+  });
+
+  /**
+   * O ponto mais delicado da rodada: o filtro precisa MOSTRAR português
+   * e ENVIAR o enum. Se o `value` escorregasse junto com o texto, o
+   * parâmetro `type` iria para a API como "EMPRESA" e a busca voltaria
+   * vazia — falha silenciosa, sem erro na tela.
+   */
+  it("o filtro de tipo traduz o texto da option e PRESERVA o value técnico", async () => {
+    renderizar("/admin/organizacoes");
+    await screen.findByText("EMPRESA");
+
+    const filtro = screen.getByLabelText("Filtrar por tipo") as HTMLSelectElement;
+    const porTexto = new Map(
+      [...filtro.options].map((o) => [o.textContent, o.value])
+    );
+
+    expect(porTexto.get("EMPRESA")).toBe("COMPANY");
+    expect(porTexto.get("GRUPO EMPRESARIAL")).toBe("BUSINESS_GROUP");
+    // Nenhuma option exibe o enum cru.
+    expect([...filtro.options].map((o) => o.textContent)).not.toContain("COMPANY");
+  });
+
+  it("selecionar no filtro traduzido envia o enum para a API", async () => {
+    renderizar("/admin/organizacoes");
+    await screen.findByText("EMPRESA");
+
+    await userEvent.selectOptions(screen.getByLabelText("Filtrar por tipo"), "COMPANY");
+
+    await waitFor(() => {
+      const chamada = (api.organizations as unknown as { mock: { calls: URLSearchParams[][] } }).mock.calls.at(-1)?.[0];
+      expect(chamada?.get("type")).toBe("COMPANY");
+    });
+  });
+});
+
 describe("painel — grade de KPIs", () => {
   it("mantém todos os cartões de contagem", async () => {
     renderizar("/admin");

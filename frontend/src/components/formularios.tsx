@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Aplicacao, Organizacao } from "../api.js";
+import { rotulo } from "../apresentacao.js";
 
 /** Perfis aceitos pelo domínio — enum fechado, não texto livre. */
 export const PERFIS_DE_ACESSO = ["USER", "ADMIN"] as const;
@@ -133,7 +134,7 @@ export function FormularioCriarMembership({
         <select id="organizacao" value={organizacao} onChange={(e) => trocarOrganizacao(e.target.value)} style={{ width: "100%" }}>
           <option value="">Selecione…</option>
           {organizacoes.filter((o) => o.status === "ACTIVE").map((o) => (
-            <option key={o.public_id} value={o.public_id}>{o.trade_name ?? o.legal_name} · {o.type}</option>
+            <option key={o.public_id} value={o.public_id}>{o.trade_name ?? o.legal_name} · {rotulo(o.type)}</option>
           ))}
         </select>
 
@@ -148,7 +149,7 @@ export function FormularioCriarMembership({
         </select>
         {selecionada !== undefined && escopos.length === 1 && (
           <p className="subtitulo" style={{ margin: "6px 0 0" }}>
-            Só <code>ORGANIZATION_ONLY</code> se aplica: {selecionada.type} não tem descendentes.
+            Só <code>ORGANIZATION_ONLY</code> se aplica: {rotulo(selecionada.type)} não tem descendentes.
           </p>
         )}
 

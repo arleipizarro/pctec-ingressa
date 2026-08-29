@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import type { Aplicacao, IntegracaoComOPortal, Organizacao, UsuarioProvisionado } from "../api.js";
+import { rotulo } from "../apresentacao.js";
 
 const PERFIS_DE_VINCULO = ["EMPLOYEE", "CUSTOMER", "PARTNER", "SUPPLIER", "SERVICE_ACCOUNT"] as const;
 
@@ -102,8 +103,9 @@ export function FormularioNovaOrganizacao({
             }}
             style={{ width: "100%" }}
           >
-            <option value="COMPANY">COMPANY — empresa</option>
-            <option value="BUSINESS_GROUP">BUSINESS_GROUP — grupo empresarial</option>
+            {/* `value` é o que o servidor recebe em `type`. */}
+            <option value="COMPANY">{rotulo("COMPANY")}</option>
+            <option value="BUSINESS_GROUP">{rotulo("BUSINESS_GROUP")}</option>
           </select>
 
           <label htmlFor="nova-org-legal-name">Razão social</label>
@@ -514,7 +516,7 @@ export function ResultadoDoProvisionamento({
       <div className="modal">
         <h3>Usuário criado</h3>
         <div className="aviso aviso-ok" role="status">
-          <strong>{resultado.fullName}</strong> criado em {resultado.status}, sem senha definida.
+          <strong>{resultado.fullName}</strong> criado em {rotulo(resultado.status)}, sem senha definida.
         </div>
 
         <dl className="chave-valor">

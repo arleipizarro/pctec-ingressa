@@ -14,6 +14,7 @@ import {
   type UsuariosDeOrigem
 } from "../api.js";
 import { Badge, Confirmacao, Estado, Paginacao } from "../components/ui.js";
+import { rotulo } from "../apresentacao.js";
 
 /**
  * Assistente de importação Helpdesk → Ingressa.
@@ -900,7 +901,7 @@ function ResumoPorAcao({ contagens }: { contagens: Record<string, number> }): JS
     <div className="cards">
       {ORDEM.map((acao) => (
         <div className="card" key={acao}>
-          <div className="rotulo">{acao}</div>
+          <div className="rotulo">{rotulo(acao)}</div>
           <div className="valor">{contagens[acao] ?? 0}</div>
         </div>
       ))}

@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Estado, Paginacao } from "../components/ui.js";
+import { rotulo } from "../apresentacao.js";
 
 const ACOES = ["", "CREATE", "SKIP", "CONFLICT", "QUARANTINE"];
 
@@ -28,7 +29,8 @@ export function LoteDetalhePage(): JSX.Element {
 
       <div className="barra">
         <select aria-label="Filtrar por ação" value={acao} onChange={(e) => { setAcao(e.target.value); setOffset(0); }}>
-          {ACOES.map((a) => <option key={a} value={a}>{a === "" ? "Todas as ações" : a}</option>)}
+          {/* `value` intacto — é o filtro `action` da API. */}
+          {ACOES.map((a) => <option key={a} value={a}>{a === "" ? "Todas as ações" : rotulo(a)}</option>)}
         </select>
       </div>
 

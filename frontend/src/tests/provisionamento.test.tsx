@@ -477,7 +477,7 @@ describe("provisionamento de usuário — resultado", () => {
     );
 
     // Os dois fatos aparecem separados: a pessoa existe, o convite não.
-    expect(within(painel).getByText(/criado em ACTIVE/i)).toBeInTheDocument();
+    expect(within(painel).getByText(/criado em ATIVO/i)).toBeInTheDocument();
     expect(within(painel).getByText(/Convite não emitido/i)).toBeInTheDocument();
     expect(within(painel).getByText(/continua criado e correto/i)).toBeInTheDocument();
   });

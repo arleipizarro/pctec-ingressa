@@ -138,26 +138,26 @@ describe("convite de acesso", () => {
   it("pendente pode ser revogado", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_PENDENTE] });
     renderizar();
-    await screen.findByText("PENDING");
+    await screen.findByText("PENDENTE");
 
-    expect(linhaDoConvite("PENDING").getByRole("button", { name: "Revogar" })).toBeInTheDocument();
+    expect(linhaDoConvite("PENDENTE").getByRole("button", { name: "Revogar" })).toBeInTheDocument();
   });
 
   it("expirado NÃO oferece revogação — não mudaria nada e o servidor recusaria", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_EXPIRADO] });
     renderizar();
-    await screen.findByText("EXPIRED");
+    await screen.findByText("EXPIRADO");
 
-    expect(linhaDoConvite("EXPIRED").queryByRole("button", { name: "Revogar" })).not.toBeInTheDocument();
+    expect(linhaDoConvite("EXPIRADO").queryByRole("button", { name: "Revogar" })).not.toBeInTheDocument();
   });
 
   it("revogar convite chama a API com o convite certo", async () => {
     vi.spyOn(api, "invitations").mockResolvedValue({ items: [CONVITE_PENDENTE] });
     const revogar = vi.spyOn(api, "revokeInvitation").mockResolvedValue(undefined);
     renderizar();
-    await screen.findByText("PENDING");
+    await screen.findByText("PENDENTE");
 
-    await userEvent.click(linhaDoConvite("PENDING").getByRole("button", { name: "Revogar" }));
+    await userEvent.click(linhaDoConvite("PENDENTE").getByRole("button", { name: "Revogar" }));
     const dialogo = await screen.findByRole("dialog");
     expect(within(dialogo).getByText(/link deixa de valer imediatamente/i)).toBeInTheDocument();
     await userEvent.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
