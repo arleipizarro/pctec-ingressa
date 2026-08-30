@@ -3,35 +3,109 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AplicativoCard, type OrganizacaoDoUsuario } from "../api.js";
 import type { Sessao } from "../auth.js";
 import { CODIGO_INGRESSA, encerrarSessao } from "../auth.js";
-import { rotulo } from "../apresentacao.js";
+import { rotuloDePerfil } from "../apresentacao.js";
 
 const CODIGO_PORTAL = "PCTEC_PORTAL";
 const CODIGO_HELPDESK = "PCTEC_HELPDESK";
 
+type Icone = "portal" | "helpdesk" | "ingressa" | "generico";
+
 /**
- * Textos e rótulo de ação por produto conhecido.
+ * Nome, descrição e ícone por produto conhecido.
  *
- * Puramente de apresentação: NÃO decide quais cards aparecem nem se são
- * clicáveis. Um código desconhecido cai no texto genérico e continua
- * aparecendo — se o servidor autorizou, a tela mostra.
+ * Puramente de apresentação: NÃO decide quais cards aparecem, nem se são
+ * clicáveis, nem qual é o destino. Um código desconhecido cai no texto
+ * genérico e continua aparecendo — se o servidor autorizou, a tela
+ * mostra. O `code` do servidor segue sendo a chave; o que muda aqui é
+ * apenas como ele é lido por gente.
  */
-const APRESENTACAO: Readonly<Record<string, { descricao: string; acao: string }>> = {
+const CATALOGO: Readonly<Record<string, { nome: string; descricao: string; icone: Icone }>> = {
   [CODIGO_PORTAL]: {
-    descricao: "Contratos, equipamentos e faturamento das empresas onde você tem vínculo.",
-    acao: "Acessar Portal"
+    nome: "Portal do Cliente",
+    descricao: "Acompanhe contratos, equipamentos, informações financeiras e chamados.",
+    icone: "portal"
   },
   [CODIGO_HELPDESK]: {
-    descricao: "Abertura e acompanhamento de chamados de suporte.",
-    acao: "Acessar Helpdesk"
+    nome: "PCTEC Helpdesk",
+    descricao: "Registre e acompanhe solicitações, dúvidas e incidentes.",
+    icone: "helpdesk"
   },
   [CODIGO_INGRESSA]: {
-    descricao: "Identidades, organizações, acessos e importações da plataforma.",
-    acao: "Abrir administração"
+    nome: "PCTEC Ingressa",
+    descricao: "Gerencie sua identidade e os acessos às aplicações PCTEC.",
+    icone: "ingressa"
   }
 };
 
-function apresentacao(card: AplicativoCard): { descricao: string; acao: string } {
-  return APRESENTACAO[card.code] ?? { descricao: "Aplicativo do ecossistema PCTEC.", acao: "Acessar" };
+/**
+ * Produto fora do catálogo continua visível e legível.
+ *
+ * O nome cai para o `name` que o servidor mandou — nunca para o código
+ * técnico. Uma aplicação nova entra no launcher sem precisar de deploy
+ * do frontend.
+ */
+function apresentacao(card: AplicativoCard): { nome: string; descricao: string; icone: Icone } {
+  return (
+    CATALOGO[card.code] ?? {
+      nome: card.name,
+      descricao: "Aplicação do ecossistema PCTEC liberada para o seu perfil.",
+      icone: "generico"
+    }
+  );
+}
+
+/**
+ * Ícones desenhados inline: nenhuma biblioteca nova, nenhum request
+ * extra, e a cor acompanha `currentColor` — o card controla o tom.
+ * Decorativos por definição: o nome do produto está no `<h3>` ao lado,
+ * então anunciá-los de novo seria repetição para quem usa leitor.
+ */
+function IconeDoApp({ tipo }: { tipo: Icone }): JSX.Element {
+  const comum = {
+    width: 22,
+    height: 22,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true
+  };
+  if (tipo === "portal") {
+    return (
+      <svg {...comum}>
+        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h9L20 9.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5Z" />
+        <path d="M14 4v6h6M8 14h8M8 17h5" />
+      </svg>
+    );
+  }
+  if (tipo === "helpdesk") {
+    return (
+      <svg {...comum}>
+        <path d="M4 13a8 8 0 0 1 16 0" />
+        <path d="M4 13v3a2 2 0 0 0 2 2h1v-5H6a2 2 0 0 0-2 2Zm16 0v3a2 2 0 0 1-2 2h-1v-5h1a2 2 0 0 1 2 2Z" />
+        <path d="M17 18v.5a2.5 2.5 0 0 1-2.5 2.5H12" />
+      </svg>
+    );
+  }
+  if (tipo === "ingressa") {
+    return (
+      <svg {...comum}>
+        <path d="M12 3 5 6v5.5c0 4.2 2.9 7.9 7 9.5 4.1-1.6 7-5.3 7-9.5V6Z" />
+        <circle cx="12" cy="10.5" r="2.2" />
+        <path d="M8.5 16.5a3.8 3.8 0 0 1 7 0" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...comum}>
+      <rect x="4" y="4" width="7" height="7" rx="1.6" />
+      <rect x="13" y="4" width="7" height="7" rx="1.6" />
+      <rect x="4" y="13" width="7" height="7" rx="1.6" />
+      <rect x="13" y="13" width="7" height="7" rx="1.6" />
+    </svg>
+  );
 }
 
 /** Iniciais para o avatar — nunca cai em "?" nem mostra identificador interno. */
@@ -65,7 +139,8 @@ type EstadoDasOrganizacoes =
  * lá que nascem `state` e `code_verifier`. O Ingressa não pode gerá-los
  * pelo cliente: um verifier que passou por aqui não prova mais nada.
  *
- * Produto sem destino configurado aparece como **"Em breve"**, nunca com
+ * Produto sem destino configurado aparece como **"Indisponível no
+ * momento"**, nunca com
  * um endereço inventado: enquanto não houver um caminho de entrada
  * seguro e pronto, oferecer um botão seria prometer o que não existe.
  */
@@ -141,7 +216,12 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
 
       <main>
         <section aria-labelledby="titulo-aplicativos">
-          <h2 id="titulo-aplicativos" className="launcher-secao">Aplicativos</h2>
+          <h2 id="titulo-aplicativos" className="launcher-secao">Suas aplicações PCTEC</h2>
+          {/* Diz de onde vem a lista: o que aparece é o que o servidor
+              liberou para este perfil, não um catálogo de produtos. */}
+          <p className="launcher-subtitulo">
+            Aparecem aqui somente os sistemas liberados para o seu perfil.
+          </p>
           {sessao.aplicativos.length === 0 ? (
             <div className="vazio">
               Você ainda não tem acesso a nenhum aplicativo. Fale com o administrador da PCTEC.
@@ -165,34 +245,55 @@ export function AplicativosPage({ sessao, onSair }: { sessao: Sessao; onSair: ()
 }
 
 function CardDeAplicativo({ card }: { card: AplicativoCard }): JSX.Element {
-  const { descricao, acao } = apresentacao(card);
+  const { nome, descricao, icone } = apresentacao(card);
   const indisponivel = card.launchUrl === null;
+  // O rótulo visível é igual em todos os cards; o nome acessível não
+  // pode ser — quem navega por leitor de tela ouviria "Acessar
+  // aplicação" três vezes sem saber qual é qual.
+  const nomeAcessivel = `Acessar ${nome}`;
 
   return (
     <article className={`app-card${indisponivel ? " app-card-indisponivel" : ""}`}>
-      <header>
-        <span className="app-card-sigla" aria-hidden="true">{card.name.slice(0, 2).toUpperCase()}</span>
-        <div>
-          <strong>{card.name}</strong>
-          <span className="app-card-perfil">{rotulo(card.profile)}</span>
-        </div>
+      <header className="app-card-topo">
+        <span className="app-card-icone" aria-hidden="true">
+          <IconeDoApp tipo={icone} />
+        </span>
+        <span className={`app-card-estado${indisponivel ? " app-card-estado-off" : ""}`}>
+          {indisponivel ? "Indisponível" : "Disponível"}
+        </span>
       </header>
+
+      <h3 className="app-card-nome">{nome}</h3>
       <p className="app-card-descricao">{descricao}</p>
-      {indisponivel ? (
-        // Sem destino configurado. O acesso EXISTE — por isso o card não
-        // some; o que falta é um caminho de entrada pronto, e inventar
-        // uma URL aqui seria oferecer uma porta que ninguém abriu.
-        <span className="app-card-embreve">Em breve</span>
-      ) : card.launchUrl.startsWith("/") ? (
-        // Destino interno (a própria UI do Ingressa): navegação do router,
-        // sem recarregar a aplicação inteira.
-        <Link className="app-card-acao" to={card.launchUrl}>{acao}</Link>
-      ) : (
-        // Destino externo: navegação NATIVA, de propósito. O SSO começa
-        // com um redirect do outro produto, e `fetch`/router não seguem
-        // esse caminho.
-        <a className="app-card-acao" href={card.launchUrl}>{acao}</a>
-      )}
+
+      <p className="app-card-meta">
+        <span className="app-card-perfil">Perfil · {rotuloDePerfil(card.profile)}</span>
+        {/* O código técnico existe para suporte e conferência: fica
+            visível, mas como informação secundária — nunca como título. */}
+        <span className="app-card-codigo">{card.code}</span>
+      </p>
+
+      <div className="app-card-rodape">
+        {indisponivel ? (
+          // Sem destino configurado. O acesso EXISTE — por isso o card não
+          // some; o que falta é um caminho de entrada pronto, e inventar
+          // uma URL aqui seria oferecer uma porta que ninguém abriu.
+          <span className="app-card-embreve">Indisponível no momento</span>
+        ) : card.launchUrl.startsWith("/") ? (
+          // Destino interno (a própria UI do Ingressa): navegação do router,
+          // sem recarregar a aplicação inteira.
+          <Link className="app-card-acao" to={card.launchUrl} aria-label={nomeAcessivel}>
+            Acessar aplicação
+          </Link>
+        ) : (
+          // Destino externo: navegação NATIVA, de propósito. O SSO começa
+          // com um redirect do outro produto, e `fetch`/router não seguem
+          // esse caminho. Mesma aba, como sempre foi.
+          <a className="app-card-acao" href={card.launchUrl} aria-label={nomeAcessivel}>
+            Acessar aplicação
+          </a>
+        )}
+      </div>
     </article>
   );
 }
