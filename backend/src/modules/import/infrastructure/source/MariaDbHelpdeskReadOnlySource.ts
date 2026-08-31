@@ -61,14 +61,21 @@ interface ClientRow {
  *
  * `HelpdeskUserSourceUnavailableError` não desapareceu: ele deixou de
  * ser incondicional e passou a significar o que sempre dizia —
- * "não consegui perguntar". Ver `traduzirFalhaDaFonte`.
+ * "não consegui perguntar". Ver `ehFonteInalcancavel`.
  *
  * Três camadas independentes impedem escrita, e nenhuma delas confia nas
  * outras:
  *
- *  1. O principal MariaDB tem SELECT de COLUNA nas cinco colunas do
- *     cadastro. Não há INSERT/UPDATE/DELETE para conceder, nem
- *     `SELECT *` que funcione.
+ *  1. O principal MariaDB é read-only: nenhum INSERT/UPDATE/DELETE lhe
+ *     é concedido, em nenhum dos dois schemas. Sobre a LEITURA, o
+ *     privilégio ALVO é de COLUNA, e são duas projeções distintas —
+ *     `SOURCE_CLIENT_COLUMNS` (cinco, em `clientes`) e
+ *     `SOURCE_USER_COLUMNS` (seis, em `users`). DEV já está nessa
+ *     forma; em PRD a concessão sobre o schema do Helpdesk ainda é
+ *     ampla, e reduzi-la está planejado para antes do deploy — ver
+ *     `docs/import/FONTE-HELPDESK-CONTRATO-ATUAL.md`. Enquanto essa
+ *     diferença existir, é a camada 2 que vale igual nos dois
+ *     ambientes; e é por isso que ela não é redundância dispensável.
  *  2. `assertReadOnlySourceQuery` recusa qualquer SQL que não seja um
  *     SELECT único sobre as colunas permitidas.
  *  3. Esta classe não expõe método de escrita. Não existe `execute`
