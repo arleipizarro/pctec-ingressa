@@ -28,18 +28,36 @@ const helpdeskSourceSchema = z.object({
  * Identificador SQL não citado: letra ou `_` no início, depois letras,
  * dígitos, `_` ou `$`, até 64 caracteres — o limite do MariaDB.
  *
- * A validação existe porque este nome é o ÚNICO valor de configuração
- * que entra no texto de uma consulta. Ele não pode ser parametrizado:
- * `?` liga valores, não identificadores de schema. Então a defesa é
- * recusar antes de montar — e recusar por lista branca, nunca por lista
- * negra de caracteres perigosos, que sempre esquece um.
+ * A validação existe porque estes nomes são os ÚNICOS valores de
+ * configuração que entram no texto de uma consulta. Eles não podem ser
+ * parametrizados: `?` liga valores, não identificadores de schema.
+ * Então a defesa é recusar antes de montar — e recusar por lista
+ * branca, nunca por lista negra de caracteres perigosos, que sempre
+ * esquece um.
+ *
+ * São DOIS nomes desde a restauração da fonte de usuários, e por isso a
+ * checagem deixou de ser de um campo só: empresas vêm do registro
+ * autoritativo (`HELPDESK_REGISTRY_DB_NAME`) e usuários vêm do schema
+ * do próprio Helpdesk (`HELPDESK_DB_NAME`). Os dois viram texto de SQL;
+ * os dois passam pela mesma lista branca.
  */
 const IDENTIFICADOR_SQL_SEGURO = /^[A-Za-z_][A-Za-z0-9_$]{0,63}$/;
 
 export interface HelpdeskSourceConfig {
   readonly host: string;
   readonly port: number;
-  /** Schema do Helpdesk propriamente dito — o da conexão. */
+  /**
+   * Schema do Helpdesk propriamente dito — o da conexão E a origem dos
+   * USUÁRIOS (`users`).
+   *
+   * Ele deixou de ser só o banco do pool quando a leitura de usuários
+   * foi restaurada: hoje o nome é qualificado no texto da consulta, em
+   * vez de a consulta confiar no schema default da conexão. Depender do
+   * default faria a mesma string de SQL ler tabelas diferentes conforme
+   * quem abriu o pool — e é justamente o tipo de ambiguidade que
+   * derrubou a fatia anterior. Por isso ele é validado como
+   * identificador SQL, igual a `registryDatabase`.
+   */
   readonly database: string;
   /**
    * Schema do registro AUTORITATIVO de empresas.
@@ -73,6 +91,26 @@ export class InvalidHelpdeskRegistryDatabaseError extends Error {
   }
 }
 
+/**
+ * O nome do schema do Helpdesk não é um identificador SQL válido.
+ *
+ * Erro separado do de `HELPDESK_REGISTRY_DB_NAME` porque a ação de quem
+ * opera é diferente: são duas variáveis, em dois papéis, e uma mensagem
+ * genérica ("um dos schemas é inválido") obrigaria a conferir as duas.
+ * Como lá, cita a VARIÁVEL e nunca o valor recebido — um valor
+ * malformado pode ser a própria tentativa de injeção, e ecoá-lo num log
+ * de operação a propaga em vez de contê-la.
+ */
+export class InvalidHelpdeskDatabaseError extends Error {
+  public constructor() {
+    super(
+      "HELPDESK_DB_NAME não é um identificador SQL válido. Use apenas letras, dígitos, `_` e `$`, " +
+        "começando por letra ou `_`, com no máximo 64 caracteres."
+    );
+    this.name = "InvalidHelpdeskDatabaseError";
+  }
+}
+
 export class MissingHelpdeskSourceConfigError extends Error {
   public constructor(faltando: readonly string[]) {
     super(
@@ -99,10 +137,14 @@ export function loadHelpdeskSourceConfig(env: NodeJS.ProcessEnv = process.env): 
   if (!IDENTIFICADOR_SQL_SEGURO.test(registryDatabase)) {
     throw new InvalidHelpdeskRegistryDatabaseError();
   }
+  const database = resultado.data.HELPDESK_DB_NAME.trim();
+  if (!IDENTIFICADOR_SQL_SEGURO.test(database)) {
+    throw new InvalidHelpdeskDatabaseError();
+  }
   return {
     host: resultado.data.HELPDESK_DB_HOST,
     port: resultado.data.HELPDESK_DB_PORT,
-    database: resultado.data.HELPDESK_DB_NAME,
+    database,
     registryDatabase,
     user: resultado.data.HELPDESK_DB_USER,
     password: resultado.data.HELPDESK_DB_PASSWORD

@@ -60,11 +60,12 @@ export interface HelpdeskCatalogReader {
    * que ele não é importável. Esconder o registro faria a tela mentir
    * por omissão.
    *
-   * A implementação real RECUSA hoje, com
-   * `HELPDESK_USER_SOURCE_UNAVAILABLE`: o Helpdesk ainda não migrou a
-   * autoridade de usuários. O método fica no contrato para que a
-   * indisponibilidade seja uma recusa explícita, e não uma lista vazia
-   * em quem chama.
+   * A implementação real lê `HELPDESK_DB_NAME`.`users`, com projeção
+   * fechada de seis colunas. Ela ainda pode RECUSAR com
+   * `HELPDESK_USER_SOURCE_UNAVAILABLE`, mas só quando a fonte de fato
+   * não pôde ser consultada — nunca como lista vazia, porque "não
+   * consegui perguntar" e "perguntei e não há ninguém" levam a ações
+   * opostas.
    */
   readUsersByClientId(clientId: number): Promise<readonly HelpdeskUserRecord[]>;
 }

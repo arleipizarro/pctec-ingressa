@@ -208,7 +208,11 @@ export async function runPilotCli(argv: readonly string[]): Promise<number> {
   try {
     const unitOfWork = new MariaDbUnitOfWork(ingressaPool);
     const runner = new RunHelpdeskPilotImportService({
-      source: new MariaDbHelpdeskReadOnlySource(helpdeskPool, sourceConfig.registryDatabase),
+      source: new MariaDbHelpdeskReadOnlySource(
+        helpdeskPool,
+        sourceConfig.registryDatabase,
+        sourceConfig.database
+      ),
       targetStateReader: new MariaDbIngressaTargetStateReader(ingressaPool),
       startImportBatchService: new StartImportBatchService(
         unitOfWork,

@@ -30,6 +30,37 @@ export const SOURCE_CLIENT_COLUMNS: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * Colunas que a fonte pode projetar de USUÁRIOS. Lista fechada, em
+ * ordem fixa — e cada uma responde a uma pergunta da decisão de
+ * importar (ver `HelpdeskUserRecord`).
+ *
+ * A tabela `users` do Helpdesk guarda `password`, `reset_token` e
+ * `reset_expires` na MESMA linha do cadastro, e ainda `pctecdb_id`,
+ * `is_dispatcher`, `created_at`, `last_login` e `client_group_id`.
+ * Nenhum deles está aqui, e a ausência de cada um tem motivo:
+ *
+ *  - `password`, `reset_token`, `reset_expires`, `last_login`: são
+ *    credencial e sessão. Segredo copiado para `import_batch_items` não
+ *    volta atrás;
+ *  - `pctecdb_id`, `is_dispatcher`, `created_at`: descrevem o usuário
+ *    dentro do Helpdesk, não a decisão de importá-lo;
+ *  - `client_group_id`: grupo é classificação, não concessão. Continua
+ *    em `FORBIDDEN_SQL_TABLES`, então nem um filtro esperto o alcança.
+ *
+ * A projeção é a primeira das duas travas. A segunda é o GRANT de
+ * COLUNA do principal read-only — as duas dizem a mesma coisa em dois
+ * lugares que falham fechado, e nenhuma confia na outra.
+ */
+export const SOURCE_USER_COLUMNS: readonly string[] = Object.freeze([
+  "id",
+  "name",
+  "email",
+  "role",
+  "active",
+  "client_id"
+]);
+
+/**
  * Termos que nunca podem aparecer no SQL da fonte — de autenticação,
  * de sessão e de recuperação de senha. A verificação é sobre o TEXTO da
  * query, e por isso pega tanto a coluna projetada quanto um filtro
@@ -144,15 +175,86 @@ export interface SourceQuery {
  * válido se um dia contiver algo que o parser trate como palavra
  * reservada.
  */
-export function qualificarRegistro(registryDatabase: string, tabela: string): string {
-  if (!/^[A-Za-z_][A-Za-z0-9_$]{0,63}$/.test(registryDatabase)) {
-    throw new ForbiddenSourceQueryError("schema autoritativo inválido — a consulta não foi montada.");
+const IDENTIFICADOR_SQL_SEGURO = /^[A-Za-z_][A-Za-z0-9_$]{0,63}$/;
+
+function qualificar(schema: string, tabela: string, recusa: string): string {
+  if (!IDENTIFICADOR_SQL_SEGURO.test(schema)) {
+    throw new ForbiddenSourceQueryError(recusa);
   }
-  return `\`${registryDatabase}\`.${tabela}`;
+  return `\`${schema}\`.${tabela}`;
+}
+
+export function qualificarRegistro(registryDatabase: string, tabela: string): string {
+  return qualificar(registryDatabase, tabela, "schema autoritativo inválido — a consulta não foi montada.");
+}
+
+/**
+ * Schema do PRÓPRIO Helpdesk — de onde vêm os USUÁRIOS.
+ *
+ * Função separada de `qualificarRegistro`, e a separação é o ponto:
+ * são dois schemas com papéis diferentes, e um só qualificador
+ * convidaria ao erro exato que custou caro aqui — montar
+ * `pctecdb.users`, que não existe, ou `pctec_helpdesk.clientes`, que é
+ * uma cópia órfã e desatualizada do cadastro. Empresas vêm do registro
+ * autoritativo; usuários vêm do Helpdesk. Cada um com o seu.
+ *
+ * Qualificar em vez de confiar no schema default da conexão também é
+ * decisão: o mesmo texto de SQL passa a significar a mesma tabela
+ * independentemente de quem abriu o pool.
+ */
+export function qualificarHelpdesk(helpdeskDatabase: string, tabela: string): string {
+  return qualificar(helpdeskDatabase, tabela, "schema do Helpdesk inválido — a consulta não foi montada.");
 }
 
 export function buildClientByIdQuery(registryDatabase: string, clientId: number): SourceQuery {
   const sql = `SELECT ${SOURCE_CLIENT_COLUMNS.join(", ")} FROM ${qualificarRegistro(registryDatabase, "clientes")} WHERE id = ? LIMIT 1`;
+  assertReadOnlySourceQuery(sql);
+  return { sql, params: [clientId] };
+}
+
+/**
+ * Usuários do escopo, buscados pelos ids que o ADMIN selecionou.
+ *
+ * Recebe os ids em vez de ler a empresa inteira porque a seleção é a
+ * unidade de decisão: o planner precisa enxergar TAMBÉM o usuário cujo
+ * `client_id` não é o da seleção, para registrar
+ * `SOURCE_USER_CLIENT_OUT_OF_SELECTION` com motivo em vez de a pessoa
+ * sumir do relatório sem explicação. Por isso não há `WHERE client_id`
+ * aqui — o filtro é do domínio, não do SQL.
+ *
+ * Lista vazia é RECUSA, não `WHERE id IN ()`. Sem ids não há escopo, e
+ * uma consulta sem escopo leria a base inteira — que é exatamente o que
+ * esta fonte nunca faz.
+ */
+export function buildUsersByIdsQuery(helpdeskDatabase: string, ids: readonly number[]): SourceQuery {
+  if (ids.length === 0) {
+    throw new ForbiddenSourceQueryError("nenhum id de escopo informado — a fonte nunca é lida por inteiro.");
+  }
+  const placeholders = ids.map(() => "?").join(", ");
+  const sql =
+    `SELECT ${SOURCE_USER_COLUMNS.join(", ")} ` +
+    `FROM ${qualificarHelpdesk(helpdeskDatabase, "users")} ` +
+    `WHERE id IN (${placeholders}) ` +
+    `ORDER BY id`;
+  assertReadOnlySourceQuery(sql);
+  return { sql, params: [...ids] };
+}
+
+/**
+ * Usuários de UMA empresa — o que o assistente mostra na etapa 2.
+ *
+ * Traz todos os papéis, não só `cliente`, e isso é deliberado: o ADMIN
+ * precisa VER que existe um interno vinculado àquela empresa para
+ * entender por que ele não é importável. Filtrar aqui faria a tela
+ * mentir por omissão. A elegibilidade é decidida no domínio
+ * (`avaliarElegibilidade`), com motivo registrado item a item.
+ */
+export function buildUsersByClientIdQuery(helpdeskDatabase: string, clientId: number): SourceQuery {
+  const sql =
+    `SELECT ${SOURCE_USER_COLUMNS.join(", ")} ` +
+    `FROM ${qualificarHelpdesk(helpdeskDatabase, "users")} ` +
+    `WHERE client_id = ? ` +
+    `ORDER BY id`;
   assertReadOnlySourceQuery(sql);
   return { sql, params: [clientId] };
 }

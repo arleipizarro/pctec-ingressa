@@ -9,6 +9,8 @@ import {
   type WizardCatalogTargetReader
 } from "../application/GetHelpdeskCatalogService.js";
 import { WIZARD_CATALOG_MAX_LIMIT } from "../domain/wizard/HelpdeskImportScope.js";
+import type { Queryable } from "../../../shared/database/Queryable.js";
+import { MariaDbHelpdeskReadOnlySource } from "../infrastructure/source/MariaDbHelpdeskReadOnlySource.js";
 import { CLIENTE, CLIENTE_ID, IDENTIDADE_PUBLIC_ID, ORG_PUBLIC_ID, usuario } from "./wizardTestSupport.js";
 
 class FonteDeCatalogo implements HelpdeskCatalogReader {
@@ -161,5 +163,73 @@ describe("catálogo — usuários", () => {
     for (const proibido of ["password", "hash", "token", "reset", "salt", "credential"]) {
       expect(chaves.some((c) => c.toLowerCase().includes(proibido))).toBe(false);
     }
+  });
+});
+
+/**
+ * Catálogo sobre o conector REAL, não sobre a fonte fake.
+ *
+ * As demais suítes provam a REGRA (quem é elegível) com uma fonte
+ * dublê. Esta prova a FIAÇÃO: que a linha crua de `users`, como o
+ * driver a entrega, atravessa a fronteira e chega à tela já decidida.
+ * Era exatamente esse trecho que estava morto enquanto a fonte recusava
+ * incondicionalmente.
+ */
+describe("catálogo — usuários pelo conector real", () => {
+  const REGISTRO = "pctecdb";
+  const HELPDESK = "pctec_helpdesk";
+
+  /** Linhas cruas, com `tinyint` e `NULL` como o MariaDB os devolve. */
+  const LINHAS = [
+    { id: 999911, name: "Externo Sintetico", email: "externo.999911@example.invalid", role: "cliente", active: 1, client_id: CLIENTE_ID },
+    { id: 999913, name: "Atendente Sintetico", email: "atendente.999913@example.invalid", role: "atendente", active: 1, client_id: CLIENTE_ID },
+    { id: 999914, name: "Externo Inativo", email: "inativo.999914@example.invalid", role: "cliente", active: 0, client_id: CLIENTE_ID },
+    { id: 999917, name: "Externo Sem Empresa", email: "sem.empresa@example.invalid", role: "cliente", active: 1, client_id: null }
+  ];
+
+  class ConexaoComLinhas implements Queryable {
+    public readonly sqls: string[] = [];
+
+    public async execute(sql: string): Promise<[unknown, unknown]> {
+      this.sqls.push(sql);
+      return [LINHAS, undefined];
+    }
+  }
+
+  it("a linha crua vira item de catálogo já decidido, sem campo sensível", async () => {
+    const conexao = new ConexaoComLinhas();
+    const source = new MariaDbHelpdeskReadOnlySource(conexao, REGISTRO, HELPDESK);
+    const identidades = new Map<number, CatalogIdentityLink>([
+      [999911, { identityPublicId: IDENTIDADE_PUBLIC_ID, fullName: "Externo Sintetico", status: "ACTIVE" }]
+    ]);
+
+    const resultado = await new GetHelpdeskCatalogService(
+      source,
+      new DestinoFake(new Map(), identidades)
+    ).listUsers(CLIENTE_ID);
+
+    expect(conexao.sqls[0]).toContain("`pctec_helpdesk`.users");
+    expect(resultado.total).toBe(4);
+
+    const externo = resultado.items.find((i) => i.sourceUserId === 999911);
+    expect(externo).toMatchObject({ eligible: true, active: true, sourceClientId: CLIENTE_ID });
+    // Já importado: continua sugerido, e o vínculo aparece.
+    expect(externo?.linkedIdentity?.identityPublicId).toBe(IDENTIDADE_PUBLIC_ID);
+    expect(resultado.alreadyImportedTotal).toBe(1);
+
+    // Interno aparece, marcado — a tela não mente por omissão.
+    expect(resultado.items.find((i) => i.sourceUserId === 999913)?.ineligibilityReasons).toContain(
+      "SOURCE_USER_NOT_EXTERNAL_ROLE"
+    );
+    // `active: 0` do driver virou `false` na fronteira.
+    const inativo = resultado.items.find((i) => i.sourceUserId === 999914);
+    expect(inativo?.active).toBe(false);
+    expect(inativo?.ineligibilityReasons).toContain("SOURCE_USER_INACTIVE");
+    // `client_id: NULL` virou `null`, não 0.
+    const semEmpresa = resultado.items.find((i) => i.sourceUserId === 999917);
+    expect(semEmpresa?.sourceClientId).toBeNull();
+    expect(semEmpresa?.ineligibilityReasons).toContain("SOURCE_USER_WITHOUT_CLIENT_LINK");
+
+    expect(resultado.eligibleTotal).toBe(1);
   });
 });

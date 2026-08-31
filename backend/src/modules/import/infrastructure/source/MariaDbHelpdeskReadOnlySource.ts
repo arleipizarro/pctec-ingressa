@@ -14,8 +14,19 @@ import {
   assertReadOnlySourceQuery,
   buildClientByIdQuery,
   buildClientsCatalogCountQuery,
-  buildClientsCatalogQuery
+  buildClientsCatalogQuery,
+  buildUsersByClientIdQuery,
+  buildUsersByIdsQuery
 } from "./HelpdeskSourceQueries.js";
+
+interface UserRow {
+  readonly id: number;
+  readonly name: string;
+  readonly email: string;
+  readonly role: string;
+  readonly active: number | boolean | null;
+  readonly client_id: number | null;
+}
 
 interface ClientRow {
   readonly id: number;
@@ -28,11 +39,29 @@ interface ClientRow {
 /**
  * Conector READ-ONLY do Helpdesk.
  *
- * Lê o REGISTRO AUTORITATIVO de empresas, no schema apontado por
- * `HELPDESK_REGISTRY_DB_NAME` — o mesmo de onde o próprio Helpdesk lê.
- * Não consulta a tabela local de empresas nem a de usuários: as duas
- * deixaram de ser autoridade, e a de usuários deixou de existir. Ver
- * `HelpdeskUserSourceUnavailableError`.
+ * Lê de DOIS schemas, com uma conexão só, porque são duas autoridades
+ * diferentes que hoje moram no mesmo servidor:
+ *
+ *  - EMPRESAS vêm do registro autoritativo (`HELPDESK_REGISTRY_DB_NAME`
+ *    `.clientes`) — o mesmo de onde o próprio Helpdesk lê
+ *    (`routes/clients.js`, pool `pctecdb`). A tabela local de empresas
+ *    deixou de ser autoridade;
+ *  - USUÁRIOS vêm de `HELPDESK_DB_NAME`.`users` — que é, hoje, o que o
+ *    Helpdesk trata como autoridade de fato: é lá que a autenticação
+ *    procura (`routes/auth.js`) e é lá que `role`, `client_id` e
+ *    `active` são gravados (`routes/users.js`).
+ *
+ * O elo entre as duas é `users.client_id`, que referencia
+ * `clientes.id` no registro autoritativo — é o único vínculo cadastral
+ * que autoriza a importação de um usuário para uma empresa.
+ *
+ * `helpdesk_usuarios` continua NÃO sendo fonte: ela aparece num único
+ * `INSERT IGNORE`, nenhum `SELECT` do Helpdesk a consulta e ela não
+ * carrega o vínculo. Ver `docs/import/FONTE-HELPDESK-CONTRATO-ATUAL.md`.
+ *
+ * `HelpdeskUserSourceUnavailableError` não desapareceu: ele deixou de
+ * ser incondicional e passou a significar o que sempre dizia —
+ * "não consegui perguntar". Ver `traduzirFalhaDaFonte`.
  *
  * Três camadas independentes impedem escrita, e nenhuma delas confia nas
  * outras:
@@ -52,20 +81,31 @@ interface ClientRow {
 export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, HelpdeskCatalogReader {
   public constructor(
     private readonly connection: Queryable,
-    /** Vem da configuração validada — nunca de constante no código. */
-    private readonly registryDatabase: string
+    /** Schema do registro AUTORITATIVO de empresas. Configuração validada. */
+    private readonly registryDatabase: string,
+    /**
+     * Schema do próprio Helpdesk — de onde vêm os USUÁRIOS.
+     *
+     * Obrigatório e sem default, pela mesma lição que vale para o
+     * registro: um nome de schema fixo no código é como se lê o banco
+     * errado sem perceber. Vem de `HELPDESK_DB_NAME`, validado como
+     * identificador SQL no carregamento e de novo no ponto de montagem.
+     */
+    private readonly helpdeskDatabase: string
   ) {}
 
   /**
-   * RECUSA — a fonte de usuários não está disponível.
+   * Usuários pelos ids do escopo.
    *
-   * Não é uma lista vazia, e a diferença é o ponto inteiro desta fatia:
-   * `[]` afirmaria que a origem foi consultada e não tem ninguém. Ver
-   * `HelpdeskUserSourceUnavailableError` para o porquê de a recusa
-   * morar aqui, na fronteira, e não em cada chamador.
+   * Devolve o que a origem tem, SEM filtrar por papel nem por `active`:
+   * a elegibilidade é decisão do planner, que registra o motivo item a
+   * item. Filtrar aqui apagaria a diferença entre "não é elegível" e
+   * "não existe".
    */
-  public async readUsersByIds(_ids: readonly number[]): Promise<readonly HelpdeskUserRecord[]> {
-    throw new HelpdeskUserSourceUnavailableError();
+  public async readUsersByIds(ids: readonly number[]): Promise<readonly HelpdeskUserRecord[]> {
+    const { sql, params } = buildUsersByIdsQuery(this.helpdeskDatabase, ids);
+    const rows = await this.selectUsuarios(sql, params);
+    return rows.map(toUser);
   }
 
   public async readClientById(clientId: number): Promise<HelpdeskClientRecord | undefined> {
@@ -98,9 +138,31 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
     };
   }
 
-  /** RECUSA, pelo mesmo motivo de `readUsersByIds`. */
-  public async readUsersByClientId(_clientId: number): Promise<readonly HelpdeskUserRecord[]> {
-    throw new HelpdeskUserSourceUnavailableError();
+  /** Usuários de UMA empresa — todos os papéis, pelo motivo em `HelpdeskCatalogPort`. */
+  public async readUsersByClientId(clientId: number): Promise<readonly HelpdeskUserRecord[]> {
+    const { sql, params } = buildUsersByClientIdQuery(this.helpdeskDatabase, clientId);
+    const rows = await this.selectUsuarios(sql, params);
+    return rows.map(toUser);
+  }
+
+  /**
+   * Único ponto por onde a leitura de USUÁRIOS passa — e o único que
+   * traduz falha de acesso em recusa de domínio.
+   *
+   * Existe separado de `select` porque só a fonte de usuários tem um
+   * erro de domínio próprio para "não consegui perguntar". Uma falha
+   * equivalente lendo empresas continua subindo crua: ela não tem
+   * significado de negócio, e inventar um esconderia um defeito.
+   */
+  private async selectUsuarios(sql: string, params: readonly unknown[]): Promise<readonly UserRow[]> {
+    try {
+      return await this.select<UserRow>(sql, params);
+    } catch (erro) {
+      if (ehFonteInalcancavel(erro)) {
+        throw new HelpdeskUserSourceUnavailableError();
+      }
+      throw erro;
+    }
   }
 
   /** Único ponto de execução da classe — e ele revalida o SQL. */
@@ -109,6 +171,88 @@ export class MariaDbHelpdeskReadOnlySource implements HelpdeskSourceReader, Help
     const [rows] = await this.connection.execute(sql, params);
     return rows as unknown as readonly T[];
   }
+}
+
+/**
+ * Códigos de erro do MariaDB que significam "a fonte não pôde ser
+ * consultada" — privilégio negado, ou o objeto não existe.
+ *
+ * A lista é FECHADA por decisão. O oposto — tratar qualquer exceção
+ * como indisponibilidade — transformaria todo defeito de programação
+ * num 503 tranquilizador: um `ER_PARSE_ERROR` (1064) é SQL que nós
+ * montamos errado, e responder "a origem está indisponível" mandaria
+ * quem opera investigar o Helpdesk por um bug nosso. Erro que não está
+ * aqui sobe cru e vira 500, que é a resposta honesta para "isto não
+ * deveria ter acontecido".
+ */
+const CODIGOS_DE_FONTE_INALCANCAVEL: ReadonlySet<number> = new Set([
+  1044, // ER_DBACCESS_DENIED_ERROR   — sem acesso ao schema
+  1045, // ER_ACCESS_DENIED_ERROR     — credencial recusada
+  1049, // ER_BAD_DB_ERROR            — schema inexistente
+  1054, // ER_BAD_FIELD_ERROR         — coluna do contrato sumiu da origem
+  1142, // ER_TABLEACCESS_DENIED_ERROR
+  1143, // ER_COLUMNACCESS_DENIED_ERROR
+  1146 // ER_NO_SUCH_TABLE            — a tabela não existe (mais)
+]);
+
+/**
+ * Falhas de TRANSPORTE. Aqui o driver não chega a receber um errno do
+ * servidor, então a identificação é pelo `code` textual do Node/mysql2.
+ *
+ * `PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR` está deliberadamente FORA. Não
+ * por não ser transporte — é —, mas porque o nome contém a palavra
+ * "queue", e a auditoria estrutural desta fatia
+ * (`HelpdeskPilotAuthorizationAudit`) recusa qualquer menção a fila no
+ * código deste arquivo. Enfraquecer aquela trava, ou disfarçar a string
+ * para escapar dela, custaria mais do que o caso cobre: ele é o erro
+ * SEGUINTE numa conexão já morta, e a primeira falha — a que importa —
+ * já cai em `PROTOCOL_CONNECTION_LOST` ou num dos `E*` acima.
+ */
+const CODIGOS_DE_TRANSPORTE: ReadonlySet<string> = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "ENOTFOUND",
+  "EPIPE",
+  "ETIMEDOUT",
+  "PROTOCOL_CONNECTION_LOST",
+  "PROTOCOL_SEQUENCE_TIMEOUT"
+]);
+
+/**
+ * `ForbiddenSourceQueryError` NUNCA entra aqui, e não por omissão: ela
+ * é lançada antes de a conexão ser tocada, por `assertReadOnlySourceQuery`.
+ * Se um dia passasse a chegar, seria a guarda pegando SQL que este
+ * arquivo montou — defeito nosso, e traduzi-lo em "fonte indisponível"
+ * apagaria exatamente o sinal que faz a guarda valer a pena.
+ */
+function ehFonteInalcancavel(erro: unknown): boolean {
+  if (erro === null || typeof erro !== "object") {
+    return false;
+  }
+  const candidato = erro as { readonly errno?: unknown; readonly code?: unknown };
+  if (typeof candidato.errno === "number" && CODIGOS_DE_FONTE_INALCANCAVEL.has(candidato.errno)) {
+    return true;
+  }
+  return typeof candidato.code === "string" && CODIGOS_DE_TRANSPORTE.has(candidato.code);
+}
+
+/**
+ * `tinyint(1)` chega do driver como número e `client_id` chega como
+ * `null` quando o usuário não tem empresa — os dois são convertidos
+ * aqui, na fronteira, para que o domínio nunca receba `1` e precise
+ * lembrar o que significa, nem confunda "sem empresa" com zero.
+ */
+function toUser(row: UserRow): HelpdeskUserRecord {
+  return {
+    id: Number(row.id),
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    active: toBoolean(row.active),
+    clientId: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id)
+  };
 }
 
 /**

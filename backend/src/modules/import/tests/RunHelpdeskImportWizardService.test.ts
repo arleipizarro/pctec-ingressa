@@ -581,7 +581,11 @@ describe("assistente — CNPJ da origem", () => {
         undefined
       ]
     };
-    const empresa = await new MariaDbHelpdeskReadOnlySource(conexao, "pctecdb").readClientById(CLIENTE_ID);
+    const empresa = await new MariaDbHelpdeskReadOnlySource(
+      conexao,
+      "pctecdb",
+      "pctec_helpdesk"
+    ).readClientById(CLIENTE_ID);
     const bancada = montar(alvo(), {}, { status: "ACTIVE" }, new FonteFake(USUARIOS, empresa ?? CLIENTE));
     return new RunHelpdeskImportWizardService(bancada.deps).execute(pedidoApply());
   }
