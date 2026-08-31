@@ -3,18 +3,23 @@
  *
  * ## Estado desta fonte
  *
- * O registro de EMPRESAS foi migrado para o schema autoritativo
- * (`HELPDESK_REGISTRY_DB_NAME`), que é de onde o próprio Helpdesk lê. O
- * registro de USUÁRIOS **não** foi: o Helpdesk continua tratando a sua
- * tabela local como autoridade, e ela não existe mais no servidor.
- * `helpdesk_usuarios` não a substitui — ela nunca recebe `client_id` e
- * nenhum `SELECT` do Helpdesk a consulta.
+ * Duas autoridades, dois schemas, uma conexão:
  *
- * Por isso os dois métodos de usuário abaixo continuam no contrato e a
- * implementação real os RECUSA, com
- * `HELPDESK_USER_SOURCE_UNAVAILABLE`. Removê-los do contrato faria a
- * indisponibilidade sumir do tipo e reapareceria como lista vazia em
- * quem chama — que é precisamente a conclusão errada. Ver
+ *  - EMPRESAS no registro autoritativo (`HELPDESK_REGISTRY_DB_NAME`
+ *    `.clientes`), de onde o próprio Helpdesk lê;
+ *  - USUÁRIOS em `HELPDESK_DB_NAME`.`users`, que é o que o Helpdesk
+ *    trata como autoridade de fato — autenticação e gravação de `role`,
+ *    `client_id` e `active` acontecem lá.
+ *
+ * `helpdesk_usuarios` não é fonte: nenhum `SELECT` do Helpdesk a
+ * consulta e ela não carrega o vínculo com a empresa.
+ *
+ * Os dois métodos de usuário continuam podendo RECUSAR, com
+ * `HELPDESK_USER_SOURCE_UNAVAILABLE` — hoje só quando a fonte
+ * realmente não pôde ser consultada (privilégio negado, objeto
+ * inexistente, transporte caído). A recusa segue no contrato porque a
+ * alternativa seria devolver lista vazia, e "não consegui perguntar" e
+ * "perguntei e não há ninguém" levam a ações opostas. Ver
  * `HelpdeskUserSourceUnavailableError`.
  *
  * O domínio nunca vê `mysql2`, nem a linha crua de `users`. Ele vê estes
