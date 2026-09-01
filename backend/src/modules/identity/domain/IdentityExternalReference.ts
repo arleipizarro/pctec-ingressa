@@ -3,11 +3,15 @@ import { SystemCode } from "./value-objects/SystemCode.js";
 import { EntityType } from "./value-objects/EntityType.js";
 import { LegacyId } from "./value-objects/LegacyId.js";
 import { MatchMethod } from "./value-objects/MatchMethod.js";
+import { SupersedeReason } from "./value-objects/SupersedeReason.js";
 import {
   type EventEnvelopeInput,
   type IdentityExternalReferenceCreatedEvent,
-  createIdentityExternalReferenceCreatedEvent
+  type IdentityExternalReferenceDomainEvent,
+  createIdentityExternalReferenceCreatedEvent,
+  createIdentityExternalReferenceSupersededEvent
 } from "./events/IdentityExternalReferenceDomainEvents.js";
+import { IdentityExternalReferenceNotActiveError } from "./errors/IdentityExternalReferenceErrors.js";
 
 export type IdentityExternalReferenceStatusValue = "ACTIVE" | "SUPERSEDED";
 
@@ -56,8 +60,20 @@ export interface IdentityExternalReferencePersistedState {
  * só existe para correlação/rastreabilidade. O contrato cross-system
  * oficial é sempre `Identity.publicId`.
  *
- * P1B.0 — escopo autorizado: só `create()` + `reconstitute()`. Nenhum
- * comando para marcar `SUPERSEDED` nesta fatia (fora de escopo).
+ * **Lifecycle (fundação PCTEC Meu RH):** `create()` nasce `ACTIVE`;
+ * `markSuperseded()` é a ÚNICA transição, e é de mão única. Não existe
+ * "reativar": o binding que voltasse a valer seria uma decisão nova,
+ * e uma decisão nova é uma referência nova — com sua própria data,
+ * seu próprio ator e seu próprio evento. Reaproveitar a linha antiga
+ * apagaria justamente o que a auditoria precisa saber.
+ *
+ * **SUPERSEDED nunca é exclusão.** A linha permanece, com todos os seus
+ * campos, e continua consultável por `findByPublicId`. O que ela deixa
+ * de ser é a resposta ACTIVE — e é por isso que a coluna gerada da
+ * migration 0024 fica `NULL` para ela, liberando a chave para a
+ * referência que assumir o vínculo. Apagar destruiria a evidência de
+ * como o vínculo errado surgiu, que é exatamente o que se quer
+ * conservar quando o erro envolve dado de outra pessoa.
  */
 export class IdentityExternalReference {
   private internalId: number | undefined;
@@ -67,11 +83,11 @@ export class IdentityExternalReference {
   private readonly entityType: EntityType;
   private readonly legacyId: LegacyId;
   private readonly matchMethod: MatchMethod;
-  private readonly status: IdentityExternalReferenceStatusValue;
+  private status: IdentityExternalReferenceStatusValue;
   private readonly createdAt: Date;
-  private readonly updatedAt: Date;
+  private updatedAt: Date;
 
-  private readonly domainEvents: IdentityExternalReferenceCreatedEvent[] = [];
+  private readonly domainEvents: IdentityExternalReferenceDomainEvent[] = [];
 
   private constructor(props: {
     internalId: number | undefined;
@@ -170,14 +186,72 @@ export class IdentityExternalReference {
   }
 
   // ---------------------------------------------------------------------
+  // Lifecycle (comando SupersedeIdentityExternalReference)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Marca este binding como superado.
+   *
+   * **Pré-condição verificada AQUI, e não só no banco:** superar algo
+   * que já não está ACTIVE é sempre erro de quem chama — ou a referência
+   * já foi superada, ou o chamador leu estado velho. Falhar em memória
+   * dá a mensagem certa; deixar passar para o `UPDATE` daria "zero
+   * linhas afetadas", que é a mesma coisa que um conflito de
+   * concorrência e não distingue as duas situações.
+   *
+   * `replacedByPublicId` é opcional porque nem toda correção substitui:
+   * `IDENTITY_OFFBOARDED` encerra o vínculo sem sucessor.
+   *
+   * Não escreve nada — quem persiste é o repositório, e é o `UPDATE ...
+   * WHERE status = 'ACTIVE'` dele que serializa o resultado sob
+   * concorrência.
+   */
+  public markSuperseded(props: {
+    readonly reason: string;
+    readonly actorPublicId: string;
+    readonly correlationId: string;
+    readonly causationId?: string | undefined;
+    readonly replacedByPublicId?: string | undefined;
+    readonly now?: Date | undefined;
+  }): void {
+    if (this.status !== "ACTIVE") {
+      throw new IdentityExternalReferenceNotActiveError(this.publicId.toString());
+    }
+    const reason = SupersedeReason.create(props.reason);
+    const now = props.now ?? new Date();
+
+    this.status = "SUPERSEDED";
+    this.updatedAt = now;
+
+    const envelope: EventEnvelopeInput = {
+      aggregatePublicId: this.publicId.toString(),
+      actorPublicId: props.actorPublicId,
+      correlationId: props.correlationId,
+      ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+      occurredAt: now
+    };
+
+    this.recordEvent(
+      createIdentityExternalReferenceSupersededEvent(envelope, {
+        identityExternalReferencePublicId: this.publicId.toString(),
+        identityPublicId: this.identityPublicId,
+        systemCode: this.systemCode.toString(),
+        entityType: this.entityType.toString(),
+        reason: reason.toString(),
+        ...(props.replacedByPublicId !== undefined ? { replacedByPublicId: props.replacedByPublicId } : {})
+      })
+    );
+  }
+
+  // ---------------------------------------------------------------------
   // Helpers internos
   // ---------------------------------------------------------------------
 
-  private recordEvent(event: IdentityExternalReferenceCreatedEvent): void {
+  private recordEvent(event: IdentityExternalReferenceDomainEvent): void {
     this.domainEvents.push(event);
   }
 
-  public pullDomainEvents(): IdentityExternalReferenceCreatedEvent[] {
+  public pullDomainEvents(): IdentityExternalReferenceDomainEvent[] {
     const events = [...this.domainEvents];
     this.domainEvents.length = 0;
     return events;

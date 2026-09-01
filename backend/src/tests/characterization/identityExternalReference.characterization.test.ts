@@ -107,6 +107,14 @@ class RepositorioComInvarianteFutura implements IdentityExternalReferenceReposit
     );
   }
 
+  /** Acrescentado com o lifecycle (FASE 7); nenhuma asserção deste arquivo mudou. */
+  public async supersede(referencia: IdentityExternalReference): Promise<void> {
+    const indice = this.referencias.findIndex((r) => r.getPublicId().equals(referencia.getPublicId()));
+    if (indice >= 0) {
+      this.referencias[indice] = referencia;
+    }
+  }
+
   public async insert(referencia: IdentityExternalReference): Promise<void> {
     const colideNaChaveDeHoje = this.ativas().some(
       (existente) =>

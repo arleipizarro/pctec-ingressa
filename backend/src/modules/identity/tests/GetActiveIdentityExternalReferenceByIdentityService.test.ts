@@ -66,6 +66,17 @@ class RepositorioEmMemoria implements IdentityExternalReferenceRepository {
     }
     return this.ativas(identityPublicId, systemCode, entityType).length;
   }
+  /**
+   * Supersede acrescentado com o lifecycle (FASE 7) — o dublê passou a
+   * implementá-lo porque o CONTRATO passou a exigi-lo.
+   */
+  public async supersede(reference: IdentityExternalReference): Promise<void> {
+    const indice = this.stored.findIndex((r) => r.getPublicId().equals(reference.getPublicId()));
+    if (indice >= 0) {
+      this.stored[indice] = reference;
+    }
+  }
+
   public async insert(reference: IdentityExternalReference): Promise<void> {
     this.stored.push(reference);
   }

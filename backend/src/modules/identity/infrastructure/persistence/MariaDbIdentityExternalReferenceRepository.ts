@@ -4,7 +4,11 @@ import {
   IdentityExternalReference,
   type IdentityExternalReferencePersistedState
 } from "../../domain/IdentityExternalReference.js";
-import { IdentityExternalReferenceAlreadyExistsError } from "../../domain/errors/IdentityExternalReferenceErrors.js";
+import {
+  IdentityExternalReferenceAlreadyExistsError,
+  IdentityExternalReferenceBindingAlreadyExistsError,
+  IdentityExternalReferenceNotActiveError
+} from "../../domain/errors/IdentityExternalReferenceErrors.js";
 import type { PublicId } from "../../domain/value-objects/PublicId.js";
 import type { SystemCode } from "../../domain/value-objects/SystemCode.js";
 import type { EntityType } from "../../domain/value-objects/EntityType.js";
@@ -12,6 +16,13 @@ import type { LegacyId } from "../../domain/value-objects/LegacyId.js";
 
 /** Nome da UNIQUE KEY sobre a coluna gerada `active_match_key` (migration 0016). */
 const ACTIVE_MATCH_UNIQUE_KEY_NAME = "uk_id_ext_ref_active_match";
+
+/**
+ * Nome da UNIQUE KEY sobre a coluna gerada `active_binding_flag`
+ * (migration 0024) — a invariante simétrica: uma Identity representa no
+ * máximo um sujeito por (system_code, entity_type).
+ */
+const ACTIVE_BINDING_UNIQUE_KEY_NAME = "uk_id_ext_ref_active_binding";
 
 type IdentityExternalReferenceRow = Record<string, unknown>;
 
@@ -220,7 +231,45 @@ export class MariaDbIdentityExternalReferenceRepository implements IdentityExter
       if (isDuplicateEntryFor(error, ACTIVE_MATCH_UNIQUE_KEY_NAME)) {
         throw new IdentityExternalReferenceAlreadyExistsError();
       }
+      // Cada UNIQUE KEY vira o SEU erro de domínio, nunca um erro
+      // genérico de "duplicado": as duas invariantes têm causas e ações
+      // corretivas diferentes, e colapsá-las esconderia justamente a
+      // informação que o operador precisa.
+      if (isDuplicateEntryFor(error, ACTIVE_BINDING_UNIQUE_KEY_NAME)) {
+        throw new IdentityExternalReferenceBindingAlreadyExistsError();
+      }
       throw error;
+    }
+  }
+
+  /**
+   * `UPDATE` condicionado a `status = 'ACTIVE'` — compare-and-swap sobre
+   * o próprio estado, que aqui faz o papel do `WHERE version = ?` das
+   * entidades com coluna `version` (ver o contrato no repositório).
+   *
+   * Zero linhas afetadas nunca é tratado como sucesso silencioso: ou a
+   * referência não existe mais, ou já foi superada por outra transação.
+   * Nos dois casos o chamador precisa saber, porque a substituição que
+   * viria em seguida assumiria um vínculo que não é mais dele.
+   *
+   * Nunca `DELETE`. A linha permanece com todos os campos; só o `status`
+   * e o `updated_at` mudam. É a coluna gerada `active_binding_flag` que
+   * passa a `NULL` e libera a chave única para a referência substituta —
+   * por isso a substituição pode ser inserida na MESMA transação, logo
+   * depois, sem nenhum instante em que duas linhas ACTIVE coexistam.
+   */
+  public async supersede(reference: IdentityExternalReference): Promise<void> {
+    const [result] = await this.connection.execute(
+      `UPDATE identity_external_references
+          SET status = 'SUPERSEDED',
+              updated_at = ?
+        WHERE public_id = ?
+          AND status = 'ACTIVE'`,
+      [reference.getUpdatedAt(), reference.getPublicId().toString()]
+    );
+    const { affectedRows } = result as { affectedRows: number };
+    if (affectedRows === 0) {
+      throw new IdentityExternalReferenceNotActiveError(reference.getPublicId().toString());
     }
   }
 }

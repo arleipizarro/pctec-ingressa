@@ -128,4 +128,26 @@ export interface IdentityExternalReferenceRepository {
   ): Promise<number>;
 
   insert(reference: IdentityExternalReference): Promise<void>;
+
+  /**
+   * Persiste a transição ACTIVE → SUPERSEDED de uma referência já
+   * existente — nunca insere linha nova para representar o novo estado.
+   *
+   * **Optimistic locking pelo PRÓPRIO ESTADO, e não por coluna
+   * `version`.** As entidades desta base que mutam de vários jeitos
+   * (`Identity`, `ApplicationAccess`, `Membership`) carregam `version`
+   * porque duas escritas concorrentes podem ser sobre coisas
+   * diferentes, e sobrescrever cegamente apagaria uma delas.
+   * `IdentityExternalReference` tem UMA transição, de mão única, sem
+   * campo mutável além do status: aqui o estado esperado É a versão. O
+   * `UPDATE` é condicionado a `status = 'ACTIVE'` (compare-and-swap), e
+   * zero linhas afetadas significa exatamente o que `WHERE version = ?`
+   * significaria — alguém chegou primeiro — e lança
+   * `IdentityExternalReferenceNotActiveError`.
+   *
+   * Acrescentar uma coluna `version` daria a mesma garantia com mais
+   * schema, mais mapeamento e mais um número para manter sincronizado;
+   * a decisão está registrada no ADR-033.
+   */
+  supersede(reference: IdentityExternalReference): Promise<void>;
 }

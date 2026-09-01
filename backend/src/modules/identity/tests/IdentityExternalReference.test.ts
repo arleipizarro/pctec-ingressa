@@ -178,17 +178,31 @@ describe("IdentityExternalReference — 12. matchMethod inválido rejeitado", ()
   });
 });
 
+/**
+ * O Aggregate passou a emitir DOIS tipos de evento (`.created` e
+ * `.superseded`, FASE 7), então `pullDomainEvents()` devolve uma união.
+ * Este helper estreita para o `.created` FALHANDO quando não é ele —
+ * um cast silencioso esconderia justamente a regressão que interessa.
+ */
+function payloadDeCriacao(
+  events: readonly ReturnType<IdentityExternalReference["pullDomainEvents"]>[number][]
+): { readonly matchMethod: string } {
+  const evento = events[0];
+  if (evento === undefined || evento.eventType !== "identity-external-reference.created") {
+    throw new Error(`esperado identity-external-reference.created, veio ${evento?.eventType ?? "nenhum evento"}`);
+  }
+  return evento.payload;
+}
+
 describe("IdentityExternalReference — 13. matchMethod no evento (diferencial vs Organization)", () => {
   it("MATCHED_BY_EMAIL aparece no payload do evento", () => {
     const reference = createReference({ matchMethod: "MATCHED_BY_EMAIL" });
-    const events = reference.pullDomainEvents();
-    expect(events[0]?.payload.matchMethod).toBe("MATCHED_BY_EMAIL");
+    expect(payloadDeCriacao(reference.pullDomainEvents()).matchMethod).toBe("MATCHED_BY_EMAIL");
   });
 
   it("MATCHED_MANUAL_CONFIRMED aparece no payload do evento", () => {
     const reference = createReference({ matchMethod: "MATCHED_MANUAL_CONFIRMED" });
-    const events = reference.pullDomainEvents();
-    expect(events[0]?.payload.matchMethod).toBe("MATCHED_MANUAL_CONFIRMED");
+    expect(payloadDeCriacao(reference.pullDomainEvents()).matchMethod).toBe("MATCHED_MANUAL_CONFIRMED");
   });
 });
 

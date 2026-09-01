@@ -107,3 +107,70 @@ export class IdentityExternalReferenceBindingAmbiguousError extends DomainError 
     );
   }
 }
+
+/**
+ * A Identity JÁ tem uma referência `ACTIVE` para este
+ * `(systemCode, entityType)` — a invariante que a migration 0024 passou
+ * a garantir no banco (`uk_id_ext_ref_active_binding`).
+ *
+ * Distinto de `IdentityExternalReferenceAlreadyExistsError`, que fala da
+ * invariante SIMÉTRICA da 0016 ("este registro legado já pertence a
+ * alguém"). Aqui a colisão é do outro lado: "esta pessoa já representa
+ * outro registro neste sistema".
+ *
+ * A ação corretiva também é diferente, e por isso os erros não se
+ * fundem: no caso da 0016, quem chama provavelmente errou o `legacyId`;
+ * aqui, o vínculo anterior precisa ser SUPERSEDED antes — que é
+ * exatamente o que `SupersedeIdentityExternalReferenceService` faz, em
+ * uma única transação, quando recebe uma substituição.
+ */
+export class IdentityExternalReferenceBindingAlreadyExistsError extends DomainError {
+  public readonly code = "IDENTITY_EXTERNAL_REFERENCE_BINDING_ALREADY_EXISTS";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor() {
+    super(
+      "Esta Identity já possui uma IdentityExternalReference ACTIVE para este (systemCode, entityType). " +
+        "Para corrigir o vínculo, faça supersede da referência anterior — nunca exclusão."
+    );
+  }
+}
+
+/**
+ * A referência que se tentou superar não estava `ACTIVE` no momento do
+ * `UPDATE` — outra transação chegou primeiro.
+ *
+ * O `UPDATE` de supersede é condicionado a `status = 'ACTIVE'`
+ * (compare-and-swap sobre o próprio estado); zero linhas afetadas
+ * significa que o estado mudou entre a leitura e a escrita. Mesmo papel
+ * dos `*VersionConflictError` das entidades que têm coluna `version` —
+ * ver `SupersedeIdentityExternalReferenceService` para por que aqui o
+ * estado É a versão.
+ */
+export class IdentityExternalReferenceNotActiveError extends DomainError {
+  public readonly code = "IDENTITY_EXTERNAL_REFERENCE_NOT_ACTIVE";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(publicId: string) {
+    super(
+      `A IdentityExternalReference ${publicId} não está ACTIVE — nada a superar (ou outra operação chegou primeiro).`
+    );
+  }
+}
+
+/**
+ * Não existe `IdentityExternalReference` com este `publicId`.
+ *
+ * Usado por `SupersedeIdentityExternalReferenceService`, que endereça a
+ * referência pelo `publicId` dela — nunca pelo `legacyId`, que é
+ * identificador de outro sistema e não deve virar chave de operação
+ * aqui.
+ */
+export class IdentityExternalReferenceNotFoundByPublicIdError extends DomainError {
+  public readonly code = "IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND";
+  public readonly classification = "VALIDATION" as const;
+
+  constructor(publicId: string) {
+    super(`Nenhuma IdentityExternalReference encontrada com publicId=${publicId}.`);
+  }
+}

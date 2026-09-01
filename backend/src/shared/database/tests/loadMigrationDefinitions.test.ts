@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 23 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 24 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -28,7 +28,8 @@ describe("loadMigrationDefinitions", () => {
       "0020_create_import_batches",
       "0021_create_import_batch_items",
       "0022_create_sso_authorization_codes",
-      "0023_create_identity_invitations"
+      "0023_create_identity_invitations",
+      "0024_add_identity_external_reference_active_binding_unique"
     ]);
 
     for (const migration of migrations) {
@@ -37,7 +38,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019 são ALTER TABLE, 0007/0014/0018 são seed INSERT/DELETE, 0016/0020/0021/0022/0023 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018 são seed INSERT/DELETE, 0016/0020/0021/0022/0023 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
@@ -46,7 +47,8 @@ describe("loadMigrationDefinitions", () => {
       "0015_add_user_access_profile",
       "0017_add_application_access_active_grant_unique",
       "0018_seed_pctec_helpdesk_application",
-      "0019_add_match_method_created_from_source"
+      "0019_add_match_method_created_from_source",
+      "0024_add_identity_external_reference_active_binding_unique"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -348,6 +350,59 @@ describe("loadMigrationDefinitions", () => {
 
     const downTrimmed = referencesMigration?.down.trim() ?? "";
     expect(downTrimmed).toContain("DROP TABLE IF EXISTS organization_external_references;");
+  });
+
+  it("0024 [fundação Meu RH]: UNIQUE KEY de binding por (identity, system, entity) com flag gerada, e down que só remove índice e coluna", () => {
+    const migrations = loadMigrationDefinitions();
+    const bindingMigration = migrations.find(
+      (m) => m.id === "0024_add_identity_external_reference_active_binding_unique"
+    );
+
+    expect(bindingMigration).toBeDefined();
+    const up = bindingMigration?.up ?? "";
+
+    // ALTER na tabela existente — nunca recria nem toca linhas.
+    expect(up.toUpperCase()).toContain("ALTER TABLE IDENTITY_EXTERNAL_REFERENCES");
+
+    // Flag NUMÉRICA gerada a partir do status, mesma técnica de 0017 —
+    // e NUNCA CONCAT sobre identity_public_id, que é CHAR(36) e faria o
+    // MariaDB recusar o índice (ERROR 1901).
+    expect(up).toContain("active_binding_flag TINYINT UNSIGNED GENERATED ALWAYS AS (");
+    expect(up).toContain("CASE WHEN status = 'ACTIVE' THEN 1 ELSE NULL END");
+    const upSemComentarios = up.replace(/--[^\n]*/g, "");
+    expect(upSemComentarios).not.toContain("CONCAT");
+
+    // A chave é a invariante conceitual inteira, na ordem que também a
+    // torna útil como índice de busca por identidade.
+    expect(up).toContain(
+      "UNIQUE KEY uk_id_ext_ref_active_binding (identity_public_id, system_code, entity_type, active_binding_flag)"
+    );
+
+    // Genérica: nenhum system_code específico participa da chave.
+    expect(upSemComentarios).not.toContain("PCTEC_HUB");
+    expect(upSemComentarios).not.toContain("rh_colaboradores");
+
+    // Não mexe na invariante simétrica já existente (0016): a chave
+    // `uk_id_ext_ref_active_match` só aparece citada no COMMENT, nunca
+    // como alvo de DROP/ALTER.
+    expect(up).not.toContain("DROP INDEX uk_id_ext_ref_active_match");
+    expect(up).not.toContain("DROP COLUMN active_match_key");
+
+    // Down: reversível e sem perda — só índice e coluna derivada.
+    const down = bindingMigration?.down ?? "";
+    expect(down).toContain("DROP INDEX uk_id_ext_ref_active_binding");
+    expect(down).toContain("DROP COLUMN active_binding_flag");
+    const downSemComentarios = down.replace(/--[^\n]*/g, "");
+    expect(downSemComentarios).not.toContain("DELETE");
+    expect(downSemComentarios).not.toContain("DROP TABLE");
+  });
+
+  it("0016 continua intacta — a 0024 é aditiva, nunca uma alteração de migration já aplicada", () => {
+    const migrations = loadMigrationDefinitions();
+    const original = migrations.find((m) => m.id === "0016_create_identity_external_references");
+
+    expect(original?.up).toContain("UNIQUE KEY uk_id_ext_ref_active_match (active_match_key)");
+    expect(original?.up).not.toContain("active_binding_flag");
   });
 
   it("seed_pctec_portal_application (0014) [G3]: INSERT determinístico, public_id distinto de PCTEC_INGRESSA, down remove só por public_id", () => {
