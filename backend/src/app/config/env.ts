@@ -95,22 +95,26 @@ const envSchema = z.object({
   // /api/v1/service/helpdesk/... fica indisponivel (401), e o resto da
   // aplicacao sobe normalmente.
   INGRESSA_HELPDESK_SERVICE_CREDENTIAL: z.string().default(""),
-  // --- Credencial do namespace generico de resolucao de binding
-  //     (fundacao PCTEC Meu RH) -----------------------------------------
-  // Protege
-  // `/api/v1/service/identity-external-references/...`, que responde
-  // "qual registro do sistema X esta Identity representa?".
+  // --- Credencial do consumidor PCTEC_MEU_RH no namespace de resolucao
+  //     de binding (fundacao PCTEC Meu RH) ----------------------------
+  // Protege `/api/v1/service/identity-external-references/...`, que
+  // responde "qual registro do sistema X esta Identity representa?".
   //
-  // Segredo e header PROPRIOS, separados dos do Portal e do Helpdesk:
-  // vazar um nao pode dar acesso aos outros, e revogar um nao pode
-  // derrubar os outros.
+  // Credencial POR CONSUMIDOR, nunca uma chave universal do namespace:
+  // a rota e generica (systemCode/entityType sao parametros), mas o
+  // segredo nao pode ser, ou o primeiro consumidor autorizado entregaria
+  // a chave a todos os seguintes — vazar a de um daria acesso ao que
+  // todos veem, e revogar a de um derrubaria todos. Cada consumidor novo
+  // ganha uma variavel PROPRIA e um header PROPRIO, como Portal e
+  // Helpdesk ja tem. Ver
+  // `modules/identity/http/identityResolutionServiceConsumers.ts`.
   //
-  // Default "" pelo mesmo motivo dos demais — nunca um segredo funcional
-  // por omissao. Sem ela configurada, SO esta rota fica indisponivel
-  // (401) e todo o resto do Ingressa sobe normalmente. E esse justamente
-  // o estado esperado enquanto nenhum consumidor tiver sido autorizado
-  // pelo Arquiteto: a fundacao fica pronta e fechada.
-  INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL: z.string().default(""),
+  // Default "" pelo mesmo motivo das demais — nunca um segredo funcional
+  // por omissao. Sem NENHUM consumidor configurado, SO este namespace
+  // fica indisponivel (401) e todo o resto do Ingressa sobe normalmente.
+  // E esse justamente o estado esperado enquanto o Arquiteto nao
+  // autorizar o consumidor: a fundacao fica pronta e fechada.
+  INGRESSA_MEU_RH_SERVICE_CREDENTIAL: z.string().default(""),
   // --- Protecao contra forca bruta no login (D8, ADR-034) -------------
   //
   // Default LIGADO. Um limitador que so protege quando alguem lembra de

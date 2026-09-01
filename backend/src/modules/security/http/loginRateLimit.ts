@@ -35,7 +35,7 @@ export interface LoginRateLimitDeps {
 /**
  * Limitador de tentativas de `POST /api/v1/sessions`.
  *
- * ## Conta TENTATIVAS, e estorna quando o login dá certo
+ * ## Conta TENTATIVAS, sempre — e o sucesso só limpa o teto apertado
  *
  * A alternativa — contar só falhas — parece mais precisa e é pior em
  * dois pontos. Primeiro, a falha só é conhecida DEPOIS do trabalho caro
@@ -45,9 +45,25 @@ export interface LoginRateLimitDeps {
  * caminho da requisição, o que abre corrida entre respostas paralelas.
  *
  * Contando a tentativa ANTES, a decisão é tomada com uma escrita atômica
- * e nada caro acontece quando o teto já estourou. O custo — uso legítimo
- * consumindo orçamento — é devolvido pelo estorno em caso de sucesso
- * (`201`), que é o único desfecho em que se sabe que não era ataque.
+ * e nada caro acontece quando o teto já estourou.
+ *
+ * Os dois contadores têm responsabilidades DIFERENTES, e por isso o
+ * sucesso os trata de formas diferentes:
+ *
+ * - `IP_IDENTIFIER` — limita adivinhação de senha contra um
+ *   identificador a partir de uma origem. Um `201` prova que quem está
+ *   ali conhece a senha; o histórico de erros daquela combinação deixa
+ *   de significar ataque, e o contador é REMOVIDO.
+ *
+ * - `IP` — limita VOLUME vindo de uma origem e protege a CPU do
+ *   Argon2id. Toda tentativa custa o mesmo trabalho, tenha acertado ou
+ *   não, então toda tentativa consome esse teto e o sucesso NÃO devolve
+ *   nada. Devolver daria a quem já tem uma credencial válida um jeito de
+ *   renovar orçamento de graça — alternar acerto e erro manteria o
+ *   contador de origem eternamente abaixo do limite, e o teto largo
+ *   deixaria de existir exatamente para quem já está dentro.
+ *
+ * Decisão do Arquiteto na revisão final da fundação; ADR-034.
  *
  * ## Nunca revela se o e-mail existe
  *
@@ -99,7 +115,7 @@ export function createLoginRateLimitMiddleware(deps: LoginRateLimitDeps) {
         const estourados = counters.filter((counter) => counter.attemptCount > counter.bucket.limit);
 
         if (estourados.length === 0) {
-          armarEstornoEmCasoDeSucesso(res, deps.store, buckets, agora);
+          armarLimpezaDoEscopoApertado(res, deps.store, buckets);
           next();
           return;
         }
@@ -145,26 +161,36 @@ export function createLoginRateLimitMiddleware(deps: LoginRateLimitDeps) {
 }
 
 /**
- * Devolve a tentativa quando a resposta foi `201` — o único desfecho que
- * prova que a requisição era legítima.
+ * Remove o contador `(origem + identificador)` quando a resposta foi
+ * `201` — o único desfecho que prova que quem tentou conhece a senha.
+ *
+ * **Só o escopo apertado.** O contador de origem fica intacto de
+ * propósito: ele mede volume e custo de CPU, que o login bem-sucedido
+ * gastou igual. Ver o cabeçalho deste arquivo e o ADR-034.
  *
  * Roda no `finish` da resposta, portanto DEPOIS de quem chamou já ter
- * sido atendido: um estorno que falhe não atrapalha ninguém, e por isso
- * o erro é engolido. O pior caso de perder um estorno é alguém consumir
- * um pouco mais do próprio orçamento — nunca uma brecha de segurança,
- * porque estorno só afrouxa.
+ * sido atendido: uma limpeza que falhe não atrapalha ninguém, e por isso
+ * o erro é engolido. O pior caso de perdê-la é a pessoa consumir um
+ * pouco mais do próprio orçamento apertado — nunca uma brecha, porque
+ * limpar só afrouxa, e nunca afrouxa o teto de origem.
+ *
+ * Requisição sem identificador não tem escopo apertado nenhum; nesse
+ * caso não há o que limpar e o store nem chega a ser chamado.
  */
-function armarEstornoEmCasoDeSucesso(
+function armarLimpezaDoEscopoApertado(
   res: Response,
   store: LoginRateLimitStore,
-  buckets: readonly LoginRateLimitBucket[],
-  agora: () => Date
+  buckets: readonly LoginRateLimitBucket[]
 ): void {
+  const apertados = buckets.filter((bucket) => bucket.kind === "IP_IDENTIFIER");
+  if (apertados.length === 0) {
+    return;
+  }
   res.once("finish", () => {
     if (res.statusCode !== 201) {
       return;
     }
-    void store.refund(buckets, agora()).catch(() => undefined);
+    void store.clear(apertados).catch(() => undefined);
   });
 }
 

@@ -5,7 +5,7 @@ import type { LoginRateLimitCounter, LoginRateLimitStore } from "../domain/Login
  * Dublê de teste dos contadores de tentativa de login, com a MESMA
  * semântica do `MariaDbLoginRateLimitStore`: incremento e reinício de
  * janela expirada numa operação só, contagem devolvida DEPOIS de
- * registrar a tentativa, estorno com piso em zero.
+ * registrar a tentativa, e remoção do contador em caso de sucesso.
  *
  * **Memória aqui é legítima; em produção não seria.** A implementação
  * real vive em MariaDB justamente porque um contador por processo
@@ -15,7 +15,8 @@ import type { LoginRateLimitCounter, LoginRateLimitStore } from "../domain/Login
  */
 export class InMemoryLoginRateLimitStore implements LoginRateLimitStore {
   private readonly linhas = new Map<string, { windowStartedAt: Date; attemptCount: number }>();
-  public estornos = 0;
+  public limpezas = 0;
+  public readonly escoposLimpos: string[] = [];
 
   public async consume(
     buckets: readonly LoginRateLimitBucket[],
@@ -34,13 +35,11 @@ export class InMemoryLoginRateLimitStore implements LoginRateLimitStore {
     });
   }
 
-  public async refund(buckets: readonly LoginRateLimitBucket[]): Promise<void> {
-    this.estornos += 1;
+  public async clear(buckets: readonly LoginRateLimitBucket[]): Promise<void> {
+    this.limpezas += 1;
     for (const bucket of buckets) {
-      const atual = this.linhas.get(bucket.key);
-      if (atual !== undefined && atual.attemptCount > 0) {
-        this.linhas.set(bucket.key, { ...atual, attemptCount: atual.attemptCount - 1 });
-      }
+      this.linhas.delete(bucket.key);
+      this.escoposLimpos.push(bucket.kind);
     }
   }
 

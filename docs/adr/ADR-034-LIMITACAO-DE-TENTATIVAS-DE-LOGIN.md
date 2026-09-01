@@ -64,7 +64,7 @@ O teto por IP é generoso de propósito: um escritório inteiro sai por um
 NAT só, e apertar ali transformaria um dia normal em indisponibilidade
 para todo mundo atrás daquele endereço.
 
-### 3. Conta TENTATIVAS e estorna no sucesso
+### 3. Conta TENTATIVAS sempre; o sucesso limpa só o teto apertado
 
 Contar só falhas parece mais preciso e é pior em dois pontos. A falha só
 é conhecida **depois** do Argon2id, então cada tentativa barrada ainda
@@ -73,11 +73,48 @@ motivo de existir. E contar depois obriga a registrar o resultado fora do
 caminho da requisição, o que abre corrida entre respostas paralelas.
 
 Contando a tentativa **antes**, a decisão sai de uma escrita atômica e
-nada caro acontece quando o teto já estourou. O custo — uso legítimo
-consumindo orçamento — é devolvido por um estorno quando a resposta é
-`201`, o único desfecho em que se sabe que não era ataque. Um ataque,
-por definição, quase nunca acerta, então o estorno praticamente não
-beneficia quem tenta adivinhar.
+nada caro acontece quando o teto já estourou.
+
+Os dois contadores têm objetivos diferentes, e por isso o login
+bem-sucedido (`201`) os trata de formas diferentes:
+
+| Escopo | Objetivo | O que o sucesso faz |
+|---|---|---|
+| `IP_IDENTIFIER` | barrar adivinhação de senha contra um identificador a partir de uma origem | **remove** o contador daquela combinação |
+| `IP` | limitar volume por origem e proteger a CPU do Argon2id | **nada** — a tentativa continua contabilizada |
+
+**Por que o escopo de origem não é estornado.** Toda tentativa custa o
+mesmo Argon2id, tenha ela acertado ou não; um teto que mede custo não
+pode devolver crédito com base no desfecho. Pior: devolver daria a quem
+já tem uma credencial válida um jeito de renovar orçamento de graça —
+alternar acerto e erro manteria o contador de origem eternamente abaixo
+do limite, e o teto largo deixaria de existir exatamente para quem já
+está dentro. O teto por IP é generoso (60/15min) justamente para que uso
+legítimo, mesmo atrás de NAT, não chegue perto dele.
+
+**Por que remover, e não estornar 1, no escopo apertado.** Um `201`
+prova, no único momento em que isso é demonstrável, que quem está ali
+conhece a senha: os erros anteriores daquela combinação eram a mesma
+pessoa digitando errado, e deixam de significar ataque. Estornar 1
+deixaria resíduo acumulando entre sucessos, até barrar quem nunca errou
+de verdade. Remover a linha zera de uma vez, devolve o espaço, e a
+próxima tentativa daquela combinação abre uma janela nova em 1.
+
+**Concorrência.** A remoção é um `DELETE` por chave primária, atômico no
+motor. Ela pode apagar uma tentativa concorrente que tenha incrementado
+o mesmo contador entre a resposta e a remoção — janela de milissegundos,
+restrita ao par `(origem, identificador)` que acabou de autenticar com
+sucesso, e sem nenhum efeito sobre o teto de origem, que continua
+contando tudo. O caso que isso poderia favorecer — alguém adivinhando a
+senha de uma pessoa **a partir da mesma origem que ela usa**, e sendo
+beneficiado pelos logins corretos dela — já não é ataque à distância, e
+continua limitado pelo teto de origem, que nenhum sucesso afrouxa.
+
+**Divergência conhecida de comentário.** A migration 0025, já aplicada
+em DEV, descreve na coluna `attempt_count` a semântica anterior
+("estorna 1, piso zero"). Migration aplicada não se reescreve — este ADR
+é a fonte da semântica vigente, exatamente como o ADR-033 supera o
+comentário da 0016.
 
 ### 4. Não cria enumeração de usuários
 
@@ -206,6 +243,11 @@ contagem.
   desligado silenciosamente em teste, de propósito.
 - Uma escrita adicional por tentativa de login. Indexada por chave
   primária, desprezível perto do Argon2id que ela protege.
+- Login bem-sucedido **não** devolve orçamento ao teto por origem. Um
+  cliente legítimo que autentique muitas vezes na mesma janela a partir
+  do mesmo IP consome esse teto — por isso ele é largo (60/15min) e por
+  isso `TRUSTED_PROXY_HOP_COUNT` precisa estar correto: com 0 atrás de
+  proxy, o teto de origem é compartilhado por todo mundo.
 - O limitador **não** protege contra ataque distribuído por muitos IPs
   contra muitos e-mails. Contra isso, o instrumento é o teto por
   `(IP + identificador)`, que continua valendo por origem, mais o que a
@@ -216,6 +258,10 @@ contagem.
 
 Aceito na fundação do PCTEC Meu RH. Migration 0025 aplicada em DEV;
 **não** aplicada em PRD por esta entrega.
+
+Revisto na revisão final da fundação (decisão do Arquiteto): a seção 3
+passou de "estorna no sucesso" para "o sucesso remove apenas o contador
+`(origem + identificador)`", sem mudança de schema.
 
 Relacionadas: ADR-029 (Credential e autenticação), ADR-030 (sessão e
 autenticação — de onde vem a uniformidade de resposta que este ADR

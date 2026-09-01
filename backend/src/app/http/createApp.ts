@@ -65,11 +65,15 @@ import { createRequireOrganizationAccess } from "../../modules/portal/http/requi
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
 import { createLoginRateLimitMiddleware } from "../../modules/security/http/loginRateLimit.js";
-import { createClientIpResolver } from "../../modules/security/http/resolveClientIp.js";
+import { createClientIpResolver, type ClientIpResolver } from "../../modules/security/http/resolveClientIp.js";
 import { LoginRateLimitPolicy } from "../../modules/security/domain/LoginRateLimitPolicy.js";
 import type { LoginRateLimitStore } from "../../modules/security/domain/LoginRateLimitStore.js";
 import { MariaDbLoginRateLimitStore } from "../../modules/security/infrastructure/persistence/MariaDbLoginRateLimitStore.js";
-import { IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
+import {
+  createRequireOneOfServiceCredentials,
+  type ServiceCredentialConsumer
+} from "../../modules/portal/http/requireServiceCredential.js";
+import { buildIdentityResolutionServiceConsumers } from "../../modules/identity/http/identityResolutionServiceConsumers.js";
 import { createServiceIdentityExternalReferenceRoutes } from "../../modules/identity/http/serviceIdentityExternalReferenceRoutes.js";
 import { GetActiveIdentityExternalReferenceByIdentityService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceByIdentityService.js";
 import { createServicePortalOrganizationExternalReferenceRoutes } from "../../modules/portal/http/servicePortalOrganizationExternalReferenceRoutes.js";
@@ -244,13 +248,18 @@ export interface CreateAppOptions {
    */
   readonly getActiveIdentityExternalReferenceByIdentityService?: GetActiveIdentityExternalReferenceByIdentityService;
   /**
-   * Credencial do namespace genérico de resolução de binding — separada
-   * das do Portal e do Helpdesk. Quando omitida, lida de
-   * `INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL` (env). Vazia
+   * Consumidores autorizados do namespace genérico de resolução de
+   * binding, **cada um com credencial e header próprios** — nunca uma
+   * chave universal do namespace. Quando omitido, a lista é montada a
+   * partir do ambiente por
+   * `buildIdentityResolutionServiceConsumers` (hoje: só `PCTEC_MEU_RH`,
+   * a partir de `INGRESSA_MEU_RH_SERVICE_CREDENTIAL`).
+   *
+   * Lista vazia — ou todos os consumidores sem segredo configurado —
    * significa "namespace indisponível" (401), nunca "aceita qualquer
    * chamada".
    */
-  readonly identityResolutionServiceCredential?: string;
+  readonly identityResolutionServiceConsumers?: readonly ServiceCredentialConsumer[];
   /**
    * Injetável para testes — D8. Quando omitido, `createApp()` constrói
    * um `MariaDbLoginRateLimitStore` sobre o pool compartilhado.
@@ -265,6 +274,14 @@ export interface CreateAppOptions {
   readonly loginRateLimitClock?: () => Date;
   /** Injetável para testes — permite asseverar o evento de bloqueio (D8/FASE 9). */
   readonly loginRateLimitAuditEventRepository?: AuditEventRepository;
+  /**
+   * Injetável para testes — origem da requisição vista pelo limitador.
+   * Quando omitido, `createApp()` usa `createClientIpResolver` sobre
+   * `TRUSTED_PROXY_HOP_COUNT`, que é o caminho de produção. Existe para
+   * que um teste possa provar que origens DIFERENTES não compartilham
+   * contador sem precisar de duas interfaces de rede.
+   */
+  readonly loginRateLimitClientIpResolver?: ClientIpResolver;
   /**
    * Injetável para testes — P1D (v0.7.x). Quando omitido, `createApp()`
    * constrói um `ResolvePortalTenantScopeService` real, usado por
@@ -603,8 +620,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const serviceCredential = options.serviceCredential ?? loadEnv().INGRESSA_PORTAL_SERVICE_CREDENTIAL;
   const helpdeskServiceCredential =
     options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
-  const identityResolutionServiceCredential =
-    options.identityResolutionServiceCredential ?? loadEnv().INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL;
+  const identityResolutionServiceConsumers =
+    options.identityResolutionServiceConsumers ??
+    buildIdentityResolutionServiceConsumers({ meuRh: loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL });
 
   // --- Limitação de tentativas de login (D8) ---------------------------
   //
@@ -635,7 +653,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     policy: loginRateLimitPolicy,
     store: loginRateLimitStore,
     auditEventRepository: loginRateLimitAuditEventRepository,
-    resolveClientIp: createClientIpResolver(envRateLimit.TRUSTED_PROXY_HOP_COUNT),
+    resolveClientIp:
+      options.loginRateLimitClientIpResolver ?? createClientIpResolver(envRateLimit.TRUSTED_PROXY_HOP_COUNT),
     ...(options.loginRateLimitClock !== undefined ? { now: options.loginRateLimitClock } : {})
   });
 
@@ -1182,24 +1201,27 @@ export function createApp(options: CreateAppOptions = {}): Express {
   //
   // Namespace PRÓPRIO, e não `/api/v1/service/portal/...`, porque o
   // contrato é genérico: `systemCode` e `entityType` são parâmetros, e
-  // nenhum produto consumidor aparece na URI. Credencial PRÓPRIA
-  // (header `x-identity-resolution-service-credential`), pelo mesmo
-  // motivo que separa a do Helpdesk da do Portal — vazar uma não pode
-  // dar acesso às outras.
+  // nenhum produto consumidor aparece na URI.
   //
-  // Enquanto `INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL` não
-  // estiver configurada, este namespace responde 401 a tudo: a fundação
-  // fica pronta e FECHADA até o Arquiteto autorizar um consumidor.
+  // A rota é genérica; a CREDENCIAL não é. Cada consumidor se apresenta
+  // com header e segredo PRÓPRIOS — mesma regra que já separa Helpdesk
+  // de Portal, aqui aplicada a uma fronteira que nasceu prevendo mais de
+  // um consumidor. Uma chave única do namespace faria o primeiro
+  // consumidor autorizado entregá-la a todos os seguintes: vazar a de um
+  // daria acesso ao que todos veem, revogar a de um derrubaria todos, e
+  // a auditoria nunca diria quem chamou.
+  //
+  // Enquanto NENHUM consumidor tiver segredo configurado — o estado de
+  // hoje, com `INGRESSA_MEU_RH_SERVICE_CREDENTIAL` vazia e a Application
+  // `PCTEC_MEU_RH` sequer registrada —, este namespace responde 401 a
+  // tudo: a fundação fica pronta e FECHADA até o Arquiteto autorizar.
   //
   // Nunca browser-facing: não há cookie de sessão que abra esta rota, e
   // nenhum caminho de código a monta sob `/api/v1/portal` ou qualquer
   // outro namespace de navegador.
   app.use(
     "/api/v1/service/identity-external-references",
-    createRequireServiceCredential(
-      identityResolutionServiceCredential,
-      IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME
-    ),
+    createRequireOneOfServiceCredentials(identityResolutionServiceConsumers),
     createServiceIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceByIdentityService)
   );
 

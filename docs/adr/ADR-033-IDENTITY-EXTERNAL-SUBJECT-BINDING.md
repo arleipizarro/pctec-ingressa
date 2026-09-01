@@ -253,11 +253,20 @@ nenhum produto consumidor aparece na URI. O Ingressa é a fonte da
 identidade e do binding; conhecer o consumidor pelo nome faria dele parte
 do contrato, e cada produto novo exigiria uma rota nova.
 
-Protegida por `requireServiceCredential` com **credencial e header
-próprios** (`x-identity-resolution-service-credential`), separados dos do
-Portal e do Helpdesk — vazar uma não pode dar acesso às outras, e revogar
-uma não pode derrubar as outras. Sem a variável configurada, o namespace
-responde `401` a tudo. Nunca browser-facing.
+A rota é genérica; a **credencial não é**. Cada consumidor autorizado se
+apresenta com header e segredo PRÓPRIOS — `PCTEC_MEU_RH` usa
+`x-meu-rh-service-credential` e `INGRESSA_MEU_RH_SERVICE_CREDENTIAL` —,
+do mesmo jeito que Portal e Helpdesk já se separam entre si. Uma chave
+única do namespace faria o primeiro consumidor autorizado entregá-la a
+todos os seguintes: vazar a de um daria acesso ao que todos veem,
+revogar a de um derrubaria todos, e nenhuma auditoria diria quem chamou.
+A lista de consumidores vive em
+`modules/identity/http/identityResolutionServiceConsumers.ts`; um
+consumidor novo é uma entrada ali mais uma variável de ambiente, sem
+banco de credenciais novo.
+
+Enquanto NENHUM consumidor tiver segredo configurado — o estado desta
+entrega —, o namespace responde `401` a tudo. Nunca browser-facing.
 
 Respostas: `200` (exatamente um binding), `404` (sem vínculo), `409`
 (ambíguo), `422` (parâmetro inválido), `401` (sem credencial).

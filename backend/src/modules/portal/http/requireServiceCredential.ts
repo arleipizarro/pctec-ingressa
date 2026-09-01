@@ -15,26 +15,25 @@ export const SERVICE_CREDENTIAL_HEADER_NAME = "x-portal-service-credential";
 export const HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME = "x-helpdesk-service-credential";
 
 /**
- * Header do namespace GENÉRICO de resolução de `IdentityExternalReference`
- * (`/api/v1/service/identity-external-references/...`), acrescentado na
- * fundação do PCTEC Meu RH.
+ * Um consumidor autorizado de uma fronteira service-to-service: quem é,
+ * por qual header ele se apresenta, e qual segredo vale para ELE.
  *
- * Cabeçalho e segredo PRÓPRIOS, pelo mesmo motivo já registrado acima:
- * reaproveitar a credencial do Portal faria quem tem acesso a este
- * namespace poder chamar `/api/v1/service/portal/...` também, e revogar
- * uma derrubaria os dois. Aqui o isolamento importa ainda mais — este
- * namespace resolve BINDINGS DE IDENTIDADE para qualquer sistema
- * registrado, e é a fronteira de onde um produto descobre qual registro
- * externo uma pessoa representa.
- *
- * **Uma credencial para o namespace, não uma por consumidor.** Enquanto
- * existir um único consumidor previsto, essa é a granularidade honesta;
- * quando o segundo aparecer, a decisão a tomar é dar a ele credencial
- * própria (novo header + novo segredo, exatamente como Portal e Helpdesk
- * têm), e não compartilhar esta. Registrado como risco residual na
- * entrega da fundação, para não virar decisão por omissão.
+ * **Credenciais são por consumidor, nunca uma chave universal do
+ * namespace.** É a mesma regra que Portal e Helpdesk já seguem, agora
+ * dita explicitamente porque a fronteira de resolução de binding nasceu
+ * prevendo mais de um consumidor. Uma chave só para todos significaria:
+ * vazar a de um dá acesso ao que todos podem ver; revogar a de um
+ * derruba todos; e a auditoria nunca consegue dizer QUEM chamou.
  */
-export const IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME = "x-identity-resolution-service-credential";
+export interface ServiceCredentialConsumer {
+  /** Código do sistema consumidor — ex.: `PCTEC_MEU_RH`. Diagnóstico e auditoria; nunca decide nada sozinho. */
+  readonly consumerCode: string;
+  /** Header PRÓPRIO daquele consumidor. Parte do isolamento: header certo com segredo de outro não passa. */
+  readonly headerName: string;
+  /** Segredo daquele consumidor. Vazio/só espaços = consumidor não configurado, e portanto não aceito. */
+  readonly credential: string;
+}
+
 
 /**
  * Middleware — P1A.1 (v0.7.x). Protege a fronteira service-to-service
@@ -107,5 +106,61 @@ export function createRequireServiceCredential(
     }
 
     next();
+  };
+}
+
+/**
+ * Middleware de fronteira service-to-service com **vários consumidores
+ * possíveis, cada um com credencial própria**.
+ *
+ * Usado pelo namespace genérico de resolução de `IdentityExternalReference`
+ * (`/api/v1/service/identity-external-references/...`), que por desenho
+ * atende mais de um produto: a ROTA é genérica — não sabe quem consome —
+ * mas a CREDENCIAL não pode ser, ou o primeiro consumidor autorizado
+ * passaria a chave para todos os seguintes.
+ *
+ * Cada consumidor se apresenta pelo próprio header com o próprio
+ * segredo. Um consumidor só é aceito se estiver configurado; quem não
+ * tem segredo configurado simplesmente não existe para esta fronteira, e
+ * enquanto NENHUM estiver configurado o namespace inteiro responde 401 —
+ * o mesmo fail-closed de `createRequireServiceCredential`, e o estado
+ * esperado enquanto o Arquiteto não autorizar o primeiro consumidor.
+ *
+ * **Nada na resposta diz qual consumidor foi reconhecido, nem quantos
+ * existem.** Header ausente, header de outro consumidor, segredo errado
+ * e consumidor não configurado produzem todos o mesmo
+ * `ServiceCredentialInvalidError` (401) — nunca ensinar ao chamador em
+ * qual das situações ele caiu.
+ *
+ * Comparação por digest SHA-256 + `timingSafeEqual`, exatamente como no
+ * caso de consumidor único — nunca `===` em segredo.
+ */
+export function createRequireOneOfServiceCredentials(consumers: readonly ServiceCredentialConsumer[]) {
+  // Só os configurados entram; os demais não existem para esta
+  // fronteira. Digest pré-computado uma vez, nunca por requisição.
+  const autorizados = consumers
+    .filter((consumer) => consumer.credential.trim().length > 0)
+    .map((consumer) => ({
+      consumerCode: consumer.consumerCode,
+      headerName: consumer.headerName.toLowerCase(),
+      digest: createHash("sha256").update(consumer.credential, "utf8").digest()
+    }));
+
+  return function requireOneOfServiceCredentials(req: Request, _res: Response, next: NextFunction): void {
+    for (const autorizado of autorizados) {
+      const receivedHeader = req.headers[autorizado.headerName];
+      const receivedCredential = Array.isArray(receivedHeader) ? receivedHeader[0] : receivedHeader;
+      if (receivedCredential === undefined || receivedCredential.length === 0) {
+        continue;
+      }
+
+      const receivedDigest = createHash("sha256").update(receivedCredential, "utf8").digest();
+      if (timingSafeEqual(autorizado.digest, receivedDigest)) {
+        next();
+        return;
+      }
+    }
+
+    next(new ServiceCredentialInvalidError());
   };
 }

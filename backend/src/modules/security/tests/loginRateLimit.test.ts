@@ -32,7 +32,7 @@ class ContadorIndisponivel implements LoginRateLimitStore {
   public async consume(): Promise<readonly LoginRateLimitCounter[]> {
     throw new Error("banco indisponivel");
   }
-  public async refund(): Promise<void> {
+  public async clear(): Promise<void> {
     throw new Error("banco indisponivel");
   }
 }
@@ -73,6 +73,55 @@ class LoginQueSempreAceita {
   }
 }
 
+/** Aceita um único identificador; todos os outros falham. */
+class LoginQueAceitaSomente {
+  public chamadas = 0;
+  public constructor(private readonly email: string) {}
+  public async execute(input: { email: string }): Promise<{
+    identityPublicId: string;
+    sessionPublicId: string;
+    rawToken: string;
+    expiresAt: Date;
+  }> {
+    this.chamadas += 1;
+    if (input.email.trim().toLowerCase() !== this.email) {
+      throw new AuthenticationFailedError("INVALID_PASSWORD");
+    }
+    return {
+      identityPublicId: "66231e51-66fb-466d-af4f-ac7b925ca9ec",
+      sessionPublicId: "22222222-2222-4222-8222-222222222222",
+      rawToken: "token-sintetico",
+      expiresAt: new Date(T0.getTime() + 3_600_000)
+    };
+  }
+}
+
+/**
+ * Alterna acerto e erro — é o padrão de quem TEM uma credencial válida e
+ * tentaria usar os próprios sucessos para renovar orçamento do contador
+ * de origem.
+ */
+class LoginQueAlterna {
+  public chamadas = 0;
+  public async execute(): Promise<{
+    identityPublicId: string;
+    sessionPublicId: string;
+    rawToken: string;
+    expiresAt: Date;
+  }> {
+    this.chamadas += 1;
+    if (this.chamadas % 2 === 0) {
+      throw new AuthenticationFailedError("INVALID_PASSWORD");
+    }
+    return {
+      identityPublicId: "66231e51-66fb-466d-af4f-ac7b925ca9ec",
+      sessionPublicId: "22222222-2222-4222-8222-222222222222",
+      rawToken: "token-sintetico",
+      expiresAt: new Date(T0.getTime() + 3_600_000)
+    };
+  }
+}
+
 const politica = new LoginRateLimitPolicy({
   enabled: true,
   windowSeconds: JANELA_SEGUNDOS,
@@ -90,7 +139,17 @@ interface Ambiente {
 
 async function subir(
   loginService: unknown,
-  opcoes: { store?: LoginRateLimitStore; habilitado?: boolean } = {}
+  opcoes: {
+    store?: LoginRateLimitStore;
+    habilitado?: boolean;
+    politica?: LoginRateLimitPolicy;
+    /**
+     * Origem vista pelo limitador. Quando omitida, o app usa o
+     * resolvedor REAL sobre o socket — o caminho de produção continua
+     * exercitado por todos os outros testes.
+     */
+    ip?: string;
+  } = {}
 ): Promise<Ambiente> {
   const contador = new InMemoryLoginRateLimitStore();
   const auditoria = new AuditoriaEmMemoria();
@@ -103,16 +162,18 @@ async function subir(
     sessionCookieConfig: { secure: false },
     loginRateLimitStore: opcoes.store ?? contador,
     loginRateLimitPolicy:
-      opcoes.habilitado === false
+      opcoes.politica ??
+      (opcoes.habilitado === false
         ? new LoginRateLimitPolicy({
             enabled: false,
             windowSeconds: JANELA_SEGUNDOS,
             maxAttemptsPerIp: TETO_IP,
             maxAttemptsPerIpIdentifier: TETO_IP_IDENTIFICADOR
           })
-        : politica,
+        : politica),
     loginRateLimitClock: () => agora,
-    loginRateLimitAuditEventRepository: auditoria
+    loginRateLimitAuditEventRepository: auditoria,
+    ...(opcoes.ip !== undefined ? { loginRateLimitClientIpResolver: () => opcoes.ip as string } : {})
   });
 
   const server = app.listen(0);
@@ -377,28 +438,221 @@ describe("rate limit de login — nada sensível é armazenado", () => {
   });
 });
 
-describe("rate limit de login — estorno em caso de sucesso", () => {
-  it("login bem-sucedido devolve a tentativa, para que uso legítimo não consuma orçamento", async () => {
-    const ambiente = await subir(new LoginQueSempreAceita());
+describe("rate limit de login — o que o sucesso limpa, e o que ele NÃO limpa", () => {
+  /**
+   * Decisão do Arquiteto na revisão final da fundação (ADR-034):
+   *
+   * - `IP_IDENTIFIER` protege contra adivinhação de senha → o sucesso
+   *   REMOVE o contador daquela combinação;
+   * - `IP` protege volume e CPU do Argon2id → o sucesso NÃO devolve
+   *   nada, porque a tentativa custou o mesmo trabalho de qualquer jeito.
+   */
+  const chaves = (ip: string, email: string): { ipKey: string; ipIdentKey: string } => {
+    const buckets = politica.buildBuckets({ clientIp: ip, identifier: email });
+    const ipKey = buckets.find((b) => b.kind === "IP")?.key;
+    const ipIdentKey = buckets.find((b) => b.kind === "IP_IDENTIFIER")?.key;
+    if (ipKey === undefined || ipIdentKey === undefined) {
+      throw new Error("política não produziu os dois escopos");
+    }
+    return { ipKey, ipIdentKey };
+  };
+
+  /** O `finish` da resposta dispara a limpeza; esperamos o próximo tick. */
+  const proximoTick = async (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+  const derrubar = async (ambiente: Ambiente): Promise<void> =>
+    new Promise<void>((resolve, reject) => ambiente.server.close((err) => (err ? reject(err) : resolve())));
+
+  it("dez falhas para o mesmo (origem + identificador) barram a décima primeira", async () => {
+    // Tetos REAIS de DEV/PRD (10 por origem+identificador, 60 por
+    // origem) — o caso exigido na revisão, exercitado com os números
+    // que vão para produção, e não com os tetos reduzidos do arquivo.
+    const producao = new LoginRateLimitPolicy({
+      enabled: true,
+      windowSeconds: 900,
+      maxAttemptsPerIp: 60,
+      maxAttemptsPerIpIdentifier: 10
+    });
+    const login = new LoginQueSempreFalha();
+    const ambiente = await subir(login, { politica: producao });
     try {
-      const primeira = await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid");
-      expect(primeira.status).toBe(201);
-
-      // O estorno acontece no `finish` da resposta; aguardamos o
-      // próximo tick do loop de eventos antes de conferir.
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(ambiente.contador.estornos).toBeGreaterThan(0);
-
-      // Muitos logins bem-sucedidos seguidos NÃO barram ninguém.
-      for (let i = 0; i < TETO_IP_IDENTIFICADOR + 3; i += 1) {
-        const res = await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid");
-        expect(res.status).toBe(201);
-        await new Promise<void>((resolve) => setImmediate(resolve));
+      for (let i = 0; i < 10; i += 1) {
+        expect((await tentarLogin(ambiente.baseUrl, "vitima@example.invalid")).status).toBe(401);
       }
+
+      const barrada = await tentarLogin(ambiente.baseUrl, "vitima@example.invalid");
+
+      expect(barrada.status).toBe(429);
+      // Nenhum Argon2id gasto na barrada.
+      expect(login.chamadas).toBe(10);
     } finally {
-      await new Promise<void>((resolve, reject) =>
-        ambiente.server.close((err) => (err ? reject(err) : resolve()))
-      );
+      await derrubar(ambiente);
+    }
+  });
+
+  it("o login válido limpa SOMENTE o contador (origem + identificador)", async () => {
+    const ambiente = await subir(new LoginQueSempreAceita(), { ip: "198.51.100.7" });
+    try {
+      const { ipKey, ipIdentKey } = chaves("198.51.100.7", "pessoa@example.invalid");
+
+      expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(201);
+      await proximoTick();
+
+      expect(ambiente.contador.contagem(ipIdentKey)).toBe(0);
+      expect(ambiente.contador.chaves()).not.toContain(ipIdentKey);
+      // A tentativa bem-sucedida continua contabilizada na origem.
+      expect(ambiente.contador.contagem(ipKey)).toBe(1);
+      // E só o escopo apertado foi tocado.
+      expect(ambiente.contador.escoposLimpos).toEqual(["IP_IDENTIFIER"]);
+    } finally {
+      await derrubar(ambiente);
+    }
+  });
+
+  it("erros anteriores do mesmo identificador somem no sucesso, mas o contador de origem guarda todos", async () => {
+    const login = new LoginQueAlterna();
+    const ambiente = await subir(login, { ip: "198.51.100.8" });
+    try {
+      const { ipKey, ipIdentKey } = chaves("198.51.100.8", "pessoa@example.invalid");
+
+      // chamada 1 = sucesso, 2 = falha, 3 = sucesso.
+      expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(201);
+      await proximoTick();
+      expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(401);
+      expect(ambiente.contador.contagem(ipIdentKey)).toBe(1);
+      expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(201);
+      await proximoTick();
+
+      expect(ambiente.contador.contagem(ipIdentKey)).toBe(0);
+      expect(ambiente.contador.contagem(ipKey)).toBe(3);
+    } finally {
+      await derrubar(ambiente);
+    }
+  });
+
+  it("quem tem credencial válida NÃO usa os próprios sucessos para reduzir o contador de origem", async () => {
+    const ambiente = await subir(new LoginQueSempreAceita(), { ip: "198.51.100.9" });
+    try {
+      const { ipKey } = chaves("198.51.100.9", "pessoa@example.invalid");
+
+      for (let i = 0; i < TETO_IP; i += 1) {
+        expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(201);
+        await proximoTick();
+      }
+      expect(ambiente.contador.contagem(ipKey)).toBe(TETO_IP);
+
+      // O teto de ORIGEM estourou mesmo com todos os logins corretos.
+      const barrada = await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid");
+      expect(barrada.status).toBe(429);
+    } finally {
+      await derrubar(ambiente);
+    }
+  });
+
+  it("alternar falha e sucesso não impede o contador de origem de atingir o teto", async () => {
+    const login = new LoginQueAlterna();
+    const ambiente = await subir(login, { ip: "198.51.100.10" });
+    try {
+      const { ipKey } = chaves("198.51.100.10", "pessoa@example.invalid");
+
+      const status: number[] = [];
+      for (let i = 0; i < TETO_IP; i += 1) {
+        const res = await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid");
+        status.push(res.status);
+        await proximoTick();
+      }
+      // Alternância de fato aconteceu — o teste não estaria provando
+      // nada se todas as respostas fossem iguais.
+      expect(new Set(status)).toEqual(new Set([201, 401]));
+      expect(ambiente.contador.contagem(ipKey)).toBe(TETO_IP);
+
+      const barrada = await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid");
+      expect(barrada.status).toBe(429);
+      expect(login.chamadas).toBe(TETO_IP);
+    } finally {
+      await derrubar(ambiente);
+    }
+  });
+
+  it("o sucesso de um identificador não limpa o contador apertado de OUTRO na mesma origem", async () => {
+    const ambiente = await subir(new LoginQueAceitaSomente("pessoa@example.invalid"), { ip: "198.51.100.11" });
+    try {
+      const outro = chaves("198.51.100.11", "outra@example.invalid");
+
+      // Uma tentativa falha da "outra" pessoa deixa contador apertado
+      // dela em 1.
+      expect((await tentarLogin(ambiente.baseUrl, "outra@example.invalid")).status).toBe(401);
+      expect(ambiente.contador.contagem(outro.ipIdentKey)).toBe(1);
+
+      // Um login CORRETO da primeira pessoa, na mesma origem.
+      expect((await tentarLogin(ambiente.baseUrl, "pessoa@example.invalid")).status).toBe(201);
+      await proximoTick();
+
+      // O contador da outra combinação sobrevive intacto.
+      expect(ambiente.contador.contagem(outro.ipIdentKey)).toBe(1);
+    } finally {
+      await derrubar(ambiente);
+    }
+  });
+
+  it("origens DIFERENTES não compartilham o contador de origem", async () => {
+    const primeira = await subir(new LoginQueSempreFalha(), { ip: "203.0.113.1" });
+    const segunda = await subir(new LoginQueSempreFalha(), { ip: "203.0.113.2" });
+    try {
+      for (let i = 0; i < TETO_IP; i += 1) {
+        await tentarLogin(primeira.baseUrl, `pessoa${i}@example.invalid`);
+      }
+      expect((await tentarLogin(primeira.baseUrl, "mais-uma@example.invalid")).status).toBe(429);
+
+      // Mesmos e-mails, origem diferente: contador próprio, ninguém
+      // barrado por causa do vizinho.
+      for (let i = 0; i < TETO_IP; i += 1) {
+        expect((await tentarLogin(segunda.baseUrl, `pessoa${i}@example.invalid`)).status).toBe(401);
+      }
+
+      const chavesDaPrimeira = chaves("203.0.113.1", "pessoa0@example.invalid");
+      const chavesDaSegunda = chaves("203.0.113.2", "pessoa0@example.invalid");
+      expect(chavesDaPrimeira.ipKey).not.toBe(chavesDaSegunda.ipKey);
+      expect(chavesDaPrimeira.ipIdentKey).not.toBe(chavesDaSegunda.ipIdentKey);
+    } finally {
+      await derrubar(primeira);
+      await derrubar(segunda);
+    }
+  });
+
+  it("com o teto de origem estourado, a resposta é a MESMA para quem existe e para quem não existe", async () => {
+    // Aqui o login aceita qualquer um — ou seja, o primeiro e-mail
+    // "existe" de verdade. Ainda assim, depois que o teto de origem
+    // estoura, as duas respostas são indistinguíveis.
+    const ambiente = await subir(new LoginQueSempreAceita(), { ip: "203.0.113.3" });
+    try {
+      for (let i = 0; i < TETO_IP; i += 1) {
+        await tentarLogin(ambiente.baseUrl, "existe@example.invalid");
+        await proximoTick();
+      }
+
+      const respostas: Array<{ status: number; corpo: unknown; retryAfter: string | null }> = [];
+      for (const email of ["existe@example.invalid", "nao-existe@example.invalid"]) {
+        const barrada = await tentarLogin(ambiente.baseUrl, email);
+        respostas.push({
+          status: barrada.status,
+          corpo: await barrada.json(),
+          retryAfter: barrada.headers.get("retry-after")
+        });
+      }
+
+      const [comConta, semConta] = respostas;
+      expect(comConta?.status).toBe(429);
+      expect(semConta?.status).toBe(429);
+      expect(comConta?.retryAfter).toBe(semConta?.retryAfter);
+      const semCorrelacao = (corpo: unknown): unknown => {
+        const c = corpo as { error: Record<string, unknown> };
+        const { correlation_id: _ignorado, ...resto } = c.error;
+        return resto;
+      };
+      expect(semCorrelacao(comConta?.corpo)).toEqual(semCorrelacao(semConta?.corpo));
+    } finally {
+      await derrubar(ambiente);
     }
   });
 });

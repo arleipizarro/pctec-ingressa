@@ -21,16 +21,27 @@ import {
   IdentityExternalReferenceBindingNotFoundError
 } from "../../domain/errors/IdentityExternalReferenceErrors.js";
 import {
-  IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME,
   SERVICE_CREDENTIAL_HEADER_NAME,
-  HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME
+  HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME,
+  type ServiceCredentialConsumer
 } from "../../../portal/http/requireServiceCredential.js";
+import {
+  MEU_RH_CONSUMER_CODE,
+  MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME,
+  buildIdentityResolutionServiceConsumers
+} from "../identityResolutionServiceConsumers.js";
 import { SESSION_COOKIE_NAME } from "../../../security/http/sessionCookie.js";
 
 const IDENTIDADE = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const ATOR = "0b13f6f0-8f3a-4a1e-9c2d-000000000099";
 const CORRELACAO = "8f14e45f-ceea-467e-a1a3-000000000001";
-const CREDENCIAL_RESOLUCAO = "segredo-de-teste-resolucao-de-binding";
+const CREDENCIAL_MEU_RH = "segredo-de-teste-consumidor-meu-rh";
+/** Segundo consumidor, só para provar que a fronteira aceita mais de um SEM chave compartilhada. */
+const CONSUMIDOR_VIZINHO: ServiceCredentialConsumer = {
+  consumerCode: "PCTEC_OUTRO_CONSUMIDOR",
+  headerName: "x-outro-consumidor-service-credential",
+  credential: "segredo-de-teste-consumidor-vizinho"
+};
 const CREDENCIAL_PORTAL = "segredo-de-teste-portal";
 const CREDENCIAL_HELPDESK = "segredo-de-teste-helpdesk";
 const LEGACY_ID = 999801;
@@ -67,7 +78,12 @@ class FakeResolucao {
   }
 }
 
-async function subirServidor(resolucao: FakeResolucao, credencialResolucao = CREDENCIAL_RESOLUCAO) {
+async function subirServidor(
+  resolucao: FakeResolucao,
+  consumidores: readonly ServiceCredentialConsumer[] = buildIdentityResolutionServiceConsumers({
+    meuRh: CREDENCIAL_MEU_RH
+  })
+) {
   const app = createApp({
     validateSessionService: {
       execute: async () => ({ identityPublicId: IDENTIDADE, sessionPublicId: "sessao" })
@@ -80,7 +96,7 @@ async function subirServidor(resolucao: FakeResolucao, credencialResolucao = CRE
       resolucao as unknown as GetActiveIdentityExternalReferenceByIdentityService,
     serviceCredential: CREDENCIAL_PORTAL,
     helpdeskServiceCredential: CREDENCIAL_HELPDESK,
-    identityResolutionServiceCredential: credencialResolucao
+    identityResolutionServiceConsumers: consumidores
   });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -114,7 +130,7 @@ describe("resolução service-to-service de binding — proteção da fronteira"
 
   it("com credencial errada no header certo: 401", async () => {
     const res = await fetch(`${baseUrl}${CAMINHO}`, {
-      headers: { [IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME]: "credencial-errada" }
+      headers: { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: "credencial-errada" }
     });
 
     expect(res.status).toBe(401);
@@ -141,7 +157,7 @@ describe("resolução service-to-service de binding — proteção da fronteira"
 
   it("o valor certo no header do PORTAL também não serve — o header é parte do isolamento", async () => {
     const res = await fetch(`${baseUrl}${CAMINHO}`, {
-      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_RESOLUCAO }
+      headers: { [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH }
     });
 
     expect(res.status).toBe(401);
@@ -175,11 +191,14 @@ describe("resolução service-to-service de binding — proteção da fronteira"
 describe("resolução service-to-service de binding — namespace sem credencial configurada", () => {
   it("credencial vazia deixa o namespace INDISPONÍVEL (401), nunca aberto", async () => {
     const resolucao = new FakeResolucao();
-    const { server, baseUrl } = await subirServidor(resolucao, "");
+    const { server, baseUrl } = await subirServidor(
+      resolucao,
+      buildIdentityResolutionServiceConsumers({ meuRh: "" })
+    );
     try {
       const semHeader = await fetch(`${baseUrl}${CAMINHO}`);
       const comHeaderVazio = await fetch(`${baseUrl}${CAMINHO}`, {
-        headers: { [IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME]: "" }
+        headers: { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: "" }
       });
 
       expect(semHeader.status).toBe(401);
@@ -191,12 +210,94 @@ describe("resolução service-to-service de binding — namespace sem credencial
   });
 });
 
+describe("resolução service-to-service de binding — credenciais são POR CONSUMIDOR", () => {
+  /**
+   * A rota é genérica de propósito (nenhum produto aparece na URI), mas
+   * a credencial não pode ser: uma chave única do namespace faria o
+   * primeiro consumidor autorizado entregá-la a todos os seguintes.
+   * Estes casos provam que a fronteira aceita N consumidores, cada um
+   * com header e segredo próprios, sem nenhuma chave universal.
+   */
+  const doisConsumidores = [
+    ...buildIdentityResolutionServiceConsumers({ meuRh: CREDENCIAL_MEU_RH }),
+    CONSUMIDOR_VIZINHO
+  ];
+
+  it("cada consumidor entra com o SEU header e o SEU segredo", async () => {
+    const resolucao = new FakeResolucao();
+    const { server, baseUrl } = await subirServidor(resolucao, doisConsumidores);
+    try {
+      const meuRh = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH }
+      });
+      const vizinho = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [CONSUMIDOR_VIZINHO.headerName]: CONSUMIDOR_VIZINHO.credential }
+      });
+
+      expect(meuRh.status).toBe(200);
+      expect(vizinho.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("o segredo de um consumidor NÃO abre a porta do outro", async () => {
+    const resolucao = new FakeResolucao();
+    const { server, baseUrl } = await subirServidor(resolucao, doisConsumidores);
+    try {
+      const trocado = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CONSUMIDOR_VIZINHO.credential }
+      });
+      const inverso = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [CONSUMIDOR_VIZINHO.headerName]: CREDENCIAL_MEU_RH }
+      });
+
+      expect(trocado.status).toBe(401);
+      expect(inverso.status).toBe(401);
+      expect(resolucao.chamadas).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("revogar um consumidor (segredo vazio) NÃO derruba o outro", async () => {
+    const resolucao = new FakeResolucao();
+    const { server, baseUrl } = await subirServidor(resolucao, [
+      ...buildIdentityResolutionServiceConsumers({ meuRh: "" }),
+      CONSUMIDOR_VIZINHO
+    ]);
+    try {
+      const revogado = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH }
+      });
+      const ativo = await fetch(`${baseUrl}${CAMINHO}`, {
+        headers: { [CONSUMIDOR_VIZINHO.headerName]: CONSUMIDOR_VIZINHO.credential }
+      });
+
+      expect(revogado.status).toBe(401);
+      expect(ativo.status).toBe(200);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it("o consumidor previsto da fundação é PCTEC_MEU_RH, com header próprio", () => {
+    const [consumidor] = buildIdentityResolutionServiceConsumers({ meuRh: "" });
+
+    expect(consumidor?.consumerCode).toBe(MEU_RH_CONSUMER_CODE);
+    expect(consumidor?.headerName).toBe("x-meu-rh-service-credential");
+    // Nenhum segredo criado nesta entrega: o consumidor está declarado e
+    // FECHADO até o Arquiteto autorizar.
+    expect(consumidor?.credential).toBe("");
+  });
+});
+
 describe("resolução service-to-service de binding — respostas", () => {
   let server: Server;
   let baseUrl: string;
   let resolucao: FakeResolucao;
 
-  const comCredencial = { [IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_RESOLUCAO };
+  const comCredencial = { [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH };
 
   beforeEach(async () => {
     resolucao = new FakeResolucao();

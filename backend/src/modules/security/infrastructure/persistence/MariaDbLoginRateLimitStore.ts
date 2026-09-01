@@ -106,20 +106,21 @@ export class MariaDbLoginRateLimitStore implements LoginRateLimitStore {
   }
 
   /**
-   * Estorno de UMA tentativa, com piso em zero e sem tocar em contador
-   * de janela já expirada — devolver crédito a uma janela que não é mais
-   * a vigente não teria efeito nenhum, e reabriria a janela antiga.
+   * Remoção dos contadores indicados — chamada apenas com os contadores
+   * de escopo `IP_IDENTIFIER`, e apenas depois de um login `201`.
+   *
+   * `DELETE` por chave primária: atômico, e não deixa a linha zerada
+   * ocupando espaço. Não há cláusula de janela — a linha some inteira,
+   * então a próxima tentativa daquela combinação começa uma janela nova
+   * em 1, que é exatamente o efeito pretendido por "sucesso zera o
+   * contador".
+   *
+   * O contador de origem (`IP`) nunca chega aqui: quem decide o que
+   * limpar é o middleware, e a decisão está documentada no ADR-034.
    */
-  public async refund(buckets: readonly LoginRateLimitBucket[], now: Date): Promise<void> {
+  public async clear(buckets: readonly LoginRateLimitBucket[]): Promise<void> {
     for (const bucket of buckets) {
-      await this.connection.execute(
-        `UPDATE auth_rate_limit_counters
-            SET attempt_count = GREATEST(attempt_count - 1, 0),
-                updated_at = ?
-          WHERE bucket_key = ?
-            AND attempt_count > 0`,
-        [now, bucket.key]
-      );
+      await this.connection.execute(`DELETE FROM auth_rate_limit_counters WHERE bucket_key = ?`, [bucket.key]);
     }
   }
 }
