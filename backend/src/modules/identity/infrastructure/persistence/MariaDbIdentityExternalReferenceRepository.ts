@@ -137,6 +137,53 @@ export class MariaDbIdentityExternalReferenceRepository implements IdentityExter
   }
 
   /**
+   * Direção **Identity → legado** — acrescentada na fundação do PCTEC
+   * Meu RH. Sem `LIMIT`: se houvesse mais de uma linha ACTIVE para a
+   * mesma chave, `LIMIT 1` devolveria uma delas em silêncio, e num
+   * binding de identidade "uma delas" é a resposta errada. O `LIMIT`
+   * ausente é deliberado — a unicidade é responsabilidade da UNIQUE KEY
+   * `uk_id_ext_ref_active_binding` (migration 0024), e o chamador que
+   * precisa recusar ambiguidade usa `countActive...` antes.
+   */
+  public async findActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<IdentityExternalReference | undefined> {
+    const [rows] = await this.connection.execute(
+      `SELECT id, public_id, identity_public_id, system_code, entity_type, legacy_id,
+              match_method, status, created_at, updated_at
+         FROM identity_external_references
+        WHERE identity_public_id = ? AND system_code = ? AND entity_type = ? AND status = 'ACTIVE'`,
+      [identityPublicId, systemCode.toString(), entityType.toString()]
+    );
+    const rowList = rows as IdentityExternalReferenceRow[];
+    const row = rowList[0];
+    return row === undefined ? undefined : IdentityExternalReference.reconstitute(mapRowToPersistedState(row));
+  }
+
+  /**
+   * Conta as referências ACTIVE da chave de binding — usada pela
+   * fronteira service-to-service para recusar ambiguidade em vez de
+   * escolher uma candidata. Sem `LIMIT`, pelo mesmo motivo do análogo da
+   * outra direção: o objetivo é justamente saber se existe mais de uma.
+   */
+  public async countActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<number> {
+    const [rows] = await this.connection.execute(
+      `SELECT COUNT(*) AS total
+         FROM identity_external_references
+        WHERE identity_public_id = ? AND system_code = ? AND entity_type = ? AND status = 'ACTIVE'`,
+      [identityPublicId, systemCode.toString(), entityType.toString()]
+    );
+    const rowList = rows as { total: number | string }[];
+    return Number(rowList[0]?.total ?? 0);
+  }
+
+  /**
    * A checagem otimista (`existsActiveBySystemCodeEntityTypeAndLegacyId`,
    * chamada pelo Application Service antes deste `insert`) cobre o caso
    * comum com uma mensagem de erro de domínio amigável, mas **não é a

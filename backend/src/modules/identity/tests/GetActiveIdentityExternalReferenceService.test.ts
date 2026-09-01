@@ -44,6 +44,19 @@ class InMemoryIdentityExternalReferenceRepository implements IdentityExternalRef
         r.getLegacyId().equals(legacyId)
     );
   }
+  public async findActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<IdentityExternalReference | undefined> {
+    return this.stored.find(
+      (r) =>
+        r.isActive() &&
+        r.getIdentityPublicId() === identityPublicId &&
+        r.getSystemCode().equals(systemCode) &&
+        r.getEntityType().equals(entityType)
+    );
+  }
   public async insert(reference: IdentityExternalReference): Promise<void> {
     this.stored.push(reference);
   }

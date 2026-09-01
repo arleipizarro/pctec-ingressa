@@ -95,6 +95,22 @@ const envSchema = z.object({
   // /api/v1/service/helpdesk/... fica indisponivel (401), e o resto da
   // aplicacao sobe normalmente.
   INGRESSA_HELPDESK_SERVICE_CREDENTIAL: z.string().default(""),
+  // --- Credencial do namespace generico de resolucao de binding
+  //     (fundacao PCTEC Meu RH) -----------------------------------------
+  // Protege
+  // `/api/v1/service/identity-external-references/...`, que responde
+  // "qual registro do sistema X esta Identity representa?".
+  //
+  // Segredo e header PROPRIOS, separados dos do Portal e do Helpdesk:
+  // vazar um nao pode dar acesso aos outros, e revogar um nao pode
+  // derrubar os outros.
+  //
+  // Default "" pelo mesmo motivo dos demais — nunca um segredo funcional
+  // por omissao. Sem ela configurada, SO esta rota fica indisponivel
+  // (401) e todo o resto do Ingressa sobe normalmente. E esse justamente
+  // o estado esperado enquanto nenhum consumidor tiver sido autorizado
+  // pelo Arquiteto: a fundacao fica pronta e fechada.
+  INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL: z.string().default(""),
   // --- SSO first-party Ingressa -> produtos (v1.0) ---
   //
   // Base pública da UI do Ingressa. Usada para montar o link do convite

@@ -63,6 +63,9 @@ import { createPortalContextRoutes } from "../../modules/portal/http/portalConte
 import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
+import { IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
+import { createServiceIdentityExternalReferenceRoutes } from "../../modules/identity/http/serviceIdentityExternalReferenceRoutes.js";
+import { GetActiveIdentityExternalReferenceByIdentityService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceByIdentityService.js";
 import { createServicePortalOrganizationExternalReferenceRoutes } from "../../modules/portal/http/servicePortalOrganizationExternalReferenceRoutes.js";
 import { GetActiveIdentityExternalReferenceService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceService.js";
 import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
@@ -228,6 +231,20 @@ export interface CreateAppOptions {
    * `GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`.
    */
   readonly getActiveIdentityExternalReferenceService?: GetActiveIdentityExternalReferenceService;
+  /**
+   * Injetável para testes — fundação PCTEC Meu RH. Direção
+   * `Identity → (systemCode, entityType)`, servida por
+   * `GET /api/v1/service/identity-external-references/:systemCode/:entityType/identities/:identityPublicId`.
+   */
+  readonly getActiveIdentityExternalReferenceByIdentityService?: GetActiveIdentityExternalReferenceByIdentityService;
+  /**
+   * Credencial do namespace genérico de resolução de binding — separada
+   * das do Portal e do Helpdesk. Quando omitida, lida de
+   * `INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL` (env). Vazia
+   * significa "namespace indisponível" (401), nunca "aceita qualquer
+   * chamada".
+   */
+  readonly identityResolutionServiceCredential?: string;
   /**
    * Injetável para testes — P1D (v0.7.x). Quando omitido, `createApp()`
    * constrói um `ResolvePortalTenantScopeService` real, usado por
@@ -508,6 +525,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.requireOrganizationAccessService === undefined ||
     options.getActiveOrganizationExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceService === undefined ||
+    options.getActiveIdentityExternalReferenceByIdentityService === undefined ||
     options.getHelpdeskUserContextService === undefined ||
     options.resolvePortalTenantScopeService === undefined ||
     options.issueAuthorizationCodeService === undefined ||
@@ -536,6 +554,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const getActiveIdentityExternalReferenceService =
     options.getActiveIdentityExternalReferenceService ??
     new GetActiveIdentityExternalReferenceService(new MariaDbIdentityExternalReferenceRepository(sharedPool!));
+  const getActiveIdentityExternalReferenceByIdentityService =
+    options.getActiveIdentityExternalReferenceByIdentityService ??
+    new GetActiveIdentityExternalReferenceByIdentityService(
+      new MariaDbIdentityExternalReferenceRepository(sharedPool!)
+    );
   // Contexto do Helpdesk — composição, não redesenho: os quatro
   // colaboradores são os MESMOS já usados pelo Portal, nas mesmas
   // instâncias construídas acima.
@@ -559,6 +582,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const serviceCredential = options.serviceCredential ?? loadEnv().INGRESSA_PORTAL_SERVICE_CREDENTIAL;
   const helpdeskServiceCredential =
     options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
+  const identityResolutionServiceCredential =
+    options.identityResolutionServiceCredential ?? loadEnv().INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL;
 
   // --- Autenticação central + launcher (v1.0) --------------------------
   //
@@ -1071,6 +1096,35 @@ export function createApp(options: CreateAppOptions = {}): Express {
       requireOrganizationAccessService,
       resolvePortalTenantScopeService
     )
+  );
+
+  // GET /api/v1/service/identity-external-references/:systemCode/:entityType/identities/:identityPublicId
+  // — fundação PCTEC Meu RH. Direção Identity → registro no sistema de
+  // origem, a que faltava: o Ingressa já sabia responder "qual Identity
+  // corresponde a este id legado?"; agora responde também "qual registro
+  // do sistema X esta Identity representa?".
+  //
+  // Namespace PRÓPRIO, e não `/api/v1/service/portal/...`, porque o
+  // contrato é genérico: `systemCode` e `entityType` são parâmetros, e
+  // nenhum produto consumidor aparece na URI. Credencial PRÓPRIA
+  // (header `x-identity-resolution-service-credential`), pelo mesmo
+  // motivo que separa a do Helpdesk da do Portal — vazar uma não pode
+  // dar acesso às outras.
+  //
+  // Enquanto `INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL` não
+  // estiver configurada, este namespace responde 401 a tudo: a fundação
+  // fica pronta e FECHADA até o Arquiteto autorizar um consumidor.
+  //
+  // Nunca browser-facing: não há cookie de sessão que abra esta rota, e
+  // nenhum caminho de código a monta sob `/api/v1/portal` ou qualquer
+  // outro namespace de navegador.
+  app.use(
+    "/api/v1/service/identity-external-references",
+    createRequireServiceCredential(
+      identityResolutionServiceCredential,
+      IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME
+    ),
+    createServiceIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceByIdentityService)
   );
 
   // POST /api/v1/service/sso/token — troca do código pelo backend do

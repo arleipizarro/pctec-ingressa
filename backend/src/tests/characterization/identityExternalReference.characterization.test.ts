@@ -89,6 +89,24 @@ class RepositorioComInvarianteFutura implements IdentityExternalReferenceReposit
     );
   }
 
+  /**
+   * Direção Identity → legado, acrescentada na FASE 5. O dublê passou a
+   * implementá-la porque o CONTRATO passou a exigi-la; nenhuma asserção
+   * deste arquivo mudou por causa disso.
+   */
+  public async findActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<IdentityExternalReference | undefined> {
+    return this.ativas().find(
+      (referencia) =>
+        referencia.getIdentityPublicId() === identityPublicId &&
+        referencia.getSystemCode().toString() === systemCode.toString() &&
+        referencia.getEntityType().toString() === entityType.toString()
+    );
+  }
+
   public async insert(referencia: IdentityExternalReference): Promise<void> {
     const colideNaChaveDeHoje = this.ativas().some(
       (existente) =>

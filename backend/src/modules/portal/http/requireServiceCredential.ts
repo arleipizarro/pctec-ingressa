@@ -15,6 +15,28 @@ export const SERVICE_CREDENTIAL_HEADER_NAME = "x-portal-service-credential";
 export const HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME = "x-helpdesk-service-credential";
 
 /**
+ * Header do namespace GENÉRICO de resolução de `IdentityExternalReference`
+ * (`/api/v1/service/identity-external-references/...`), acrescentado na
+ * fundação do PCTEC Meu RH.
+ *
+ * Cabeçalho e segredo PRÓPRIOS, pelo mesmo motivo já registrado acima:
+ * reaproveitar a credencial do Portal faria quem tem acesso a este
+ * namespace poder chamar `/api/v1/service/portal/...` também, e revogar
+ * uma derrubaria os dois. Aqui o isolamento importa ainda mais — este
+ * namespace resolve BINDINGS DE IDENTIDADE para qualquer sistema
+ * registrado, e é a fronteira de onde um produto descobre qual registro
+ * externo uma pessoa representa.
+ *
+ * **Uma credencial para o namespace, não uma por consumidor.** Enquanto
+ * existir um único consumidor previsto, essa é a granularidade honesta;
+ * quando o segundo aparecer, a decisão a tomar é dar a ele credencial
+ * própria (novo header + novo segredo, exatamente como Portal e Helpdesk
+ * têm), e não compartilhar esta. Registrado como risco residual na
+ * entrega da fundação, para não virar decisão por omissão.
+ */
+export const IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME = "x-identity-resolution-service-credential";
+
+/**
  * Middleware — P1A.1 (v0.7.x). Protege a fronteira service-to-service
  * `/api/v1/service/portal/...`, **completamente separada** da fronteira
  * browser-facing `/api/v1/portal/...` (nunca a mesma rota, nunca o

@@ -54,3 +54,56 @@ export class IdentityExternalReferenceNotFoundError extends DomainError {
     );
   }
 }
+
+/**
+ * Não há referência `ACTIVE` de uma Identity num dado
+ * `(systemCode, entityType)` — direção **Identity → legado**, a que a
+ * fundação do PCTEC Meu RH acrescentou.
+ *
+ * Distinto de `IdentityExternalReferenceNotFoundError` (direção
+ * legado→Identity) porque a pergunta é outra e a ação corretiva também:
+ * ali falta cadastrar o mapeamento de um id legado conhecido; aqui a
+ * Identity existe e simplesmente ainda NÃO está vinculada àquele
+ * sistema/entidade — o onboarding dela naquele produto não aconteceu.
+ *
+ * Compartilha o `code` `IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND` de
+ * propósito: o contrato HTTP do consumidor é o mesmo (404, "não há
+ * vínculo"), e criar um segundo código obrigaria todo cliente a tratar
+ * duas formas da mesma resposta.
+ */
+export class IdentityExternalReferenceBindingNotFoundError extends DomainError {
+  public readonly code = "IDENTITY_EXTERNAL_REFERENCE_NOT_FOUND";
+  public readonly classification = "VALIDATION" as const;
+
+  constructor(identityPublicId: string, systemCode: string, entityType: string) {
+    super(
+      `Nenhuma IdentityExternalReference ACTIVE encontrada para identityPublicId=${identityPublicId}, systemCode=${systemCode}, entityType=${entityType}.`
+    );
+  }
+}
+
+/**
+ * Existe MAIS DE UMA referência `ACTIVE` para
+ * `(identityPublicId, systemCode, entityType)`.
+ *
+ * Estado que a UNIQUE KEY `uk_id_ext_ref_active_binding` (migration
+ * 0024) torna impossível de criar. Este erro cobre o caminho ANORMAL —
+ * restauração parcial de backup, escrita manual, banco onde a 0024
+ * ainda não foi aplicada — e existe porque a alternativa é pior:
+ * devolver "uma delas" faria o produto consumidor exibir dados
+ * trabalhistas de OUTRA pessoa. Recusar é a única resposta segura.
+ *
+ * `CONFLICT` (409), e não 404: o vínculo existe; o que está quebrado é
+ * a unicidade dele, e isso pede intervenção operacional, não
+ * cadastro.
+ */
+export class IdentityExternalReferenceBindingAmbiguousError extends DomainError {
+  public readonly code = "IDENTITY_EXTERNAL_REFERENCE_AMBIGUOUS";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(identityPublicId: string, systemCode: string, entityType: string) {
+    super(
+      `Mais de uma IdentityExternalReference ACTIVE para identityPublicId=${identityPublicId}, systemCode=${systemCode}, entityType=${entityType} — vínculo ambíguo, resolução recusada.`
+    );
+  }
+}
