@@ -13,12 +13,27 @@ import type { LegacyId } from "./value-objects/LegacyId.js";
  * checagem da invariante "no máximo 1 referência ACTIVE por
  * (system_code, entity_type, legacy_id)" antes do INSERT.
  *
- * **Diferença fundamental de direção vs Organization:**
- * - Organization: `findActiveByOrganizationSystemCodeAndEntityType` →
- *   dado `organizationPublicId`, encontra o `legacyId` (Organization→legado).
- * - Identity: `findActiveBySystemCodeEntityTypeAndLegacyId` →
- *   dado `legacyId`, encontra a `IdentityExternalReference` (legado→Identity).
- *   O Portal tem `portal_acesso.id` e precisa descobrir `Identity.publicId`.
+ * **As DUAS direções de resolução** (a segunda acrescentada na fundação
+ * do PCTEC Meu RH):
+ *
+ * - **legado → Identity**: `findActiveBySystemCodeEntityTypeAndLegacyId`
+ *   — dado o `legacyId`, encontra a referência (e com ela a Identity).
+ *   É o que o Portal precisa: ele tem `portal_acesso.id` e quer saber
+ *   qual `Identity.publicId` corresponde.
+ * - **Identity → legado**:
+ *   `findActiveByIdentityAndSystemCodeAndEntityType` — dada a Identity
+ *   já autenticada, encontra qual registro do sistema de origem ela
+ *   representa. É o que um produto que consome dados de um sistema
+ *   externo precisa: ele tem a Identity da sessão e quer o id do
+ *   registro correspondente na origem.
+ *
+ * A segunda direção é a que torna a referência um CONTRATO cross-system
+ * explícito, e é ela que exige a invariante "no máximo 1 ACTIVE por
+ * (identity_public_id, system_code, entity_type)" — garantida no banco
+ * pela migration 0024. Sem essa unicidade, "qual registro esta pessoa
+ * representa lá fora" seria uma pergunta com mais de uma resposta
+ * possível, o que num contexto de dados pessoais (folha, holerite) é
+ * falha crítica, não ambiguidade tolerável.
  */
 export interface IdentityExternalReferenceRepository {
   /**
@@ -71,5 +86,68 @@ export interface IdentityExternalReferenceRepository {
     legacyId: LegacyId
   ): Promise<number>;
 
+  /**
+   * Direção **Identity → legado**: resolve a ÚNICA referência `ACTIVE`
+   * de uma Identity num dado `(systemCode, entityType)`.
+   *
+   * `identityPublicId` é `string` simples, mesmo precedente já usado no
+   * Aggregate e em `ApplicationAccess`/`Membership` para referência
+   * cross-aggregate — a validação de formato é do chamador (VO
+   * `PublicId`), nunca do SQL.
+   *
+   * A unicidade do resultado é garantida no BANCO
+   * (`uk_id_ext_ref_active_binding`, migration 0024), não por `LIMIT 1`:
+   * o `LIMIT` esconderia uma violação em vez de a impedir.
+   */
+  findActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<IdentityExternalReference | undefined>;
+
+  /**
+   * Conta as referências ACTIVE de `(identityPublicId, systemCode,
+   * entityType)`.
+   *
+   * Mesmo papel do `countActive...` da outra direção, e pelo mesmo
+   * motivo: a UNIQUE KEY já impede duas linhas ACTIVE, e este método
+   * existe para o caminho ANORMAL — restauração parcial de backup,
+   * escrita manual, banco em que a 0024 ainda não foi aplicada. Nesses
+   * casos a fronteira service-to-service precisa RECUSAR, em vez de
+   * escolher silenciosamente uma das candidatas: escolher errado aqui
+   * significa exibir dado trabalhista de outra pessoa.
+   *
+   * Opcional no contrato para não obrigar todo test double existente a
+   * implementá-lo — mesma decisão já tomada para o `countActive...` da
+   * direção legado→Identity.
+   */
+  countActiveByIdentityAndSystemCodeAndEntityType?(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<number>;
+
   insert(reference: IdentityExternalReference): Promise<void>;
+
+  /**
+   * Persiste a transição ACTIVE → SUPERSEDED de uma referência já
+   * existente — nunca insere linha nova para representar o novo estado.
+   *
+   * **Optimistic locking pelo PRÓPRIO ESTADO, e não por coluna
+   * `version`.** As entidades desta base que mutam de vários jeitos
+   * (`Identity`, `ApplicationAccess`, `Membership`) carregam `version`
+   * porque duas escritas concorrentes podem ser sobre coisas
+   * diferentes, e sobrescrever cegamente apagaria uma delas.
+   * `IdentityExternalReference` tem UMA transição, de mão única, sem
+   * campo mutável além do status: aqui o estado esperado É a versão. O
+   * `UPDATE` é condicionado a `status = 'ACTIVE'` (compare-and-swap), e
+   * zero linhas afetadas significa exatamente o que `WHERE version = ?`
+   * significaria — alguém chegou primeiro — e lança
+   * `IdentityExternalReferenceNotActiveError`.
+   *
+   * Acrescentar uma coluna `version` daria a mesma garantia com mais
+   * schema, mais mapeamento e mais um número para manter sincronizado;
+   * a decisão está registrada no ADR-033.
+   */
+  supersede(reference: IdentityExternalReference): Promise<void>;
 }

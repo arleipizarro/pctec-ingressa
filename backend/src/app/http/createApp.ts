@@ -12,6 +12,7 @@ import { createIdentityRoutes } from "../../modules/identity/http/identityRoutes
 import { MariaDbCredentialRepository } from "../../modules/security/infrastructure/persistence/MariaDbCredentialRepository.js";
 import { MariaDbSessionRepository } from "../../modules/security/infrastructure/persistence/MariaDbSessionRepository.js";
 import { MariaDbAuditEventRepository } from "../../modules/audit/infrastructure/MariaDbAuditEventRepository.js";
+import type { AuditEventRepository } from "../../modules/audit/domain/AuditEventRepository.js";
 import { Argon2PasswordHasher } from "../../modules/security/infrastructure/hashing/Argon2PasswordHasher.js";
 import { CryptoSessionTokenGenerator } from "../../modules/security/infrastructure/token/SessionTokenGenerator.js";
 import { LoginService } from "../../modules/security/application/LoginService.js";
@@ -57,11 +58,24 @@ import { GetPortalOrganizationCoverageService } from "../../modules/organization
 import { LinkPortalOrganizationReferenceService } from "../../modules/organization/application/LinkPortalOrganizationReferenceService.js";
 import { GetActiveOrganizationExternalReferenceService } from "../../modules/organization/application/GetActiveOrganizationExternalReferenceService.js";
 import { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
+import { RequirePortalOrganizationContextPolicy } from "../../modules/portal/application/RequirePortalOrganizationContextPolicy.js";
 import { RequireOrganizationAccessService } from "../../modules/portal/application/RequireOrganizationAccessService.js";
 import { createPortalContextRoutes } from "../../modules/portal/http/portalContextRoutes.js";
 import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
+import { createLoginRateLimitMiddleware } from "../../modules/security/http/loginRateLimit.js";
+import { createClientIpResolver, type ClientIpResolver } from "../../modules/security/http/resolveClientIp.js";
+import { LoginRateLimitPolicy } from "../../modules/security/domain/LoginRateLimitPolicy.js";
+import type { LoginRateLimitStore } from "../../modules/security/domain/LoginRateLimitStore.js";
+import { MariaDbLoginRateLimitStore } from "../../modules/security/infrastructure/persistence/MariaDbLoginRateLimitStore.js";
+import {
+  createRequireOneOfServiceCredentials,
+  type ServiceCredentialConsumer
+} from "../../modules/portal/http/requireServiceCredential.js";
+import { buildIdentityResolutionServiceConsumers } from "../../modules/identity/http/identityResolutionServiceConsumers.js";
+import { createServiceIdentityExternalReferenceRoutes } from "../../modules/identity/http/serviceIdentityExternalReferenceRoutes.js";
+import { GetActiveIdentityExternalReferenceByIdentityService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceByIdentityService.js";
 import { createServicePortalOrganizationExternalReferenceRoutes } from "../../modules/portal/http/servicePortalOrganizationExternalReferenceRoutes.js";
 import { GetActiveIdentityExternalReferenceService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceService.js";
 import { MariaDbIdentityExternalReferenceRepository } from "../../modules/identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
@@ -227,6 +241,47 @@ export interface CreateAppOptions {
    * `GET /api/v1/service/portal/identity-external-references/PCTEC_PORTAL/portal_acesso/:legacyId`.
    */
   readonly getActiveIdentityExternalReferenceService?: GetActiveIdentityExternalReferenceService;
+  /**
+   * Injetável para testes — fundação PCTEC Meu RH. Direção
+   * `Identity → (systemCode, entityType)`, servida por
+   * `GET /api/v1/service/identity-external-references/:systemCode/:entityType/identities/:identityPublicId`.
+   */
+  readonly getActiveIdentityExternalReferenceByIdentityService?: GetActiveIdentityExternalReferenceByIdentityService;
+  /**
+   * Consumidores autorizados do namespace genérico de resolução de
+   * binding, **cada um com credencial e header próprios** — nunca uma
+   * chave universal do namespace. Quando omitido, a lista é montada a
+   * partir do ambiente por
+   * `buildIdentityResolutionServiceConsumers` (hoje: só `PCTEC_MEU_RH`,
+   * a partir de `INGRESSA_MEU_RH_SERVICE_CREDENTIAL`).
+   *
+   * Lista vazia — ou todos os consumidores sem segredo configurado —
+   * significa "namespace indisponível" (401), nunca "aceita qualquer
+   * chamada".
+   */
+  readonly identityResolutionServiceConsumers?: readonly ServiceCredentialConsumer[];
+  /**
+   * Injetável para testes — D8. Quando omitido, `createApp()` constrói
+   * um `MariaDbLoginRateLimitStore` sobre o pool compartilhado.
+   */
+  readonly loginRateLimitStore?: LoginRateLimitStore;
+  /**
+   * Injetável para testes — permite exercitar a política com janelas e
+   * tetos pequenos, e com relógio controlado, sem depender de tempo real.
+   */
+  readonly loginRateLimitPolicy?: LoginRateLimitPolicy;
+  /** Injetável para testes — relógio do limitador de login. */
+  readonly loginRateLimitClock?: () => Date;
+  /** Injetável para testes — permite asseverar o evento de bloqueio (D8/FASE 9). */
+  readonly loginRateLimitAuditEventRepository?: AuditEventRepository;
+  /**
+   * Injetável para testes — origem da requisição vista pelo limitador.
+   * Quando omitido, `createApp()` usa `createClientIpResolver` sobre
+   * `TRUSTED_PROXY_HOP_COUNT`, que é o caminho de produção. Existe para
+   * que um teste possa provar que origens DIFERENTES não compartilham
+   * contador sem precisar de duas interfaces de rede.
+   */
+  readonly loginRateLimitClientIpResolver?: ClientIpResolver;
   /**
    * Injetável para testes — P1D (v0.7.x). Quando omitido, `createApp()`
    * constrói um `ResolvePortalTenantScopeService` real, usado por
@@ -507,6 +562,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.requireOrganizationAccessService === undefined ||
     options.getActiveOrganizationExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceService === undefined ||
+    options.getActiveIdentityExternalReferenceByIdentityService === undefined ||
+    options.loginRateLimitStore === undefined ||
     options.getHelpdeskUserContextService === undefined ||
     options.resolvePortalTenantScopeService === undefined ||
     options.issueAuthorizationCodeService === undefined ||
@@ -535,6 +592,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const getActiveIdentityExternalReferenceService =
     options.getActiveIdentityExternalReferenceService ??
     new GetActiveIdentityExternalReferenceService(new MariaDbIdentityExternalReferenceRepository(sharedPool!));
+  const getActiveIdentityExternalReferenceByIdentityService =
+    options.getActiveIdentityExternalReferenceByIdentityService ??
+    new GetActiveIdentityExternalReferenceByIdentityService(
+      new MariaDbIdentityExternalReferenceRepository(sharedPool!)
+    );
   // Contexto do Helpdesk — composição, não redesenho: os quatro
   // colaboradores são os MESMOS já usados pelo Portal, nas mesmas
   // instâncias construídas acima.
@@ -558,6 +620,43 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const serviceCredential = options.serviceCredential ?? loadEnv().INGRESSA_PORTAL_SERVICE_CREDENTIAL;
   const helpdeskServiceCredential =
     options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
+  const identityResolutionServiceConsumers =
+    options.identityResolutionServiceConsumers ??
+    buildIdentityResolutionServiceConsumers({ meuRh: loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL });
+
+  // --- Limitação de tentativas de login (D8) ---------------------------
+  //
+  // Contadores em MariaDB, e nunca em memória do processo: o Ingressa
+  // pode subir com mais de um worker, e um contador local viraria
+  // "limite × workers" sem nenhum sinal de que a garantia mudou. Ver
+  // `LoginRateLimitStore` e a migration 0025.
+  const envRateLimit = loadEnv();
+  const loginRateLimitPolicy =
+    options.loginRateLimitPolicy ??
+    new LoginRateLimitPolicy({
+      enabled: envRateLimit.LOGIN_RATE_LIMIT_ENABLED,
+      windowSeconds: envRateLimit.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+      maxAttemptsPerIp: envRateLimit.LOGIN_RATE_LIMIT_MAX_PER_IP,
+      maxAttemptsPerIpIdentifier: envRateLimit.LOGIN_RATE_LIMIT_MAX_PER_IP_IDENTIFIER
+    });
+  const loginRateLimitStore = options.loginRateLimitStore ?? new MariaDbLoginRateLimitStore(sharedPool!);
+  // Sem pool (teste que injeta tudo), a auditoria do bloqueio vira
+  // objeto nulo: o limitador continua limitando, que é a garantia; o
+  // registro do bloqueio é observabilidade e pode faltar num cenário
+  // que não tem banco nenhum.
+  const loginRateLimitAuditEventRepository: AuditEventRepository =
+    options.loginRateLimitAuditEventRepository ??
+    (sharedPool !== undefined
+      ? new MariaDbAuditEventRepository(sharedPool)
+      : { insert: async () => undefined, insertMany: async () => undefined });
+  const loginRateLimit = createLoginRateLimitMiddleware({
+    policy: loginRateLimitPolicy,
+    store: loginRateLimitStore,
+    auditEventRepository: loginRateLimitAuditEventRepository,
+    resolveClientIp:
+      options.loginRateLimitClientIpResolver ?? createClientIpResolver(envRateLimit.TRUSTED_PROXY_HOP_COUNT),
+    ...(options.loginRateLimitClock !== undefined ? { now: options.loginRateLimitClock } : {})
+  });
 
   // --- Autenticação central + launcher (v1.0) --------------------------
   //
@@ -571,7 +670,12 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const env = loadEnv();
   const sso = composeSso({
     portalRedirectUris: env.SSO_PORTAL_REDIRECT_URIS,
-    portalLaunchUrl: env.SSO_PORTAL_LAUNCH_URL
+    portalLaunchUrl: env.SSO_PORTAL_LAUNCH_URL,
+    // A exigência de contexto organizacional é do PRODUTO Portal e é
+    // declarada aqui, na composição — o módulo `sso` não conhece
+    // Membership, Organization nem `GetPortalContextService`. Reaproveita
+    // a MESMA instância que serve `/api/v1/portal/context`.
+    portalIssuancePolicies: [new RequirePortalOrganizationContextPolicy(getPortalContextService)]
   });
   const unitOfWork = sharedPool === undefined ? undefined : new MariaDbUnitOfWork(sharedPool);
 
@@ -584,7 +688,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
       (c) => new MariaDbAuthorizationCodeRepository(c),
       (c) => new MariaDbAuditEventRepository(c),
       authorizeApplicationAccessService,
-      getPortalContextService,
+      sso.issuancePolicyRegistry,
       new CryptoAuthorizationCodeGenerator(),
       env.SSO_AUTHORIZATION_CODE_TTL_SECONDS
     );
@@ -678,7 +782,29 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   app.use("/api/v1/identities", createIdentityRoutes(getIdentityByPublicId));
-  app.use("/api/v1/sessions", createSessionRoutes(loginService, logoutService, sessionCookieConfig, allowedOrigins));
+  // POST /api/v1/sessions — protegido por limitação de tentativas (D8).
+  //
+  // O middleware vem ANTES da rota, e portanto antes de qualquer
+  // Argon2id: quando o teto já estourou, nada caro chega a acontecer.
+  // Ele não consulta `identities` em momento nenhum, então não tem como
+  // — nem para si mesmo — distinguir e-mail cadastrado de e-mail
+  // inventado.
+  //
+  // Montado no `app.use` do prefixo, e não dentro do router: o
+  // `DELETE /current` (logout) é uma operação autenticada por cookie,
+  // com CSRF próprio, e não faz sentido consumir orçamento de
+  // adivinhação de senha — por isso o middleware verifica o método.
+  app.use(
+    "/api/v1/sessions",
+    (req: RequestWithCorrelationId, res: Response, next: NextFunction) => {
+      if (req.method !== "POST" || req.path !== "/") {
+        next();
+        return;
+      }
+      loginRateLimit(req, res, next);
+    },
+    createSessionRoutes(loginService, logoutService, sessionCookieConfig, allowedOrigins)
+  );
   // GET /api/v1/me — protegida por requireAuthenticatedSession, montado
   // ANTES do router de fato (v0.6.x, Fase E). Nunca resolve
   // ApplicationAccess/ADMIN/roles — só autenticação (task, seção 13).
@@ -1065,6 +1191,38 @@ export function createApp(options: CreateAppOptions = {}): Express {
       requireOrganizationAccessService,
       resolvePortalTenantScopeService
     )
+  );
+
+  // GET /api/v1/service/identity-external-references/:systemCode/:entityType/identities/:identityPublicId
+  // — fundação PCTEC Meu RH. Direção Identity → registro no sistema de
+  // origem, a que faltava: o Ingressa já sabia responder "qual Identity
+  // corresponde a este id legado?"; agora responde também "qual registro
+  // do sistema X esta Identity representa?".
+  //
+  // Namespace PRÓPRIO, e não `/api/v1/service/portal/...`, porque o
+  // contrato é genérico: `systemCode` e `entityType` são parâmetros, e
+  // nenhum produto consumidor aparece na URI.
+  //
+  // A rota é genérica; a CREDENCIAL não é. Cada consumidor se apresenta
+  // com header e segredo PRÓPRIOS — mesma regra que já separa Helpdesk
+  // de Portal, aqui aplicada a uma fronteira que nasceu prevendo mais de
+  // um consumidor. Uma chave única do namespace faria o primeiro
+  // consumidor autorizado entregá-la a todos os seguintes: vazar a de um
+  // daria acesso ao que todos veem, revogar a de um derrubaria todos, e
+  // a auditoria nunca diria quem chamou.
+  //
+  // Enquanto NENHUM consumidor tiver segredo configurado — o estado de
+  // hoje, com `INGRESSA_MEU_RH_SERVICE_CREDENTIAL` vazia e a Application
+  // `PCTEC_MEU_RH` sequer registrada —, este namespace responde 401 a
+  // tudo: a fundação fica pronta e FECHADA até o Arquiteto autorizar.
+  //
+  // Nunca browser-facing: não há cookie de sessão que abra esta rota, e
+  // nenhum caminho de código a monta sob `/api/v1/portal` ou qualquer
+  // outro namespace de navegador.
+  app.use(
+    "/api/v1/service/identity-external-references",
+    createRequireOneOfServiceCredentials(identityResolutionServiceConsumers),
+    createServiceIdentityExternalReferenceRoutes(getActiveIdentityExternalReferenceByIdentityService)
   );
 
   // POST /api/v1/service/sso/token — troca do código pelo backend do
