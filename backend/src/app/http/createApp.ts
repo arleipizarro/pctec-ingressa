@@ -12,6 +12,7 @@ import { createIdentityRoutes } from "../../modules/identity/http/identityRoutes
 import { MariaDbCredentialRepository } from "../../modules/security/infrastructure/persistence/MariaDbCredentialRepository.js";
 import { MariaDbSessionRepository } from "../../modules/security/infrastructure/persistence/MariaDbSessionRepository.js";
 import { MariaDbAuditEventRepository } from "../../modules/audit/infrastructure/MariaDbAuditEventRepository.js";
+import type { AuditEventRepository } from "../../modules/audit/domain/AuditEventRepository.js";
 import { Argon2PasswordHasher } from "../../modules/security/infrastructure/hashing/Argon2PasswordHasher.js";
 import { CryptoSessionTokenGenerator } from "../../modules/security/infrastructure/token/SessionTokenGenerator.js";
 import { LoginService } from "../../modules/security/application/LoginService.js";
@@ -63,6 +64,11 @@ import { createPortalContextRoutes } from "../../modules/portal/http/portalConte
 import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
 import { createOrganizationExternalReferenceRoutes } from "../../modules/portal/http/organizationExternalReferenceRoutes.js";
 import { createRequireServiceCredential } from "../../modules/portal/http/requireServiceCredential.js";
+import { createLoginRateLimitMiddleware } from "../../modules/security/http/loginRateLimit.js";
+import { createClientIpResolver } from "../../modules/security/http/resolveClientIp.js";
+import { LoginRateLimitPolicy } from "../../modules/security/domain/LoginRateLimitPolicy.js";
+import type { LoginRateLimitStore } from "../../modules/security/domain/LoginRateLimitStore.js";
+import { MariaDbLoginRateLimitStore } from "../../modules/security/infrastructure/persistence/MariaDbLoginRateLimitStore.js";
 import { IDENTITY_RESOLUTION_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
 import { createServiceIdentityExternalReferenceRoutes } from "../../modules/identity/http/serviceIdentityExternalReferenceRoutes.js";
 import { GetActiveIdentityExternalReferenceByIdentityService } from "../../modules/identity/application/GetActiveIdentityExternalReferenceByIdentityService.js";
@@ -245,6 +251,20 @@ export interface CreateAppOptions {
    * chamada".
    */
   readonly identityResolutionServiceCredential?: string;
+  /**
+   * Injetável para testes — D8. Quando omitido, `createApp()` constrói
+   * um `MariaDbLoginRateLimitStore` sobre o pool compartilhado.
+   */
+  readonly loginRateLimitStore?: LoginRateLimitStore;
+  /**
+   * Injetável para testes — permite exercitar a política com janelas e
+   * tetos pequenos, e com relógio controlado, sem depender de tempo real.
+   */
+  readonly loginRateLimitPolicy?: LoginRateLimitPolicy;
+  /** Injetável para testes — relógio do limitador de login. */
+  readonly loginRateLimitClock?: () => Date;
+  /** Injetável para testes — permite asseverar o evento de bloqueio (D8/FASE 9). */
+  readonly loginRateLimitAuditEventRepository?: AuditEventRepository;
   /**
    * Injetável para testes — P1D (v0.7.x). Quando omitido, `createApp()`
    * constrói um `ResolvePortalTenantScopeService` real, usado por
@@ -526,6 +546,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.getActiveOrganizationExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceService === undefined ||
     options.getActiveIdentityExternalReferenceByIdentityService === undefined ||
+    options.loginRateLimitStore === undefined ||
     options.getHelpdeskUserContextService === undefined ||
     options.resolvePortalTenantScopeService === undefined ||
     options.issueAuthorizationCodeService === undefined ||
@@ -584,6 +605,39 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.helpdeskServiceCredential ?? loadEnv().INGRESSA_HELPDESK_SERVICE_CREDENTIAL;
   const identityResolutionServiceCredential =
     options.identityResolutionServiceCredential ?? loadEnv().INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL;
+
+  // --- Limitação de tentativas de login (D8) ---------------------------
+  //
+  // Contadores em MariaDB, e nunca em memória do processo: o Ingressa
+  // pode subir com mais de um worker, e um contador local viraria
+  // "limite × workers" sem nenhum sinal de que a garantia mudou. Ver
+  // `LoginRateLimitStore` e a migration 0025.
+  const envRateLimit = loadEnv();
+  const loginRateLimitPolicy =
+    options.loginRateLimitPolicy ??
+    new LoginRateLimitPolicy({
+      enabled: envRateLimit.LOGIN_RATE_LIMIT_ENABLED,
+      windowSeconds: envRateLimit.LOGIN_RATE_LIMIT_WINDOW_SECONDS,
+      maxAttemptsPerIp: envRateLimit.LOGIN_RATE_LIMIT_MAX_PER_IP,
+      maxAttemptsPerIpIdentifier: envRateLimit.LOGIN_RATE_LIMIT_MAX_PER_IP_IDENTIFIER
+    });
+  const loginRateLimitStore = options.loginRateLimitStore ?? new MariaDbLoginRateLimitStore(sharedPool!);
+  // Sem pool (teste que injeta tudo), a auditoria do bloqueio vira
+  // objeto nulo: o limitador continua limitando, que é a garantia; o
+  // registro do bloqueio é observabilidade e pode faltar num cenário
+  // que não tem banco nenhum.
+  const loginRateLimitAuditEventRepository: AuditEventRepository =
+    options.loginRateLimitAuditEventRepository ??
+    (sharedPool !== undefined
+      ? new MariaDbAuditEventRepository(sharedPool)
+      : { insert: async () => undefined, insertMany: async () => undefined });
+  const loginRateLimit = createLoginRateLimitMiddleware({
+    policy: loginRateLimitPolicy,
+    store: loginRateLimitStore,
+    auditEventRepository: loginRateLimitAuditEventRepository,
+    resolveClientIp: createClientIpResolver(envRateLimit.TRUSTED_PROXY_HOP_COUNT),
+    ...(options.loginRateLimitClock !== undefined ? { now: options.loginRateLimitClock } : {})
+  });
 
   // --- Autenticação central + launcher (v1.0) --------------------------
   //
@@ -709,7 +763,29 @@ export function createApp(options: CreateAppOptions = {}): Express {
   });
 
   app.use("/api/v1/identities", createIdentityRoutes(getIdentityByPublicId));
-  app.use("/api/v1/sessions", createSessionRoutes(loginService, logoutService, sessionCookieConfig, allowedOrigins));
+  // POST /api/v1/sessions — protegido por limitação de tentativas (D8).
+  //
+  // O middleware vem ANTES da rota, e portanto antes de qualquer
+  // Argon2id: quando o teto já estourou, nada caro chega a acontecer.
+  // Ele não consulta `identities` em momento nenhum, então não tem como
+  // — nem para si mesmo — distinguir e-mail cadastrado de e-mail
+  // inventado.
+  //
+  // Montado no `app.use` do prefixo, e não dentro do router: o
+  // `DELETE /current` (logout) é uma operação autenticada por cookie,
+  // com CSRF próprio, e não faz sentido consumir orçamento de
+  // adivinhação de senha — por isso o middleware verifica o método.
+  app.use(
+    "/api/v1/sessions",
+    (req: RequestWithCorrelationId, res: Response, next: NextFunction) => {
+      if (req.method !== "POST" || req.path !== "/") {
+        next();
+        return;
+      }
+      loginRateLimit(req, res, next);
+    },
+    createSessionRoutes(loginService, logoutService, sessionCookieConfig, allowedOrigins)
+  );
   // GET /api/v1/me — protegida por requireAuthenticatedSession, montado
   // ANTES do router de fato (v0.6.x, Fase E). Nunca resolve
   // ApplicationAccess/ADMIN/roles — só autenticação (task, seção 13).

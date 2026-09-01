@@ -111,6 +111,40 @@ const envSchema = z.object({
   // o estado esperado enquanto nenhum consumidor tiver sido autorizado
   // pelo Arquiteto: a fundacao fica pronta e fechada.
   INGRESSA_IDENTITY_RESOLUTION_SERVICE_CREDENTIAL: z.string().default(""),
+  // --- Protecao contra forca bruta no login (D8, ADR-034) -------------
+  //
+  // Default LIGADO. Um limitador que so protege quando alguem lembra de
+  // ligar nao e protecao — e o dia de esquecer e sempre o dia errado.
+  // Desligar e a escotilha operacional (incidente, ordem de implantacao
+  // invertida), nunca o estado normal.
+  LOGIN_RATE_LIMIT_ENABLED: z
+    .string()
+    .default("true")
+    .transform((value) => value.toLowerCase() !== "false"),
+  // Janela de contagem. 15 minutos: longo o bastante para que uma
+  // rajada nao seja diluida, curto o bastante para que quem errou a
+  // senha algumas vezes nao fique preso a tarde inteira.
+  LOGIN_RATE_LIMIT_WINDOW_SECONDS: z.coerce.number().int().positive().max(86_400).default(900),
+  // Teto por ORIGEM. Generoso: um escritorio inteiro sai por um NAT so,
+  // e apertar aqui transformaria um dia normal em indisponibilidade
+  // para todo mundo atras daquele IP.
+  LOGIN_RATE_LIMIT_MAX_PER_IP: z.coerce.number().int().positive().max(10_000).default(60),
+  // Teto por (origem + identificador). E o limite que de fato barra
+  // adivinhacao de senha, e por isso e apertado.
+  LOGIN_RATE_LIMIT_MAX_PER_IP_IDENTIFIER: z.coerce.number().int().positive().max(10_000).default(10),
+  // Quantos proxies CONFIAVEIS existem na frente do processo.
+  //
+  // Default 0 = nao confia em X-Forwarded-For nenhum. E o unico default
+  // seguro: o header e escrito pelo cliente antes de qualquer proxy, e
+  // confiar nele sem saber a profundidade da cadeia entrega ao atacante
+  // a escolha do proprio contador — basta um header novo por tentativa.
+  //
+  // Em DEV/PRD o Ingressa fica atras de um Nginx: o valor correto la e
+  // 1. Sem esse ajuste, TODAS as requisicoes chegam como 127.0.0.1 e o
+  // contador por origem vira um contador global, que barraria a empresa
+  // inteira junto. E o unico parametro desta entrega que precisa ser
+  // conferido por ambiente.
+  TRUSTED_PROXY_HOP_COUNT: z.coerce.number().int().min(0).max(10).default(0),
   // --- SSO first-party Ingressa -> produtos (v1.0) ---
   //
   // Base pública da UI do Ingressa. Usada para montar o link do convite

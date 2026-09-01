@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 24 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 25 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -29,7 +29,8 @@ describe("loadMigrationDefinitions", () => {
       "0021_create_import_batch_items",
       "0022_create_sso_authorization_codes",
       "0023_create_identity_invitations",
-      "0024_add_identity_external_reference_active_binding_unique"
+      "0024_add_identity_external_reference_active_binding_unique",
+      "0025_create_auth_rate_limit_counters"
     ]);
 
     for (const migration of migrations) {
@@ -48,7 +49,8 @@ describe("loadMigrationDefinitions", () => {
       "0017_add_application_access_active_grant_unique",
       "0018_seed_pctec_helpdesk_application",
       "0019_add_match_method_created_from_source",
-      "0024_add_identity_external_reference_active_binding_unique"
+      "0024_add_identity_external_reference_active_binding_unique",
+      "0025_create_auth_rate_limit_counters"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
