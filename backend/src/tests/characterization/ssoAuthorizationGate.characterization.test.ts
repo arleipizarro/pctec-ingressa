@@ -41,6 +41,8 @@ import {
 } from "../../modules/authorization/tests/FakeAuthorizationRepositories.js";
 import type { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
 import { IssueAuthorizationCodeService } from "../../modules/sso/application/IssueAuthorizationCodeService.js";
+import { SsoIssuancePolicyRegistry } from "../../modules/sso/domain/SsoIssuancePolicy.js";
+import { RequirePortalOrganizationContextPolicy } from "../../modules/portal/application/RequirePortalOrganizationContextPolicy.js";
 import { ExchangeAuthorizationCodeService } from "../../modules/sso/application/ExchangeAuthorizationCodeService.js";
 import { SsoAuthorizationDeniedError } from "../../modules/sso/domain/errors/SsoErrors.js";
 import { SsoAuthorizationCodeExchangeFailedError } from "../../modules/sso/domain/errors/SsoErrors.js";
@@ -182,7 +184,15 @@ function montarPortal(
       () => codigos,
       () => auditoria,
       autorizacao,
-      contextoPortal(opcoes.organizacoes ?? 2),
+      // ÚNICA linha que a FASE 4 mudou neste arquivo: onde antes o
+      // serviço genérico recebia `GetPortalContextService` direto, agora
+      // recebe o registro de políticas, e a exigência do Portal chega
+      // por `RequirePortalOrganizationContextPolicy`. TODAS as
+      // asserções abaixo permaneceram idênticas — é isso que prova que
+      // a separação foi refatoração, e não mudança de política.
+      new SsoIssuancePolicyRegistry({
+        PCTEC_PORTAL: [new RequirePortalOrganizationContextPolicy(contextoPortal(opcoes.organizacoes ?? 2))]
+      }),
       { generate: () => "codigo-bruto-sintetico" },
       60
     ),

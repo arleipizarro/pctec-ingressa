@@ -11,6 +11,8 @@ import type { GetPortalContextService } from "../../portal/application/GetPortal
 import type { IdentityRepository } from "../../identity/domain/IdentityRepository.js";
 import { PublicId } from "../../identity/domain/value-objects/PublicId.js";
 import { IssueAuthorizationCodeService } from "../application/IssueAuthorizationCodeService.js";
+import { SsoIssuancePolicyRegistry } from "../domain/SsoIssuancePolicy.js";
+import { RequirePortalOrganizationContextPolicy } from "../../portal/application/RequirePortalOrganizationContextPolicy.js";
 import { MAX_AUTHORIZATION_CODE_TTL_SECONDS } from "../domain/AuthorizationCode.js";
 import { SsoAuthorizationDeniedError } from "../domain/errors/SsoErrors.js";
 import { ApplicationAccessDeniedError } from "../../authorization/domain/errors/AuthorizationErrors.js";
@@ -143,7 +145,9 @@ function montar(
       () => codigos,
       () => auditoria,
       new AuthorizeApplicationAccessService(aplicacoes, acessos),
-      contexto(opcoes.organizacoes ?? 2),
+      new SsoIssuancePolicyRegistry({
+        PCTEC_PORTAL: [new RequirePortalOrganizationContextPolicy(contexto(opcoes.organizacoes ?? 2))]
+      }),
       { generate: () => "codigo-bruto-sintetico" },
       opcoes.ttlSeconds ?? 60
     )

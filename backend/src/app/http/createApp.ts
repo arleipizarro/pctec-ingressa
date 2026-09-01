@@ -57,6 +57,7 @@ import { GetPortalOrganizationCoverageService } from "../../modules/organization
 import { LinkPortalOrganizationReferenceService } from "../../modules/organization/application/LinkPortalOrganizationReferenceService.js";
 import { GetActiveOrganizationExternalReferenceService } from "../../modules/organization/application/GetActiveOrganizationExternalReferenceService.js";
 import { GetPortalContextService } from "../../modules/portal/application/GetPortalContextService.js";
+import { RequirePortalOrganizationContextPolicy } from "../../modules/portal/application/RequirePortalOrganizationContextPolicy.js";
 import { RequireOrganizationAccessService } from "../../modules/portal/application/RequireOrganizationAccessService.js";
 import { createPortalContextRoutes } from "../../modules/portal/http/portalContextRoutes.js";
 import { createRequireOrganizationAccess } from "../../modules/portal/http/requireOrganizationAccess.js";
@@ -571,7 +572,12 @@ export function createApp(options: CreateAppOptions = {}): Express {
   const env = loadEnv();
   const sso = composeSso({
     portalRedirectUris: env.SSO_PORTAL_REDIRECT_URIS,
-    portalLaunchUrl: env.SSO_PORTAL_LAUNCH_URL
+    portalLaunchUrl: env.SSO_PORTAL_LAUNCH_URL,
+    // A exigência de contexto organizacional é do PRODUTO Portal e é
+    // declarada aqui, na composição — o módulo `sso` não conhece
+    // Membership, Organization nem `GetPortalContextService`. Reaproveita
+    // a MESMA instância que serve `/api/v1/portal/context`.
+    portalIssuancePolicies: [new RequirePortalOrganizationContextPolicy(getPortalContextService)]
   });
   const unitOfWork = sharedPool === undefined ? undefined : new MariaDbUnitOfWork(sharedPool);
 
@@ -584,7 +590,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
       (c) => new MariaDbAuthorizationCodeRepository(c),
       (c) => new MariaDbAuditEventRepository(c),
       authorizeApplicationAccessService,
-      getPortalContextService,
+      sso.issuancePolicyRegistry,
       new CryptoAuthorizationCodeGenerator(),
       env.SSO_AUTHORIZATION_CODE_TTL_SECONDS
     );
