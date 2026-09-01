@@ -287,6 +287,64 @@ relação envolve DUAS Organizations — parent e child — e
   de migration). Ver `OrganizationExternalReferenceDomainEvents.ts` para
   o raciocínio completo.
 
+### identity-external-reference.created
+
+- **Produtor:** bounded context `identity`.
+- **Finalidade:** notificar que uma `Identity` passou a representar um
+  sujeito de um sistema de origem (HUB/Helpdesk/Portal).
+- **Identificador da entidade:** `identity_external_reference_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `identity_external_reference_id`, `identity_id`,
+  `system_code`, `entity_type`, `match_method`.
+- **Nunca publicar:** `legacy_id` (não é identificador cross-system e
+  não deve circular fora do bounded context `identity`), e-mail, nome ou
+  CPF.
+- **Nota (ADR-033):** numa SUBSTITUIÇÃO de vínculo, este evento carrega
+  `causation_id` apontando para o `identity-external-reference.superseded`
+  que o originou, e compartilha o `correlation_id` com ele — é uma
+  operação só.
+
+### identity-external-reference.superseded
+
+- **Produtor:** bounded context `identity`.
+- **Finalidade:** notificar que um vínculo deixou de valer — por
+  correção de matching, por substituição do registro na origem, ou por
+  a pessoa ter deixado de representar aquele sujeito.
+- **Identificador da entidade:** `identity_external_reference_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `identity_external_reference_id`, `identity_id`,
+  `system_code`, `entity_type`, `reason`; e `replaced_by_id` quando
+  houve substituição.
+- **Nunca publicar:** `legacy_id`, e-mail, nome, CPF, e nenhum texto
+  livre. `reason` é enum FECHADO (`MATCH_CORRECTION`,
+  `SOURCE_RECORD_REPLACED`, `IDENTITY_OFFBOARDED`) exatamente para que
+  este evento, que é append-only, nunca receba dado pessoal digitado por
+  quem opera.
+- **Nota (ADR-033):** `SUPERSEDED` **não** é exclusão — a linha
+  permanece como histórico, e nenhuma migration ou comando de domínio
+  apaga `identity_external_references`.
+
+### auth.rate-limit.blocked
+
+- **Produtor:** `security`.
+- **Finalidade:** sinalizar que um contador de tentativas de login
+  atingiu o teto, para alerta operacional e ajuste de configuração.
+- **Identificador da entidade:** não há agregado — o que foi barrado é
+  uma requisição. `aggregate_public_id` usa um valor FIXO e documentado
+  que representa o endpoint de criação de sessão.
+- **Versão:** 1.
+- **Payload mínimo:** `scope_kind` (`IP` ou `IP_IDENTIFIER`), `limit`,
+  `window_seconds`.
+- **Nunca publicar:** IP, e-mail, senha, token — **nem o digest do
+  escopo**. O espaço de endereços IPv4 é pequeno o bastante para ser
+  percorrido inteiro em minutos, então gravar o digest de um IP é gravar
+  o IP com um passo a mais. Investigação de caso específico é trabalho do
+  log de borda, que já tem o IP legitimamente e com retenção própria.
+- **Nota (ADR-034):** emitido **apenas na transição** para bloqueado —
+  uma linha por contador por janela, nunca uma por requisição barrada.
+  Auditar toda requisição barrada faria do limitador um amplificador do
+  ataque que ele existe para conter.
+
 ### application.created
 
 - **Produtor:** bounded context `application`.
