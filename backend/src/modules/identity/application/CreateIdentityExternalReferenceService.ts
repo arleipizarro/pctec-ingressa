@@ -12,7 +12,8 @@ import { EntityType } from "../domain/value-objects/EntityType.js";
 import { LegacyId } from "../domain/value-objects/LegacyId.js";
 import {
   IdentityExternalReferenceIdentityNotFoundError,
-  IdentityExternalReferenceAlreadyExistsError
+  IdentityExternalReferenceAlreadyExistsError,
+  IdentityExternalReferenceBindingAlreadyExistsError
 } from "../domain/errors/IdentityExternalReferenceErrors.js";
 
 export interface CreateIdentityExternalReferenceRequest {
@@ -59,10 +60,21 @@ export interface CreateIdentityExternalReferenceResult {
  * Resultados de processo (UNMATCHED, AMBIGUOUS, INVALID_EMAIL) nunca
  * chegam aqui — são devolvidos pelo processo de bootstrap sem inserção.
  *
- * Referências `SUPERSEDED` NUNCA contam para a checagem de duplicidade —
- * várias linhas históricas `SUPERSEDED` para o mesmo (systemCode,
- * entityType, legacyId) coexistem livremente; só uma `ACTIVE` por vez
- * é a invariante.
+ * **Duas invariantes, não uma** (a segunda acrescentada com a migration
+ * 0024, fundação PCTEC Meu RH):
+ *
+ * - `uk_id_ext_ref_active_match` (0016) — um registro legado nunca é
+ *   reivindicado por duas Identities;
+ * - `uk_id_ext_ref_active_binding` (0024) — uma Identity nunca
+ *   representa dois registros no mesmo sistema/entidade.
+ *
+ * As duas são checadas aqui de forma otimista, cada uma com seu erro de
+ * domínio próprio, e as duas são garantidas de verdade pelo banco.
+ *
+ * Referências `SUPERSEDED` NUNCA contam para nenhuma das duas — várias
+ * linhas históricas coexistem livremente; só uma `ACTIVE` por vez é a
+ * invariante. É isso que torna a correção de um vínculo errado um
+ * SUPERSEDE, e nunca um DELETE.
  */
 export class CreateIdentityExternalReferenceService {
   public constructor(
@@ -100,6 +112,20 @@ export class CreateIdentityExternalReferenceService {
       );
       if (alreadyExists) {
         throw new IdentityExternalReferenceAlreadyExistsError();
+      }
+
+      // Invariante SIMÉTRICA (migration 0024): a Identity não pode já
+      // representar OUTRO registro neste mesmo sistema/entidade.
+      // Checagem otimista, como a de cima — a garantia real sob
+      // concorrência é `uk_id_ext_ref_active_binding`, e o repositório
+      // traduz a violação de volta para este mesmo erro de domínio.
+      const bindingAlreadyExists = await identityExternalReferenceRepository.findActiveByIdentityAndSystemCodeAndEntityType(
+        identityPublicId.toString(),
+        systemCode,
+        entityType
+      );
+      if (bindingAlreadyExists !== undefined) {
+        throw new IdentityExternalReferenceBindingAlreadyExistsError();
       }
 
       const reference = IdentityExternalReference.create({

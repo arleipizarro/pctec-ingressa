@@ -3,6 +3,7 @@ import { Membership } from "../domain/Membership.js";
 import { InvalidMembershipProfileError } from "../domain/value-objects/MembershipProfile.js";
 import { InvalidMembershipScopeError } from "../domain/value-objects/MembershipScope.js";
 import {
+  MembershipAlreadyActiveError,
   MembershipAlreadyEndedError,
   InvalidMembershipEndReasonError
 } from "../domain/errors/MembershipErrors.js";
@@ -131,18 +132,106 @@ describe("Membership — 6. superfície de mutação (G2 + P1D.1)", () => {
     expect(membership.getEndedAt()).toBeUndefined();
   });
 
-  it("end() é o ÚNICO comando de mutação — revoke()/reactivate()/update() continuam fora de escopo", () => {
-    // G2 não tinha nenhum; P1D.1 acrescentou exatamente um, o
-    // encerramento que a decisão de lifecycle já havia fechado.
-    // `reactivate()` segue fora: não há caso de uso real, e um comando
-    // sem caso de uso é desenho especulativo.
+  it("end() e reactivate() são os ÚNICOS comandos de mutação — revoke()/update()/changeScope() continuam fora de escopo", () => {
+    // G2 não tinha nenhum; P1D.1 acrescentou `end()`; a fundação do
+    // PCTEC Meu RH acrescentou `reactivate()`, que deixou de ser desenho
+    // especulativo quando apareceu o caso de uso real (ativar e
+    // desativar colaborador). Os outros três seguem fora: nenhum produto
+    // precisa deles, e o par encerrar/reativar já cobre o lifecycle
+    // inteiro previsto na decisão fechada.
     const membership = createValidMembership();
 
     expect(typeof (membership as unknown as { end?: unknown }).end).toBe("function");
+    expect(typeof (membership as unknown as { reactivate?: unknown }).reactivate).toBe("function");
     expect((membership as unknown as { revoke?: unknown }).revoke).toBeUndefined();
-    expect((membership as unknown as { reactivate?: unknown }).reactivate).toBeUndefined();
     expect((membership as unknown as { update?: unknown }).update).toBeUndefined();
     expect((membership as unknown as { changeScope?: unknown }).changeScope).toBeUndefined();
+  });
+});
+
+describe("Membership — 6.1 reactivate() (fundação PCTEC Meu RH)", () => {
+  it("INACTIVE -> ACTIVE: limpa endedAt, incrementa version e PRESERVA startedAt", () => {
+    const membership = createValidMembership();
+    const startedAt = membership.getStartedAt();
+    membership.end({ actorPublicId: ACTOR_PUBLIC_ID, reason: "desligamento", correlationId: CORRELATION_ID });
+    membership.pullDomainEvents();
+    const versionAposEncerrar = membership.getVersion();
+
+    membership.reactivate({ actorPublicId: ACTOR_PUBLIC_ID, reason: "recontratação", correlationId: CORRELATION_ID });
+
+    expect(membership.getStatus()).toBe("ACTIVE");
+    expect(membership.getEndedAt()).toBeUndefined();
+    expect(membership.getVersion()).toBe(versionAposEncerrar + 1);
+    // `startedAt` responde "desde quando esta pessoa está aqui?".
+    // Reescrevê-lo na reativação apagaria a única fonte dessa resposta.
+    expect(membership.getStartedAt()).toBe(startedAt);
+  });
+
+  it("produz membership.updated com previousStatus=INACTIVE, status=ACTIVE e endedAt=null", () => {
+    const membership = createValidMembership();
+    membership.end({ actorPublicId: ACTOR_PUBLIC_ID, reason: "desligamento", correlationId: CORRELATION_ID });
+    membership.pullDomainEvents();
+
+    membership.reactivate({ actorPublicId: ACTOR_PUBLIC_ID, reason: "recontratação", correlationId: CORRELATION_ID });
+
+    const events = membership.pullDomainEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.eventType).toBe("membership.updated");
+    expect(events[0]?.payload).toEqual({
+      membershipPublicId: membership.getPublicId().toString(),
+      identityPublicId: IDENTITY_PUBLIC_ID,
+      organizationPublicId: ORGANIZATION_PUBLIC_ID,
+      previousStatus: "INACTIVE",
+      status: "ACTIVE",
+      // `null`, e não campo ausente: quem lê a trilha precisa distinguir
+      // "reativado, sem encerramento" de "evento antigo, sem o campo".
+      endedAt: null,
+      reason: "recontratação"
+    });
+  });
+
+  it("recusa reativar vínculo que já está ACTIVE — MEMBERSHIP_ALREADY_ACTIVE, sem mutação", () => {
+    const membership = createValidMembership();
+    // O evento de criação é drenado antes: o que este teste afirma é que
+    // a recusa não produz evento NOVO, não que o agregado nunca teve um.
+    membership.pullDomainEvents();
+    const versionAntes = membership.getVersion();
+
+    // Simétrico de MEMBERSHIP_ALREADY_ENDED: tratar como sucesso
+    // esconderia "reativei o vínculo errado e o certo segue encerrado".
+    expect(() =>
+      membership.reactivate({ actorPublicId: ACTOR_PUBLIC_ID, reason: "engano", correlationId: CORRELATION_ID })
+    ).toThrowError(MembershipAlreadyActiveError);
+    expect(membership.getStatus()).toBe("ACTIVE");
+    expect(membership.getVersion()).toBe(versionAntes);
+    expect(membership.pullDomainEvents()).toHaveLength(0);
+  });
+
+  it("recusa motivo vazio — mesma exigência de end()", () => {
+    const membership = createValidMembership();
+    membership.end({ actorPublicId: ACTOR_PUBLIC_ID, reason: "desligamento", correlationId: CORRELATION_ID });
+    membership.pullDomainEvents();
+
+    expect(() =>
+      membership.reactivate({ actorPublicId: ACTOR_PUBLIC_ID, reason: "   ", correlationId: CORRELATION_ID })
+    ).toThrowError(InvalidMembershipEndReasonError);
+    expect(membership.getStatus()).toBe("INACTIVE");
+  });
+
+  it("ciclo encerrar -> reativar -> encerrar opera sempre no MESMO publicId", () => {
+    // É esta invariante que mantém `uk_membership_unique` (migration
+    // 0012, não condicionada a status) correta: nunca nasce uma segunda
+    // linha "reencarnando" o vínculo.
+    const membership = createValidMembership();
+    const publicId = membership.getPublicId().toString();
+
+    membership.end({ actorPublicId: ACTOR_PUBLIC_ID, reason: "saída", correlationId: CORRELATION_ID });
+    membership.reactivate({ actorPublicId: ACTOR_PUBLIC_ID, reason: "retorno", correlationId: CORRELATION_ID });
+    membership.end({ actorPublicId: ACTOR_PUBLIC_ID, reason: "saída definitiva", correlationId: CORRELATION_ID });
+
+    expect(membership.getPublicId().toString()).toBe(publicId);
+    expect(membership.getStatus()).toBe("INACTIVE");
+    expect(membership.getEndedAt()).toBeInstanceOf(Date);
   });
 });
 

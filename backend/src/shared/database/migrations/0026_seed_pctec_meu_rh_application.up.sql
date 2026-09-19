@@ -1,0 +1,39 @@
+-- Migration: 0026_seed_pctec_meu_rh_application
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Referência: ADR-031 §1 ("cada produto consumidor possui Application
+-- própria"). Mesmo padrão de 0007 (PCTEC_INGRESSA), 0014 (PCTEC_PORTAL)
+-- e 0018 (PCTEC_HELPDESK).
+--
+-- `PCTEC_MEU_RH` é a Application do produto PCTEC Meu RH. O CÓDIGO já
+-- existia desde a fundação (v1.x), declarado em
+-- `identityResolutionServiceConsumers.ts` como consumidor previsto — a
+-- Application, porém, nunca havia sido registrada (D9), e por isso o
+-- namespace de resolução respondia 401 a tudo. Esta migration fecha
+-- esse item: a partir daqui existe Application ativa para a qual
+-- conceder `ApplicationAccess` e emitir código SSO.
+--
+-- Registrar a Application NÃO concede acesso a ninguém. Nenhuma linha de
+-- `application_accesses` nasce aqui: quem entra no Meu RH continua sendo
+-- decidido por concessão explícita, uma a uma.
+--
+-- public_id determinístico pelo mesmo raciocínio de 0007/0014/0018: é
+-- metadado técnico estável da plataforma (não dado pessoal), precisa ser
+-- o MESMO valor entre dev/test/produção para que CLI e testes de
+-- integração o referenciem sem consultar o banco antes. UUID v4 gerado
+-- uma única vez, não derivado de dado.
+--
+-- NATUREZA: CONFIGURAÇÃO DE PLATAFORMA, NÃO DADO DE LOTE. Esta linha não
+-- pertence a `import_batch` nenhum e não é removida pelo rollback de
+-- lote nenhum (ver docs/import/ROLLBACK-COMPENSACOES.md).
+--
+-- Idempotência NÃO é responsabilidade deste SQL — é do MigrationRunner,
+-- que só executa o que ainda não está em `schema_migrations`. Nenhuma
+-- cláusula de "ignorar duplicidade": um estado divergente pré-existente
+-- deve FALHAR explicitamente (ER_DUP_ENTRY), nunca ser mascarado.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+
+INSERT INTO applications (public_id, code, name, status, version, created_at, updated_at)
+VALUES ('9a4e6d17-2c85-4b93-8e61-000000000001', 'PCTEC_MEU_RH', 'PCTEC Meu RH', 'ACTIVE', 1, UTC_TIMESTAMP(3), UTC_TIMESTAMP(3));

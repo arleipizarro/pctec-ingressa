@@ -6,13 +6,13 @@ import { PublicId as IdentityPublicId } from "../../identity/domain/value-object
 import type { AuditEventRepository } from "../../audit/domain/AuditEventRepository.js";
 import { AuditEvent } from "../../audit/domain/AuditEvent.js";
 import type { AuthorizeApplicationAccessService } from "../../authorization/application/AuthorizeApplicationAccessService.js";
-import type { GetPortalContextService } from "../../portal/application/GetPortalContextService.js";
 import type { ApplicationRepository } from "../../application/domain/ApplicationRepository.js";
 import { ApplicationCode } from "../../application/domain/value-objects/ApplicationCode.js";
 import type { AuthorizationCodeRepository } from "../domain/AuthorizationCodeRepository.js";
 import { AuthorizationCode } from "../domain/AuthorizationCode.js";
 import { createSsoAuthorizationCodeIssuedEvent } from "../domain/events/SsoDomainEvents.js";
 import { SsoAuthorizationDeniedError } from "../domain/errors/SsoErrors.js";
+import type { SsoIssuancePolicyRegistry } from "../domain/SsoIssuancePolicy.js";
 import type { AuthorizationCodeGenerator } from "../infrastructure/token/AuthorizationCodeGenerator.js";
 import { hashAuthorizationCode } from "../infrastructure/token/hashAuthorizationCode.js";
 
@@ -39,21 +39,35 @@ export interface IssueAuthorizationCodeResult {
  * Emite um código de autorização para uma Identity JÁ AUTENTICADA —
  * etapa 2/3 do fluxo SSO first-party.
  *
- * **Não reimplementa autorização.** As duas perguntas que decidem se o
- * SSO pode começar já têm dono nesta base, e são esses donos que
- * respondem aqui:
+ * **Não reimplementa autorização.** A pergunta que este serviço responde
+ * é uma só, e é genérica:
  *
- * - "esta identidade pode usar esta aplicação?" →
- *   `AuthorizeApplicationAccessService` (Application ACTIVE +
- *   ApplicationAccess GRANTED + perfil suficiente);
- * - "ela tem algum vínculo empresarial utilizável?" →
- *   `GetPortalContextService` (Membership ACTIVE + Organization ACTIVE +
- *   expansão de grupo + deduplicação).
+ *   > esta Identity pode entrar nesta Application?
  *
- * A checagem de vínculo existe porque uma sessão criada no Portal sem
- * nenhuma organização acessível não é uma sessão útil — é uma tela vazia
- * com um cookie válido. Recusar aqui devolve a pessoa ao launcher com
- * uma negativa, em vez de empurrá-la para um produto onde nada abre.
+ * Respondê-la é: Identity ACTIVE, `login_enabled`, Application ACTIVE,
+ * `ApplicationAccess` GRANTED e perfil suficiente — este último trio
+ * delegado a `AuthorizeApplicationAccessService`, que já é o dono da
+ * regra.
+ *
+ * **Exigências de PRODUTO não moram aqui.** "Esta sessão será útil
+ * quando a pessoa entrar?" é pergunta de cada produto, e cada produto a
+ * declara como `SsoIssuancePolicy` no registro
+ * (`SsoIssuancePolicyRegistry`). O Portal declara que precisa de
+ * contexto organizacional (`RequirePortalOrganizationContextPolicy`);
+ * outro produto pode declarar lista vazia, e as invariantes acima lhe
+ * bastam.
+ *
+ * Até a fundação do Meu RH, a exigência do Portal vivia AQUI, e portanto
+ * valia para todo cliente SSO — presente ou futuro — sem ninguém ter
+ * decidido isso. Um produto de RH, cuja pessoa é funcionária e não
+ * representante de cliente, seria recusado por não ter Membership.
+ * A separação corrige a atribuição de responsabilidade sem afrouxar
+ * nada: o Portal continua exigindo exatamente o que exigia, na mesma
+ * etapa do fluxo.
+ *
+ * Não há, em nenhum ponto deste módulo, um `if` sobre o código da
+ * aplicação: o serviço pergunta ao registro e obedece ao que a
+ * composição declarou.
  *
  * `Identity ACTIVE` e `login_enabled` são reverificados mesmo já tendo
  * sido verificados na validação da sessão: entre um clique e outro o
@@ -71,7 +85,7 @@ export class IssueAuthorizationCodeService {
     private readonly authorizationCodeRepositoryFactory: (connection: Queryable) => AuthorizationCodeRepository,
     private readonly auditEventRepositoryFactory: (connection: Queryable) => AuditEventRepository,
     private readonly authorizeApplicationAccessService: AuthorizeApplicationAccessService,
-    private readonly getPortalContextService: GetPortalContextService,
+    private readonly issuancePolicyRegistry: SsoIssuancePolicyRegistry,
     private readonly codeGenerator: AuthorizationCodeGenerator,
     private readonly ttlSeconds: number
   ) {}
@@ -89,9 +103,12 @@ export class IssueAuthorizationCodeService {
       requiredProfile: request.requiredProfile
     });
 
-    const context = await this.getPortalContextService.execute(identityPublicId);
-    if (context.organizations.length === 0) {
-      throw new SsoAuthorizationDeniedError("NO_USABLE_MEMBERSHIP");
+    // Exigências declaradas pelo PRODUTO — avaliadas depois das
+    // invariantes de segurança acima, nunca no lugar delas. Um cliente
+    // sem declaração é erro de composição e recusa fechada
+    // (`requireFor`), nunca "nenhuma exigência".
+    for (const policy of this.issuancePolicyRegistry.requireFor(request.applicationCode)) {
+      await policy.evaluate({ identityPublicId, applicationCode: request.applicationCode, correlationId });
     }
 
     const rawCode = this.codeGenerator.generate();

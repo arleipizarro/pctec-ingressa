@@ -78,6 +78,30 @@ class InMemoryIdentityExternalReferenceRepository implements IdentityExternalRef
         r.getLegacyId().equals(legacyId)
     );
   }
+  public async findActiveByIdentityAndSystemCodeAndEntityType(
+    identityPublicId: string,
+    systemCode: SystemCode,
+    entityType: EntityType
+  ): Promise<IdentityExternalReference | undefined> {
+    return this.stored.find(
+      (r) =>
+        r.isActive() &&
+        r.getIdentityPublicId() === identityPublicId &&
+        r.getSystemCode().equals(systemCode) &&
+        r.getEntityType().equals(entityType)
+    );
+  }
+  /**
+   * Supersede acrescentado com o lifecycle (FASE 7) — o dublê passou a
+   * implementá-lo porque o CONTRATO passou a exigi-lo.
+   */
+  public async supersede(reference: IdentityExternalReference): Promise<void> {
+    const indice = this.stored.findIndex((r) => r.getPublicId().equals(reference.getPublicId()));
+    if (indice >= 0) {
+      this.stored[indice] = reference;
+    }
+  }
+
   public async insert(reference: IdentityExternalReference): Promise<void> {
     this.stored.push(reference);
   }

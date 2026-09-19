@@ -1,0 +1,94 @@
+-- Migration: 0024_add_identity_external_reference_active_binding_unique
+-- Direção: UP
+-- Motor: MariaDB 10.11, InnoDB, utf8mb4, utf8mb4_unicode_520_ci
+--
+-- Referência: fundação PCTEC Meu RH — decisão D5 do ADR de binding
+-- Identity ↔ sujeito em sistema externo (ADR-033).
+--
+-- PROBLEMA QUE ESTA MIGRATION FECHA
+--
+-- A 0016 garante no banco no máximo UMA referência ACTIVE por
+-- (system_code, entity_type, legacy_id) — a chave `uk_id_ext_ref_active_match`,
+-- sobre `active_match_key`. Ou seja: um registro do sistema legado nunca
+-- é reivindicado por duas Identities ao mesmo tempo.
+--
+-- A invariante SIMÉTRICA nunca existiu: NADA impedia que a mesma
+-- Identity tivesse duas referências ACTIVE para o MESMO sistema e a
+-- MESMA entidade, apontando para registros legados diferentes:
+--
+--     Identity A ── PCTEC_HUB / rh_colaboradores / 10  ACTIVE
+--                └─ PCTEC_HUB / rh_colaboradores / 20  ACTIVE
+--
+-- Enquanto a referência era lida só na direção legado→Identity, isso
+-- passava despercebido: aquela leitura parte do legacy_id, e a chave da
+-- 0016 já a torna unívoca. A direção Identity→legado, acrescentada nesta
+-- entrega, faz a pergunta oposta — "qual registro esta pessoa
+-- representa lá fora?" — e ali as duas linhas acima são DUAS respostas
+-- para uma pergunta que só admite uma.
+--
+-- Num sistema de RH isso não é ambiguidade tolerável: é exibir holerite,
+-- salário e dados de outra pessoa. A garantia precisa estar no BANCO, e
+-- não na aplicação consumidora — nenhum produto pode ser obrigado a
+-- confiar que o Ingressa manteve a disciplina.
+--
+-- SOLUÇÃO — FLAG GERADA NUMÉRICA + UNIQUE KEY COMPOSTA
+--
+-- Mesmo padrão da 0017, e não o `CONCAT(...)` de 0013/0016. O motivo é o
+-- mesmo documentado lá: `identity_public_id` é CHAR(36), e o MariaDB
+-- 10.11 RECUSA indexar coluna gerada cuja expressão passe uma coluna
+-- CHAR por função de string:
+--
+--   ERROR 1901 (HY000): Function or expression '...' cannot be used in
+--   the GENERATED ALWAYS AS clause of `...`
+--
+-- porque a leitura de CHAR dentro de função de string depende de
+-- `PAD_CHAR_TO_FULL_LENGTH`, sql_mode de SESSÃO — a expressão deixa de
+-- ser estável entre conexões e o índice, portanto, inválido.
+--
+-- A flag numérica evita a função de string por completo: o único termo
+-- gerado deriva do ENUM `status`, e `identity_public_id`, `system_code` e
+-- `entity_type` entram DIRETAMENTE na UNIQUE KEY, sem transformação.
+-- InnoDB trata cada NULL como distinto numa UNIQUE KEY, então:
+--   - status = 'ACTIVE'      -> flag = 1    -> no máximo 1 linha por chave
+--   - status = 'SUPERSEDED'  -> flag = NULL -> quantas linhas históricas
+--                               forem necessárias, sem colidir entre si
+--                               nem com a linha ACTIVE
+--
+-- É exatamente isso que faz SUPERSEDE ser possível sem apagar histórico,
+-- e é por isso que a correção de um vínculo errado nunca precisa de
+-- DELETE.
+--
+-- POR QUE A INVARIANTE É GENÉRICA, E NÃO SÓ PARA PCTEC_HUB
+--
+-- A tentação seria restringir a chave a `PCTEC_HUB / rh_colaboradores`,
+-- que é o caso que motivou a mudança. Seria errado: "uma Identity
+-- representa no máximo um sujeito por sistema/entidade" é verdade
+-- SEMÂNTICA de `IdentityExternalReference` inteira, não uma
+-- particularidade do HUB. Uma pessoa não é dois usuários do Helpdesk,
+-- nem dois `portal_acesso`. Restringir por sistema deixaria a mesma
+-- falha aberta nos demais, e sinalizaria que a regra é acidental.
+--
+-- Verificado contra o dado existente (DEV, 2026-09-01): 21 referências,
+-- 21 ACTIVE, 0 SUPERSEDED, 0 duplicidades por
+-- (identity_public_id, system_code, entity_type).
+--
+-- PREFLIGHT OBRIGATÓRIO ANTES DE APLICAR (inclusive em PRD)
+--
+-- Havendo duplicatas, o ALTER falha com ER_DUP_ENTRY (errno 1062) e a
+-- mensagem do MariaDB não diz QUAIS linhas colidem. Rode antes:
+--
+--     node dist/cli/preflight-identity-external-reference-binding-uniqueness.js
+--
+-- Ele imprime o panorama (total/ACTIVE/SUPERSEDED/duplicidades), lista
+-- cada combinação duplicada e sai com código 1 quando encontra alguma.
+-- A correção é por SUPERSEDE, nunca por DELETE.
+--
+-- Exatamente UMA instrução executável neste arquivo (assertSingleStatement).
+
+ALTER TABLE identity_external_references
+    ADD COLUMN active_binding_flag TINYINT UNSIGNED GENERATED ALWAYS AS (
+        CASE WHEN status = 'ACTIVE' THEN 1 ELSE NULL END
+    ) VIRTUAL
+        COMMENT 'Coluna gerada, uso exclusivo de uk_id_ext_ref_active_binding abaixo - nunca lida/gravada diretamente pela aplicacao. 1 quando status = ACTIVE, NULL caso contrario. Flag numerica (e nao chave-texto concatenada como em 0013/0016) porque identity_public_id e CHAR(36) e o MariaDB 10.11 recusa indexar coluna gerada que passe CHAR por funcao de string (ERROR 1901). Ver 0017, mesma tecnica e mesmo motivo.',
+    ADD UNIQUE KEY uk_id_ext_ref_active_binding (identity_public_id, system_code, entity_type, active_binding_flag)
+        COMMENT 'Garante, NO PROPRIO BANCO e sem janela de corrida (TOCTOU), no maximo 1 linha ACTIVE por (identity_public_id, system_code, entity_type). Invariante critica: com duas linhas ACTIVE, a pergunta "qual registro esta Identity representa neste sistema?" teria duas respostas, e num contexto de dados trabalhistas a resposta errada e o holerite de outra pessoa. Linhas SUPERSEDED tem active_binding_flag NULL e nunca colidem - e por isso que corrigir um vinculo errado e supersede + novo insert, nunca DELETE. Complementa uk_id_ext_ref_active_match (0016), que garante a invariante simetrica: um registro legado nunca e reivindicado por duas Identities.';

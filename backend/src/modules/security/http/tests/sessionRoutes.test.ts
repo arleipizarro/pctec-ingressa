@@ -2,6 +2,7 @@ import type { Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../../../app/http/createApp.js";
+import { InMemoryLoginRateLimitStore } from "../../tests/InMemoryLoginRateLimitStore.js";
 import { AuthenticationFailedError } from "../../domain/errors/AuthenticationErrors.js";
 import { LoginService } from "../../application/LoginService.js";
 import { SESSION_COOKIE_NAME } from "../sessionCookie.js";
@@ -55,7 +56,15 @@ class BrokenLoginService {
 async function startTestServer(loginService: FakeLoginService | BrokenLoginService, secure = false) {
   const app = createApp({
     loginService: loginService as unknown as LoginService,
-    sessionCookieConfig: { secure }
+    sessionCookieConfig: { secure },
+    // Estes testes caracterizam a SEMÂNTICA do login (401 genérico,
+    // nenhuma pista sobre política de senha, cookie correto) — não o
+    // limitador. Um contador em memória, com tetos padrão bem acima do
+    // que estas suítes disparam, mantém o limitador fora do caminho sem
+    // desligá-lo: se algum dia ele passar a interferir aqui, o teste
+    // falha, que é o sinal certo. O limitador em si tem suíte própria
+    // (`loginRateLimit.test.ts`).
+    loginRateLimitStore: new InMemoryLoginRateLimitStore()
   });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -409,7 +418,11 @@ describe("POST /api/v1/sessions — [PROVA END-TO-END, revisão crítica, item 1
       { generate: () => "token-nao-deveria-ser-usado" },
       3600
     );
-    const app = createApp({ loginService, sessionCookieConfig: { secure: false } });
+    const app = createApp({
+      loginService,
+      sessionCookieConfig: { secure: false },
+      loginRateLimitStore: new InMemoryLoginRateLimitStore()
+    });
     const server = app.listen(0);
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address();

@@ -71,6 +71,23 @@ export class MembershipAlreadyEndedError extends DomainError {
   }
 }
 
+/**
+ * Reativação pedida sobre um vínculo que já está ACTIVE.
+ *
+ * Simétrico de `MEMBERSHIP_ALREADY_ENDED`, e pelo mesmo motivo: tratar
+ * como sucesso esconderia o caso real de "reativei o vínculo errado e o
+ * certo continua encerrado". `CONFLICT` (409) — o comando é válido, o
+ * estado atual é que não o comporta.
+ */
+export class MembershipAlreadyActiveError extends DomainError {
+  public readonly code = "MEMBERSHIP_ALREADY_ACTIVE";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor() {
+    super("Este Membership já está ativo.");
+  }
+}
+
 /** Membership inexistente para o `publicId` informado — P1D.1. */
 export class MembershipNotFoundError extends DomainError {
   public readonly code = "MEMBERSHIP_NOT_FOUND";

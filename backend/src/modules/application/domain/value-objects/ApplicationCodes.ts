@@ -67,3 +67,26 @@ export const PCTEC_HELPDESK_APPLICATION_CODE = "PCTEC_HELPDESK" as const;
 export const PCTEC_HELPDESK_APPLICATION_NAME = "PCTEC Helpdesk" as const;
 
 export const PCTEC_HELPDESK_APPLICATION_PUBLIC_ID = "5c7a2b91-1e6d-4f38-b7a4-000000000001" as const;
+
+/**
+ * `PCTEC_MEU_RH` — Application própria do produto PCTEC Meu RH, pelo
+ * mesmo princípio de ADR-031 §1 já aplicado a Portal e Helpdesk. Nunca
+ * reaproveita nenhuma das outras três: quem tem acesso ao Meu RH não
+ * ganha Portal, Helpdesk ou administração do Ingressa por tabela
+ * nenhuma, e o contrário também não vale.
+ *
+ * O código já existia como `MEU_RH_CONSUMER_CODE` em
+ * `identityResolutionServiceConsumers.ts` desde a fundação (v1.x) — a
+ * Application em si é que só é registrada agora, na Etapa 1 do produto
+ * (migration `0026_seed_pctec_meu_rh_application.up.sql`). Enquanto ela
+ * não existia, o namespace de resolução respondia 401 a tudo.
+ *
+ * `public_id` determinístico pelo mesmo raciocínio dos três acima —
+ * metadado técnico estável, igual entre ambientes, fixado por migration.
+ * Valor deliberadamente diferente dos outros.
+ */
+export const PCTEC_MEU_RH_APPLICATION_CODE = "PCTEC_MEU_RH" as const;
+
+export const PCTEC_MEU_RH_APPLICATION_NAME = "PCTEC Meu RH" as const;
+
+export const PCTEC_MEU_RH_APPLICATION_PUBLIC_ID = "9a4e6d17-2c85-4b93-8e61-000000000001" as const;

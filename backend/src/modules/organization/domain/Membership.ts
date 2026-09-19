@@ -8,7 +8,11 @@ import {
   createMembershipCreatedEvent,
   createMembershipUpdatedEvent
 } from "./events/MembershipDomainEvents.js";
-import { MembershipAlreadyEndedError, InvalidMembershipEndReasonError } from "./errors/MembershipErrors.js";
+import {
+  MembershipAlreadyActiveError,
+  MembershipAlreadyEndedError,
+  InvalidMembershipEndReasonError
+} from "./errors/MembershipErrors.js";
 
 export type MembershipStatusValue = "ACTIVE" | "INACTIVE";
 
@@ -61,9 +65,10 @@ export interface MembershipPersistedState {
  * acrescentou `end()`** — o encerramento de vínculo que a decisão de
  * lifecycle abaixo já havia fechado e deixado fora do escopo de G2.
  * `version` passou a ser incrementada por ele, exatamente como a
- * migration previa. `reactivate()` continua fora de escopo: não houve
- * necessidade concreta, e um comando sem caso de uso real é desenho
- * especulativo. `create()` continua sempre produzindo
+ * migration previa. A **fundação do PCTEC Meu RH acrescentou
+ * `reactivate()`**: ele era desenho especulativo enquanto nenhum produto
+ * precisava dele, e deixou de ser quando o Meu RH passou a ativar e
+ * desativar colaboradores. `create()` continua sempre produzindo
  * `status=ACTIVE`/`endedAt=undefined`.
  *
  * **Decisão fechada sobre lifecycle (revisão do Product Owner, antes do
@@ -272,6 +277,82 @@ export class Membership {
         previousStatus,
         status: this.status,
         endedAt: now.toISOString(),
+        reason
+      })
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Reativação (comando ReactivateMembership — fundação PCTEC Meu RH)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Reativa o vínculo: `INACTIVE` → `ACTIVE`, com `endedAt` limpo.
+   *
+   * **Por que existe agora.** A nota de classe registrava `reactivate()`
+   * como fora de escopo porque não havia caso de uso concreto — e um
+   * comando sem caso de uso é desenho especulativo. O caso apareceu: o
+   * PCTEC Meu RH ativa e desativa colaboradores, e desativar sem poder
+   * reverter transforma um erro de clique em um vínculo perdido para
+   * sempre.
+   *
+   * **Opera sempre sobre a MESMA linha**, como `end()` — é exatamente o
+   * ciclo encerrar→reativar que a decisão de lifecycle já previa, e é
+   * por isso que `uk_membership_unique` (migration 0012, não condicionada
+   * a status) continua correta sem nenhuma alteração.
+   *
+   * `startedAt` NÃO é reescrito. Ele marca quando o vínculo começou, não
+   * quando ele foi retomado pela última vez; sobrescrevê-lo apagaria a
+   * única informação que responde "desde quando esta pessoa está aqui?".
+   * A retomada fica registrada em `audit_events`, via o evento emitido
+   * abaixo.
+   *
+   * Este comando **não** decide se a reativação é legítima — não conhece
+   * ApplicationAccess, não sabe se a Organization ainda está ativa e não
+   * sabe quem é o ator. Isso é responsabilidade do service chamador,
+   * exatamente como em `end()`.
+   */
+  public reactivate(props: {
+    readonly actorPublicId: string;
+    readonly reason: string;
+    readonly correlationId: string;
+    readonly causationId?: string | undefined;
+    readonly now?: Date | undefined;
+  }): void {
+    if (this.status !== "INACTIVE") {
+      throw new MembershipAlreadyActiveError();
+    }
+    const reason = props.reason.trim();
+    if (reason.length === 0) {
+      // Mesma exigência de `end()`: uma transição de lifecycle sem
+      // motivo registrado é uma transição que ninguém explica depois.
+      throw new InvalidMembershipEndReasonError();
+    }
+
+    const now = props.now ?? new Date();
+    const previousStatus = this.status;
+
+    this.status = "ACTIVE";
+    this.endedAt = undefined;
+    this.version += 1;
+    this.updatedAt = now;
+
+    const envelope: EventEnvelopeInput = {
+      aggregatePublicId: this.publicId.toString(),
+      actorPublicId: props.actorPublicId,
+      correlationId: props.correlationId,
+      ...(props.causationId !== undefined ? { causationId: props.causationId } : {}),
+      occurredAt: now
+    };
+
+    this.recordEvent(
+      createMembershipUpdatedEvent(envelope, {
+        membershipPublicId: this.publicId.toString(),
+        identityPublicId: this.identityPublicId,
+        organizationPublicId: this.organizationPublicId,
+        previousStatus,
+        status: this.status,
+        endedAt: null,
         reason
       })
     );
