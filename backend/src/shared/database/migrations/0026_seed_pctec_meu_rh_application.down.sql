@@ -1,0 +1,21 @@
+-- Migration: 0026_seed_pctec_meu_rh_application
+-- Direção: DOWN
+--
+-- Remove a Application `PCTEC_MEU_RH` do catálogo.
+--
+-- O DELETE filtra por `public_id` — a identidade lógica única e imutável
+-- (ADR-021) —, nunca por `code` isolado. Mesmo padrão de 0007/0014/0018,
+-- e pelo mesmo motivo: se alguém recriasse depois uma Application
+-- `PCTEC_MEU_RH` com OUTRO public_id, um rollback por `code` a apagaria
+-- junto, sem nenhum aviso. O UUID aqui é exatamente o inserido no
+-- `.up.sql` — rollback e seed sempre visam a mesma linha.
+--
+-- Falha por RESTRICT se houver `application_accesses` ou
+-- `sso_authorization_codes` referenciando esta linha — e isso é o
+-- comportamento desejado, não um obstáculo: apagar a Application com
+-- acessos concedidos apagaria silenciosamente o rastro de quem tinha
+-- acesso ao produto. Revogue os acessos primeiro, deliberadamente.
+--
+-- Exatamente UMA instrução executável neste arquivo.
+
+DELETE FROM applications WHERE public_id = '9a4e6d17-2c85-4b93-8e61-000000000001';

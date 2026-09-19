@@ -69,7 +69,17 @@ export interface MembershipUpdatedPayload {
   readonly organizationPublicId: string;
   readonly previousStatus: string;
   readonly status: string;
-  readonly endedAt: string;
+  /**
+   * Momento do encerramento, em ISO-8601 — ou `null` quando a transição
+   * é a REATIVAÇÃO do vínculo (v1.x, fundação do Meu RH), em que o
+   * carimbo de encerramento deixa de existir.
+   *
+   * `null` e não a ausência do campo: o consumidor da trilha lê um
+   * `membership.updated` e precisa distinguir "reativado, sem
+   * encerramento" de "evento antigo, gravado quando o campo não
+   * existia". Campo omitido não diz qual dos dois é.
+   */
+  readonly endedAt: string | null;
   readonly reason: string;
 }
 

@@ -178,6 +178,26 @@ const envSchema = z.object({
   SSO_PORTAL_LAUNCH_URL: z.string().default(""),
   // Mesmo papel, para o card do Helpdesk. Ausente = card desabilitado.
   HELPDESK_LAUNCH_URL: z.string().default(""),
+  // Lista FECHADA de `redirect_uri` aceitos para o cliente
+  // `PCTEC_MEU_RH`, com exatamente as mesmas regras de
+  // SSO_PORTAL_REDIRECT_URIS: forma absoluta, comparação por igualdade
+  // de string, nunca prefixo, nunca curinga. Vazia = SSO do Meu RH
+  // indisponível (fail-closed) — e é esse default que mantém o produto
+  // fechado enquanto o ambiente não for configurado de propósito.
+  SSO_MEU_RH_REDIRECT_URIS: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((uri) => uri.trim())
+        .filter((uri) => uri.length > 0)
+    ),
+  // URL que INICIA o fluxo, do lado do Meu RH (o card do launcher aponta
+  // para cá). Pertence ao Meu RH, não ao Ingressa. Ausente = card
+  // desabilitado, nunca ausente: o acesso existe, o destino é que não
+  // foi configurado.
+  SSO_MEU_RH_LAUNCH_URL: z.string().default(""),
   // Validade do código de autorização. O teto real (60s) vive no
   // agregado `AuthorizationCode` — esta variável só permite encurtar,
   // nunca esticar: afrouxar a janela de replay não pode ser um ajuste de

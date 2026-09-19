@@ -9,12 +9,16 @@ import type { IssueAuthorizationCodeService } from "../../application/IssueAutho
 import type { ExchangeAuthorizationCodeService } from "../../application/ExchangeAuthorizationCodeService.js";
 import { SsoAuthorizationDeniedError } from "../../domain/errors/SsoErrors.js";
 import { SERVICE_CREDENTIAL_HEADER_NAME } from "../../../portal/http/requireServiceCredential.js";
+import { MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME } from "../../../identity/http/identityResolutionServiceConsumers.js";
 
 const IDENTIDADE = "66231e51-66fb-466d-af4f-ac7b925ca9ec";
 const REDIRECT_URI = "https://portal.example.invalid/api/auth/ingressa/callback";
 const DESAFIO = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
 const ESTADO = "estado-sintetico-1234";
 const CREDENCIAL = "credencial-de-servico-sintetica";
+/** Segundo cliente de SSO — prova que a fronteira serve mais de um produto SEM chave compartilhada. */
+const REDIRECT_URI_MEU_RH = "https://meu-rh.example.invalid/api/v1/auth/ingressa/callback";
+const CREDENCIAL_MEU_RH = "credencial-sintetica-do-meu-rh";
 
 const PRINCIPAL: AuthenticatedPrincipal = {
   identityPublicId: IDENTIDADE,
@@ -84,6 +88,8 @@ describe("SSO — fronteira HTTP", () => {
   beforeEach(async () => {
     process.env["SSO_PORTAL_REDIRECT_URIS"] = REDIRECT_URI;
     process.env["SSO_PORTAL_LAUNCH_URL"] = "https://portal.example.invalid/api/auth/ingressa/start";
+    process.env["SSO_MEU_RH_REDIRECT_URIS"] = REDIRECT_URI_MEU_RH;
+    process.env["SSO_MEU_RH_LAUNCH_URL"] = "https://meu-rh.example.invalid/api/v1/auth/ingressa/start";
     validateSessionService = new FakeValidateSessionService();
     issue = new FakeIssueAuthorizationCodeService();
     exchange = new FakeExchangeAuthorizationCodeService();
@@ -92,7 +98,8 @@ describe("SSO — fronteira HTTP", () => {
       validateSessionService: validateSessionService as unknown as ValidateSessionService,
       issueAuthorizationCodeService: issue as unknown as IssueAuthorizationCodeService,
       exchangeAuthorizationCodeService: exchange as unknown as ExchangeAuthorizationCodeService,
-      serviceCredential: CREDENCIAL
+      serviceCredential: CREDENCIAL,
+      meuRhServiceCredential: CREDENCIAL_MEU_RH
     });
     server = app.listen(0);
     await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -106,6 +113,8 @@ describe("SSO — fronteira HTTP", () => {
   afterEach(async () => {
     delete process.env["SSO_PORTAL_REDIRECT_URIS"];
     delete process.env["SSO_PORTAL_LAUNCH_URL"];
+    delete process.env["SSO_MEU_RH_REDIRECT_URIS"];
+    delete process.env["SSO_MEU_RH_LAUNCH_URL"];
     await new Promise<void>((resolve, reject) => {
       server.close((err) => (err ? reject(err) : resolve()));
     });
@@ -255,6 +264,99 @@ describe("SSO — fronteira HTTP", () => {
       expect(serializado).not.toContain("codigo-opaco-sintetico");
       expect(serializado).not.toContain("verificador");
       expect(serializado).not.toContain("organizations");
+    });
+
+    // ── Mais de um consumidor, sem chave compartilhada ────────────────
+    //
+    // Enquanto o Portal era o único cliente de SSO, esta rota reusava a
+    // credencial dele. Com um segundo cliente, reusar significaria
+    // entregar o segredo do Portal ao Meu RH: vazar a de um daria acesso
+    // ao que os dois veem, revogar a de um derrubaria os dois, e a
+    // auditoria nunca diria quem chamou.
+    const corpoMeuRh = {
+      client_id: "PCTEC_MEU_RH",
+      code: "codigo-opaco-sintetico",
+      code_verifier: "verificador-sintetico-com-quarenta-e-tres-caracteres",
+      redirect_uri: REDIRECT_URI_MEU_RH
+    };
+
+    it("o Portal continua trocando com o header e o segredo DE SEMPRE — nada mudou do lado dele", async () => {
+      const res = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL },
+        body: JSON.stringify(corpo)
+      });
+
+      expect(res.status).toBe(200);
+      expect(exchange.chamadas).toHaveLength(1);
+    });
+
+    it("o Meu RH troca com o header e o segredo PRÓPRIOS", async () => {
+      const res = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH },
+        body: JSON.stringify(corpoMeuRh)
+      });
+
+      expect(res.status).toBe(200);
+      expect(exchange.chamadas).toHaveLength(1);
+      expect(exchange.chamadas[0]?.["clientId"]).toBe("PCTEC_MEU_RH");
+    });
+
+    it("o segredo de um consumidor no header do OUTRO não abre a rota — o header é parte do isolamento", async () => {
+      const res = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH },
+        body: JSON.stringify(corpo)
+      });
+
+      expect(res.status).toBe(401);
+      expect(exchange.chamadas).toHaveLength(0);
+    });
+
+    it("autenticar NÃO basta: a credencial do Portal não troca um código emitido para o Meu RH", async () => {
+      // Sem este vínculo, os headers próprios criariam isolamento no
+      // papel e não na prática — uma credencial válida qualquer abriria
+      // o código de qualquer produto.
+      const res = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL },
+        body: JSON.stringify(corpoMeuRh)
+      });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(exchange.chamadas).toHaveLength(0);
+    });
+
+    it("e a do Meu RH não troca um código emitido para o Portal", async () => {
+      const res = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL_MEU_RH },
+        body: JSON.stringify(corpo)
+      });
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(exchange.chamadas).toHaveLength(0);
+    });
+
+    it("a recusa por consumidor errado usa o MESMO discriminador de cliente não registrado", async () => {
+      // Quem está do outro lado não aprende se errou a credencial ou o
+      // client_id — as duas respostas são indistinguíveis.
+      const consumidorErrado = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL },
+        body: JSON.stringify(corpoMeuRh)
+      });
+      const clienteInexistente = await fetch(`${baseUrl}/api/v1/service/sso/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json", [SERVICE_CREDENTIAL_HEADER_NAME]: CREDENCIAL },
+        body: JSON.stringify({ ...corpo, client_id: "PCTEC_NAO_EXISTE" })
+      });
+
+      expect(consumidorErrado.status).toBe(clienteInexistente.status);
+      const a = (await consumidorErrado.json()) as { error?: { code?: string } };
+      const b = (await clienteInexistente.json()) as { error?: { code?: string } };
+      expect(a.error?.code).toBe(b.error?.code);
     });
 
     it("cookie de sessão NÃO substitui a credencial de serviço neste namespace", async () => {

@@ -156,6 +156,13 @@ export function createRequireOneOfServiceCredentials(consumers: readonly Service
 
       const receivedDigest = createHash("sha256").update(receivedCredential, "utf8").digest();
       if (timingSafeEqual(autorizado.digest, receivedDigest)) {
+        // Quem se autenticou fica registrado na requisição. A rota
+        // seguinte pode exigir que o consumidor autenticado seja o dono
+        // do recurso pedido — sem isso, "uma credencial válida" e "a
+        // credencial DAQUELE consumidor" viram a mesma coisa, e o
+        // isolamento que os headers próprios constroem se perde na
+        // primeira rota que sirva mais de um produto.
+        (req as RequestComConsumidor).serviceConsumerCode = autorizado.consumerCode;
         next();
         return;
       }
@@ -163,4 +170,20 @@ export function createRequireOneOfServiceCredentials(consumers: readonly Service
 
     next(new ServiceCredentialInvalidError());
   };
+}
+
+/**
+ * Requisição já autenticada por `createRequireOneOfServiceCredentials`.
+ *
+ * `serviceConsumerCode` é escrito pelo middleware a partir da LISTA
+ * configurada — nunca lido de header, corpo ou query. Um consumidor não
+ * consegue se declarar outro.
+ */
+export interface RequestComConsumidor extends Request {
+  serviceConsumerCode?: string;
+}
+
+/** Código do consumidor autenticado, ou `undefined` fora do middleware. */
+export function consumidorAutenticado(req: Request): string | undefined {
+  return (req as RequestComConsumidor).serviceConsumerCode;
 }
