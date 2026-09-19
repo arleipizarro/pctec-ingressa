@@ -2,6 +2,8 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import type { ExchangeAuthorizationCodeService } from "../application/ExchangeAuthorizationCodeService.js";
 import { SsoAuthorizationCodeExchangeFailedError } from "../domain/errors/SsoErrors.js";
 import type { SsoClientRegistry } from "../domain/SsoClientRegistry.js";
+import { consumidorAutenticado } from "../../portal/http/requireServiceCredential.js";
+import { APPLICATION_CODE_POR_CONSUMIDOR } from "./ssoTokenServiceConsumers.js";
 
 function texto(valor: unknown): string {
   return typeof valor === "string" ? valor : "";
@@ -49,6 +51,27 @@ export function createServiceSsoTokenRoutes(
     } catch {
       next(new SsoAuthorizationCodeExchangeFailedError("CLIENT_OR_REDIRECT_URI_NOT_REGISTERED"));
       return;
+    }
+
+    // O consumidor autenticado precisa ser o DONO do `client_id` da
+    // troca. Autenticar sozinho não basta: sem este vínculo, a
+    // credencial de um produto abriria um código emitido para outro, e
+    // os headers próprios teriam criado isolamento no papel e não na
+    // prática.
+    //
+    // `consumidorAutenticado` lê o que o middleware de credencial
+    // gravou a partir da LISTA configurada — nunca um header, corpo ou
+    // query que o chamador controle.
+    const consumidor = consumidorAutenticado(req);
+    if (consumidor !== undefined) {
+      const clientDoConsumidor = APPLICATION_CODE_POR_CONSUMIDOR[consumidor];
+      if (clientDoConsumidor !== client.clientId) {
+        // Mesmo discriminador do caso "cliente não registrado": quem
+        // está do outro lado não aprende se errou a credencial ou o
+        // client_id.
+        next(new SsoAuthorizationCodeExchangeFailedError("CLIENT_OR_REDIRECT_URI_NOT_REGISTERED"));
+        return;
+      }
     }
 
     if (code.length === 0 || codeVerifier.length === 0) {

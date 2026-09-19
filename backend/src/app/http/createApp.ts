@@ -93,6 +93,7 @@ import { MariaDbAuthorizationCodeRepository } from "../../modules/sso/infrastruc
 import { CryptoAuthorizationCodeGenerator } from "../../modules/sso/infrastructure/token/AuthorizationCodeGenerator.js";
 import { createSsoAuthorizeRoutes } from "../../modules/sso/http/ssoAuthorizeRoutes.js";
 import { createServiceSsoTokenRoutes } from "../../modules/sso/http/serviceSsoTokenRoutes.js";
+import { buildSsoTokenServiceConsumers } from "../../modules/sso/http/ssoTokenServiceConsumers.js";
 import { GetMyApplicationsService } from "../../modules/launcher/application/GetMyApplicationsService.js";
 import { MariaDbGrantedApplicationReadRepository } from "../../modules/launcher/infrastructure/persistence/MariaDbGrantedApplicationReadRepository.js";
 import { createAppsRoutes } from "../../modules/launcher/http/appsRoutes.js";
@@ -1253,13 +1254,28 @@ export function createApp(options: CreateAppOptions = {}): Express {
   );
 
   // POST /api/v1/service/sso/token — troca do código pelo backend do
-  // Portal. Reaproveita a credencial e o header que o Portal já usa
-  // desde P1A.1: um canal service-to-service novo significaria um
-  // segredo novo para distribuir, rotacionar e vazar. Um navegador nunca
-  // chega aqui — este namespace nunca aceita cookie de sessão.
+  // produto consumidor. Um navegador nunca chega aqui: este namespace
+  // nunca aceita cookie de sessão.
+  //
+  // Cada consumidor apresenta HEADER e SEGREDO PRÓPRIOS. Enquanto o
+  // Portal era o único cliente de SSO, esta fronteira reusava a
+  // credencial dele — decisão correta na época, e registrada como tal.
+  // Com um segundo cliente o raciocínio se inverte: reusar obrigaria a
+  // entregar o segredo do Portal ao Meu RH, e aí vazar a de um daria
+  // acesso ao que os dois veem, revogar a de um derrubaria os dois, e a
+  // auditoria nunca diria quem chamou. O Portal continua usando
+  // exatamente o header e o segredo de sempre — nada muda do lado dele.
+  //
+  // Autenticar não basta: a rota exige que o `client_id` da troca
+  // PERTENÇA ao consumidor autenticado (ver `serviceSsoTokenRoutes`).
   app.use(
     "/api/v1/service/sso",
-    createRequireServiceCredential(serviceCredential),
+    createRequireOneOfServiceCredentials(
+      buildSsoTokenServiceConsumers({
+        portal: serviceCredential,
+        meuRh: options.meuRhServiceCredential ?? loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL
+      })
+    ),
     createServiceSsoTokenRoutes(exchangeAuthorizationCodeService, sso.registry, sso.requiredProfileByClientId)
   );
 
