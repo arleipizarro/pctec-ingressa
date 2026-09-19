@@ -116,6 +116,10 @@ import { ProvisionOrganizationService } from "../../modules/organization/applica
 import { ProvisionOrganizationUserService } from "../../modules/admin/application/ProvisionOrganizationUserService.js";
 import { CreateIdentityService } from "../../modules/identity/application/CreateIdentityService.js";
 import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import { PCTEC_MEU_RH_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import { MeuRhDirectoryService } from "../../modules/meurh/application/MeuRhDirectoryService.js";
+import { createServiceMeuRhRoutes } from "../../modules/meurh/http/serviceMeuRhRoutes.js";
+import { MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/identity/http/identityResolutionServiceConsumers.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -211,8 +215,20 @@ export interface CreateAppOptions {
    * `/api/v1/service/helpdesk/...` fica indisponível (401).
    */
   readonly helpdeskServiceCredential?: string;
+  /**
+   * Injetável para testes — Etapa 1 do PCTEC Meu RH. Quando omitido,
+   * lido de `INGRESSA_MEU_RH_SERVICE_CREDENTIAL`. Vazio = namespace
+   * `/api/v1/service/meu-rh` INDISPONÍVEL (401 a tudo), nunca aberto.
+   */
+  readonly meuRhServiceCredential?: string;
   /** Injetável para teste; por padrão é composto aqui a partir dos demais. */
   readonly getHelpdeskUserContextService?: GetHelpdeskUserContextService;
+  /**
+   * Injetável para testes — Etapa 1 do PCTEC Meu RH. Quando omitido,
+   * `createApp()` constrói um `MeuRhDirectoryService` real sobre os
+   * MESMOS Application Services que a UI administrativa já usa.
+   */
+  readonly meuRhDirectoryService?: MeuRhDirectoryService;
   /** Injetável para teste da API administrativa (v0.9.x). */
   readonly adminApi?: AdminApiDeps;
   /**
@@ -675,7 +691,12 @@ export function createApp(options: CreateAppOptions = {}): Express {
     // declarada aqui, na composição — o módulo `sso` não conhece
     // Membership, Organization nem `GetPortalContextService`. Reaproveita
     // a MESMA instância que serve `/api/v1/portal/context`.
-    portalIssuancePolicies: [new RequirePortalOrganizationContextPolicy(getPortalContextService)]
+    portalIssuancePolicies: [new RequirePortalOrganizationContextPolicy(getPortalContextService)],
+    meuRhRedirectUris: env.SSO_MEU_RH_REDIRECT_URIS,
+    meuRhLaunchUrl: env.SSO_MEU_RH_LAUNCH_URL,
+    // Nenhuma política ALÉM do gate genérico — ver a nota do campo em
+    // `SsoCompositionInput`. Lista vazia declarada, e não ausência.
+    meuRhIssuancePolicies: []
   });
   const unitOfWork = sharedPool === undefined ? undefined : new MariaDbUnitOfWork(sharedPool);
 
@@ -715,6 +736,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
   }
   if (env.HELPDESK_LAUNCH_URL.trim().length > 0) {
     launchUrlByApplicationCode[PCTEC_HELPDESK_APPLICATION_CODE] = env.HELPDESK_LAUNCH_URL;
+  }
+  if (env.SSO_MEU_RH_LAUNCH_URL.trim().length > 0) {
+    launchUrlByApplicationCode[PCTEC_MEU_RH_APPLICATION_CODE] = env.SSO_MEU_RH_LAUNCH_URL;
   }
 
   const getMyApplicationsService =
@@ -1211,10 +1235,13 @@ export function createApp(options: CreateAppOptions = {}): Express {
   // daria acesso ao que todos veem, revogar a de um derrubaria todos, e
   // a auditoria nunca diria quem chamou.
   //
-  // Enquanto NENHUM consumidor tiver segredo configurado — o estado de
-  // hoje, com `INGRESSA_MEU_RH_SERVICE_CREDENTIAL` vazia e a Application
-  // `PCTEC_MEU_RH` sequer registrada —, este namespace responde 401 a
-  // tudo: a fundação fica pronta e FECHADA até o Arquiteto autorizar.
+  // Enquanto NENHUM consumidor tiver segredo configurado, este namespace
+  // responde 401 a tudo — a fundação fica pronta e FECHADA. A Application
+  // `PCTEC_MEU_RH`, que faltava quando esta nota foi escrita, passou a
+  // existir na Etapa 1 do produto (migration 0026); o namespace continua
+  // fechado em todo ambiente que não configure
+  // `INGRESSA_MEU_RH_SERVICE_CREDENTIAL`, porque é o SEGREDO, e não a
+  // Application, que o abre.
   //
   // Nunca browser-facing: não há cookie de sessão que abra esta rota, e
   // nenhum caminho de código a monta sob `/api/v1/portal` ou qualquer
@@ -1252,6 +1279,79 @@ export function createApp(options: CreateAppOptions = {}): Express {
     "/api/v1/service/helpdesk",
     createRequireServiceCredential(helpdeskServiceCredential, HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME),
     createServiceHelpdeskUserContextRoutes(getHelpdeskUserContextService)
+  );
+
+  // /api/v1/service/meu-rh/* — Etapa 1 do PCTEC Meu RH.
+  //
+  // NAMESPACE PRÓPRIO, com CREDENCIAL PRÓPRIA e HEADER PRÓPRIO
+  // (`x-meu-rh-service-credential`), pela mesma razão que separa Portal
+  // de Helpdesk: vazar a credencial de um produto não pode dar acesso ao
+  // contexto de outro, e revogar uma não pode derrubar os três.
+  //
+  // POR QUE ESTE NAMESPACE EXISTE. O Meu RH precisa criar colaborador,
+  // reconciliar quem já existe e ativar/desativar vínculo. Fazer isso no
+  // banco dele exigiria uma segunda tabela de identidade — exatamente o
+  // que ADR-001 proíbe. Então o CRUD de identidade fica aqui, mínimo, e
+  // o Meu RH consome: no banco dele ficam apenas área, cargo, gestor e
+  // situação do vínculo, que são conceitos de RH e não de identidade.
+  //
+  // Todas as operações são IDEMPOTENTES: a importação inicial do produto
+  // é reexecutável por desenho, e reexecutar não pode criar segunda
+  // identidade, segundo Membership nem segundo ApplicationAccess.
+  //
+  // Nenhuma rota aqui toca credencial, senha, hash, provedor de
+  // autenticação ou `login_enabled` de quem já existe. O primeiro acesso
+  // continua passando pelo fluxo de convite do Ingressa.
+  //
+  // Nunca browser-facing: não há cookie de sessão que abra este
+  // namespace, e nenhum caminho de código o monta sob `/api/v1/portal`.
+  app.use(
+    "/api/v1/service/meu-rh",
+    createRequireServiceCredential(
+      options.meuRhServiceCredential ?? loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL,
+      MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME
+    ),
+    createServiceMeuRhRoutes(
+      options.meuRhDirectoryService ??
+        new MeuRhDirectoryService({
+          pool: sharedPool!,
+          unitOfWork: new MariaDbUnitOfWork(sharedPool!),
+          membershipRepositoryFactory: (c) => new MariaDbMembershipRepository(c),
+          auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c),
+          // Fábricas de UnitOfWork, e não instâncias: dentro da
+          // transação externa cada serviço é reconstruído sobre
+          // `ExistingConnectionUnitOfWork`, e é isso que faz identidade,
+          // vínculo e acesso caírem todos na MESMA transação.
+          createIdentityServiceFactory: (uow) =>
+            new CreateIdentityService(
+              uow,
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          createOrganizationServiceFactory: (uow) =>
+            new CreateOrganizationService(
+              uow,
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          createMembershipServiceFactory: (uow) =>
+            new CreateMembershipService(
+              uow,
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbOrganizationRepository(c),
+              (c) => new MariaDbMembershipRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            ),
+          grantApplicationAccessServiceFactory: (uow) =>
+            new GrantApplicationAccessService(
+              uow,
+              (c) => new MariaDbApplicationRepository(c),
+              (c) => new MariaDbIdentityRepository(c),
+              (c) => new MariaDbApplicationAccessRepository(c),
+              (c) => new MariaDbAuditEventRepository(c)
+            )
+        })
+    )
   );
 
   // Qualquer outra rota ou método cai aqui — decisão desta fatia: 404

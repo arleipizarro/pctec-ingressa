@@ -1,4 +1,7 @@
-import { PCTEC_PORTAL_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
+import {
+  PCTEC_MEU_RH_APPLICATION_CODE,
+  PCTEC_PORTAL_APPLICATION_CODE
+} from "../../application/domain/value-objects/ApplicationCodes.js";
 import { SsoClientRegistry, type SsoClient } from "../domain/SsoClientRegistry.js";
 import { SsoIssuancePolicyRegistry, type SsoIssuancePolicy } from "../domain/SsoIssuancePolicy.js";
 
@@ -16,6 +19,32 @@ export interface SsoCompositionInput {
    * exige, mesmo que a resposta seja uma lista vazia.
    */
   readonly portalIssuancePolicies: readonly SsoIssuancePolicy[];
+  /**
+   * Mesmo par para o PCTEC Meu RH. Lista vazia mantém o cliente
+   * DESREGISTRADO — e um cliente desregistrado faz
+   * `requireClientWithRedirectUri` recusar antes de qualquer outra
+   * checagem, que é o comportamento desejado enquanto o ambiente não
+   * declarar os destinos.
+   */
+  readonly meuRhRedirectUris: readonly string[];
+  readonly meuRhLaunchUrl: string;
+  /**
+   * Políticas de emissão do Meu RH.
+   *
+   * Hoje: NENHUMA além do gate genérico (Application ACTIVE +
+   * ApplicationAccess GRANTED com o perfil exigido), que
+   * `IssueAuthorizationCodeService` já aplica a todo cliente. O Meu RH
+   * não exige contexto organizacional como o Portal — o vínculo
+   * empresarial dele é conteúdo do produto, não pré-condição de
+   * autenticação, e transformá-lo em política de emissão impediria
+   * alguém de ENTRAR no produto por um dado que só existe DENTRO dele.
+   *
+   * A lista vazia é declarada de propósito: `isDeclaredFor` passa a
+   * responder `true` para o Meu RH, o que é diferente de "não
+   * declarado" — que `requireFor` recusa com
+   * ISSUANCE_POLICY_NOT_DECLARED (ADR-035).
+   */
+  readonly meuRhIssuancePolicies: readonly SsoIssuancePolicy[];
 }
 
 export interface SsoComposition {
@@ -65,9 +94,24 @@ export function composeSso(input: SsoCompositionInput): SsoComposition {
     issuancePolicies[PCTEC_PORTAL_APPLICATION_CODE] = input.portalIssuancePolicies;
   }
 
+  if (input.meuRhRedirectUris.length > 0) {
+    clients.push({
+      clientId: PCTEC_MEU_RH_APPLICATION_CODE,
+      redirectUris: [...input.meuRhRedirectUris],
+      launchUrl: input.meuRhLaunchUrl
+    });
+    issuancePolicies[PCTEC_MEU_RH_APPLICATION_CODE] = input.meuRhIssuancePolicies;
+  }
+
   return {
     registry: new SsoClientRegistry(clients),
     issuancePolicyRegistry: new SsoIssuancePolicyRegistry(issuancePolicies),
-    requiredProfileByClientId: Object.freeze({ [PCTEC_PORTAL_APPLICATION_CODE]: "USER" })
+    // `USER` para os dois: o perfil EXIGIDO para entrar é o mínimo, e
+    // ADMIN o satisfaz por ser mais forte. Exigir ADMIN no Meu RH
+    // barraria todo colaborador comum na porta do produto feito para ele.
+    requiredProfileByClientId: Object.freeze({
+      [PCTEC_PORTAL_APPLICATION_CODE]: "USER",
+      [PCTEC_MEU_RH_APPLICATION_CODE]: "USER"
+    })
   };
 }
