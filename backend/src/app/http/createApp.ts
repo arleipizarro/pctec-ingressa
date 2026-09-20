@@ -1394,7 +1394,10 @@ export function createApp(options: CreateAppOptions = {}): Express {
               (c) => new MariaDbAuditEventRepository(c)
             )
         }),
-      applicationRoleService
+      applicationRoleService,
+      // O MESMO serviço de convite da UI administrativa: mesma
+      // elegibilidade, mesmo token, mesma entrega, mesma auditoria.
+      createIdentityInvitationService
     )
   );
 

@@ -2,8 +2,9 @@ import { Router, type NextFunction, type Request, type Response } from "express"
 import type { RequestWithCorrelationId } from "../../../shared/http/correlationId.js";
 import type { MeuRhDirectoryService } from "../application/MeuRhDirectoryService.js";
 import type { ApplicationRoleService } from "../../applicationrole/application/ApplicationRoleService.js";
+import type { CreateIdentityInvitationService } from "../../invitation/application/CreateIdentityInvitationService.js";
 import { PCTEC_MEU_RH_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
-import { MeuRhOrganizationNotFoundError } from "../application/errors/MeuRhErrors.js";
+import { MeuRhIdentityNotFoundError, MeuRhOrganizationNotFoundError } from "../application/errors/MeuRhErrors.js";
 
 /**
  * Namespace service-to-service do PCTEC Meu RH.
@@ -27,7 +28,8 @@ const CODIGO_DE_PERFIL = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 export function createServiceMeuRhRoutes(
   service: MeuRhDirectoryService,
-  roleService: ApplicationRoleService
+  roleService: ApplicationRoleService,
+  createIdentityInvitationService: CreateIdentityInvitationService
 ): Router {
   const router = Router();
 
@@ -111,6 +113,59 @@ export function createServiceMeuRhRoutes(
           ? []
           : await roleService.perfisConcedidos(identityPublicId, PCTEC_MEU_RH_APPLICATION_CODE);
       res.status(200).json({ accessProfile, roles });
+    })
+  );
+
+  /**
+   * POST /identities/activation — o FLUXO OFICIAL de ativação, pedido
+   * pelo produto consumidor.
+   *
+   * Delega ao MESMO `CreateIdentityInvitationService` que a UI
+   * administrativa usa: mesma elegibilidade, mesmo token, mesmo prazo,
+   * mesma entrega, mesma auditoria. Nenhum caminho paralelo de convite
+   * foi criado para o Meu RH — se existisse, haveria dois lugares para
+   * consertar no dia em que a política de convite mudasse.
+   *
+   * O consumidor nunca recebe o token: a resposta diz o que aconteceu
+   * com cada identidade (`CREATED`/`SKIPPED` e o motivo), e o link de
+   * uso único vai para a pessoa pelo canal do Ingressa. Devolvê-lo aqui
+   * transformaria o produto consumidor num portador de credencial.
+   */
+  router.post(
+    "/identities/activation",
+    envolver(async (req, res) => {
+      const corpo = (req.body ?? {}) as Record<string, unknown>;
+      const bruto = corpo["identityPublicIds"];
+      const identidades = Array.isArray(bruto)
+        ? bruto.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : [];
+      if (identidades.length === 0 || identidades.length > 50) {
+        throw new MeuRhIdentityNotFoundError();
+      }
+      // `actorPublicId` e OBRIGATORIO: o convite e sempre atribuido a
+      // uma pessoa de verdade, e e ela que aparece na auditoria. Um
+      // marcador no lugar mentiria com aparencia de dado — e o proprio
+      // servico recusa, porque espera um UUID de identidade.
+      const ator = texto(corpo["actorPublicId"]);
+      if (ator.length === 0) {
+        throw new MeuRhIdentityNotFoundError();
+      }
+      const resultado = await createIdentityInvitationService.execute({
+        identityPublicIds: identidades,
+        invitedByPublicId: ator,
+        correlationId: req.correlationId
+      });
+      res.status(200).json({
+        deliveryMode: resultado.deliveryMode,
+        // `manualLink` e `invitationPublicId` ficam de fora: o
+        // consumidor precisa saber SE funcionou, nunca o segredo.
+        results: resultado.results.map((item) => ({
+          identityPublicId: item.identityPublicId,
+          outcome: item.outcome,
+          reasonCode: item.reasonCode,
+          delivered: item.delivered
+        }))
+      });
     })
   );
 
