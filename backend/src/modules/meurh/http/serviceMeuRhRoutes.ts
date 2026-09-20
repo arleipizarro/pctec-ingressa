@@ -1,6 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import type { RequestWithCorrelationId } from "../../../shared/http/correlationId.js";
 import type { MeuRhDirectoryService } from "../application/MeuRhDirectoryService.js";
+import type { ApplicationRoleService } from "../../applicationrole/application/ApplicationRoleService.js";
+import { PCTEC_MEU_RH_APPLICATION_CODE } from "../../application/domain/value-objects/ApplicationCodes.js";
 import { MeuRhOrganizationNotFoundError } from "../application/errors/MeuRhErrors.js";
 
 /**
@@ -21,7 +23,12 @@ function texto(valor: unknown): string {
   return typeof valor === "string" ? valor.trim() : "";
 }
 
-export function createServiceMeuRhRoutes(service: MeuRhDirectoryService): Router {
+const CODIGO_DE_PERFIL = /^[A-Z][A-Z0-9_]{1,63}$/;
+
+export function createServiceMeuRhRoutes(
+  service: MeuRhDirectoryService,
+  roleService: ApplicationRoleService
+): Router {
   const router = Router();
 
   const envolver =
@@ -77,14 +84,112 @@ export function createServiceMeuRhRoutes(service: MeuRhDirectoryService): Router
     })
   );
 
-  // GET /identities/:id/access-profile — camada 1 de ADR-007. O Meu RH
-  // consulta isto para saber se a pessoa ainda pode entrar no produto;
-  // as permissões finas de RH continuam no banco dele.
+  // GET /identities/:id/access-profile — as DUAS camadas de ADR-007
+  // numa resposta só.
+  //
+  // `accessProfile` é a camada 1: a pessoa ainda pode ENTRAR no produto?
+  // `roles` é a camada 2: quais perfis ela tem DENTRO dele, segundo o
+  // catálogo desta aplicação. A partir da Etapa 2 os perfis são
+  // concedidos e guardados AQUI, e o Meu RH deixa de manter uma segunda
+  // lista própria — duas listas seriam duas verdades, e a segunda
+  // discorda da primeira no dia em que alguém esquece de atualizar uma.
+  //
+  // O que cada perfil LIBERA continua sendo do Meu RH, em código
+  // revisado em pull request. Este endpoint entrega os códigos, nunca a
+  // interpretação deles.
+  //
+  // `roles` só vem quando há acesso: sem camada 1, a camada 2 não
+  // significa nada, e devolvê-la convidaria um consumidor distraído a
+  // usar perfil sem conferir acesso.
   router.get(
     "/identities/:identityPublicId/access-profile",
     envolver(async (req, res) => {
-      const accessProfile = await service.perfilDeAcesso(req.params["identityPublicId"] as string);
-      res.status(200).json({ accessProfile });
+      const identityPublicId = req.params["identityPublicId"] as string;
+      const accessProfile = await service.perfilDeAcesso(identityPublicId);
+      const roles =
+        accessProfile === null
+          ? []
+          : await roleService.perfisConcedidos(identityPublicId, PCTEC_MEU_RH_APPLICATION_CODE);
+      res.status(200).json({ accessProfile, roles });
+    })
+  );
+
+  // GET /roles — catálogo de perfis do Meu RH (código, nome, descrição
+  // e permissões declaradas), para a tela de administração do produto.
+  router.get(
+    "/roles",
+    envolver(async (_req, res) => {
+      res.status(200).json({ roles: await roleService.catalogo(PCTEC_MEU_RH_APPLICATION_CODE) });
+    })
+  );
+
+  // GET /roles/grants — quem tem qual perfil, com quem concedeu e
+  // quando. É a lista que a administração do produto exibe.
+  router.get(
+    "/roles/grants",
+    envolver(async (_req, res) => {
+      const grants = await roleService.concessoes(PCTEC_MEU_RH_APPLICATION_CODE);
+      res.status(200).json({
+        grants: grants.map((concessao) => ({
+          assignmentPublicId: concessao.publicId,
+          identityPublicId: concessao.identityPublicId,
+          roleCode: concessao.roleCode,
+          fullName: concessao.fullName,
+          email: concessao.email,
+          grantedAt: concessao.grantedAt,
+          grantedBy: concessao.grantedByFullName ?? concessao.grantedByLabel
+        }))
+      });
+    })
+  );
+
+  // POST /identities/:id/roles — concede. Idempotente: `changed: false`
+  // quando o perfil já valia.
+  //
+  // QUEM PODE CONCEDER é decidido pelo Meu RH, antes de chamar: é lá que
+  // mora a política de "responsável pelo RH não concede super admin" e
+  // "ninguém altera a própria permissão". Aqui a fronteira confere o que
+  // é dela — perfil existe no catálogo, pessoa tem acesso à aplicação —
+  // e recusa o resto.
+  router.post(
+    "/identities/:identityPublicId/roles",
+    envolver(async (req, res) => {
+      const corpo = (req.body ?? {}) as Record<string, unknown>;
+      const roleCode = texto(corpo["roleCode"]);
+      if (!CODIGO_DE_PERFIL.test(roleCode)) {
+        throw new MeuRhOrganizationNotFoundError("(perfil inválido)");
+      }
+      const ator = texto(corpo["actorPublicId"]);
+      res.status(200).json(
+        await roleService.conceder({
+          identityPublicId: req.params["identityPublicId"] as string,
+          applicationCode: PCTEC_MEU_RH_APPLICATION_CODE,
+          roleCode,
+          ...(ator.length > 0 ? { grantedByIdentityPublicId: ator } : { grantedByLabel: texto(corpo["actorLabel"]) || "RECONCILIACAO" }),
+          correlationId: req.correlationId
+        })
+      );
+    })
+  );
+
+  router.post(
+    "/identities/:identityPublicId/roles/revoke",
+    envolver(async (req, res) => {
+      const corpo = (req.body ?? {}) as Record<string, unknown>;
+      const roleCode = texto(corpo["roleCode"]);
+      if (!CODIGO_DE_PERFIL.test(roleCode)) {
+        throw new MeuRhOrganizationNotFoundError("(perfil inválido)");
+      }
+      const ator = texto(corpo["actorPublicId"]);
+      res.status(200).json(
+        await roleService.revogar({
+          identityPublicId: req.params["identityPublicId"] as string,
+          applicationCode: PCTEC_MEU_RH_APPLICATION_CODE,
+          roleCode,
+          ...(ator.length > 0 ? { revokedByIdentityPublicId: ator } : {}),
+          correlationId: req.correlationId
+        })
+      );
     })
   );
 

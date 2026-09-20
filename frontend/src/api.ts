@@ -270,6 +270,24 @@ export const api = {
     requisitar<Pagina<EventoDeAuditoria>>(`/admin/audit-events?${params.toString()}`),
   /** Tipos presentes na base, para o filtro não inventar opções. */
   auditEventTypes: () => requisitar<{ items: readonly string[] }>("/admin/audit-events/event-types"),
+
+  // --- Perfis de aplicação (camada 2 de ADR-007) ---------------------
+  applicationRoles: (applicationCode: string) =>
+    requisitar<{ roles: readonly PerfilComMembros[] }>(`/admin/applications/${applicationCode}/roles`),
+  identityApplicationRoles: (publicId: string, applicationCode: string) =>
+    requisitar<{ roles: readonly PerfilDaIdentidade[] }>(
+      `/admin/identities/${publicId}/application-roles/${applicationCode}`
+    ),
+  grantApplicationRole: (publicId: string, applicationCode: string, roleCode: string) =>
+    requisitar<{ roleCode: string; changed: boolean }>(`/admin/identities/${publicId}/application-roles`, {
+      method: "POST",
+      body: JSON.stringify({ applicationCode, roleCode })
+    }),
+  revokeApplicationRole: (publicId: string, applicationCode: string, roleCode: string) =>
+    requisitar<{ roleCode: string; changed: boolean }>(
+      `/admin/identities/${publicId}/application-roles/revoke`,
+      { method: "POST", body: JSON.stringify({ applicationCode, roleCode }) }
+    ),
   importBatches: (params: URLSearchParams) => requisitar<Pagina<Lote>>(`/admin/import-batches?${params.toString()}`),
   importBatchItems: (publicId: string, params: URLSearchParams) =>
     requisitar<Pagina<ItemDeLote>>(`/admin/import-batches/${publicId}/items?${params.toString()}`),
@@ -942,4 +960,41 @@ export interface ConviteEmitido {
 export interface ResultadoDeConvites {
   readonly deliveryMode: string;
   readonly results: readonly ConviteEmitido[];
+}
+
+/**
+ * Perfis de APLICAÇÃO — camada 2 de ADR-007.
+ *
+ * Distintos de `accessProfile` (ADMIN/USER), que continua sendo a
+ * camada 1: "esta pessoa pode ENTRAR no produto?". O perfil abaixo diz
+ * o que ela faz DENTRO dele, segundo o catálogo que a própria aplicação
+ * declara.
+ */
+export interface PerfilDeAplicacao {
+  readonly publicId: string;
+  readonly code: string;
+  readonly name: string;
+  readonly description: string;
+  /** Lista DECLARADA pela aplicação — descritiva. Quem aplica é o produto. */
+  readonly permissions: readonly string[];
+  readonly status: string;
+}
+
+export interface MembroDoPerfil {
+  readonly assignmentPublicId: string;
+  readonly identityPublicId: string;
+  readonly fullName: string;
+  readonly email: string;
+  readonly grantedAt: string;
+  readonly grantedBy: string | null;
+}
+
+export interface PerfilComMembros extends PerfilDeAplicacao {
+  readonly members: readonly MembroDoPerfil[];
+}
+
+export interface PerfilDaIdentidade extends PerfilDeAplicacao {
+  readonly granted: boolean;
+  readonly grantedAt: string | null;
+  readonly grantedBy: string | null;
 }

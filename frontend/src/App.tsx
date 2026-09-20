@@ -6,6 +6,7 @@ import { AplicativosPage } from "./pages/AplicativosPage.js";
 import { ConvitePage } from "./pages/ConvitePage.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { UsuariosPage } from "./pages/UsuariosPage.js";
+import { PerfisDeAplicacaoPage } from "./pages/PerfisDeAplicacaoPage.js";
 import { UsuarioDetalhePage } from "./pages/UsuarioDetalhePage.js";
 import { OrganizacoesPage } from "./pages/OrganizacoesPage.js";
 import { ReconciliacaoPortalPage } from "./pages/ReconciliacaoPortalPage.js";
@@ -54,6 +55,8 @@ export function App(): JSX.Element {
           <Route index element={<DashboardPage />} />
           <Route path="usuarios" element={<UsuariosPage />} />
           <Route path="usuarios/:publicId" element={<UsuarioDetalhePage />} />
+          <Route path="perfis" element={<PerfisDeAplicacaoPage />} />
+          <Route path="perfis/:applicationCode" element={<PerfisDeAplicacaoPage />} />
           <Route path="organizacoes" element={<OrganizacoesPage />} />
           {/* Rota estática ANTES da dinâmica não é ordem por acaso: o
               React Router prioriza o segmento literal, mas deixar as

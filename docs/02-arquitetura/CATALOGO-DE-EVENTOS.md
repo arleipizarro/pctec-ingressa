@@ -391,6 +391,44 @@ nomenclatura conceitual em `snake_case` deste catálogo.
   `application_id`, `revoked_at`.
 - **Nunca publicar:** motivo em texto livre que contenha dados sensíveis.
 
+### application-role.granted
+
+- **Produtor:** `access`.
+- **Finalidade:** notificar que uma identidade recebeu um PERFIL dentro
+  de uma aplicação — a camada 2 de ADR-007 (ver ADR-036).
+- **Identificador da entidade:** `application_role_assignment_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `assignment_id`, `identity_id`, `application_id`,
+  `role_code`.
+- **Nunca publicar:** a lista de permissões do perfil (é catálogo, não
+  evento) e qualquer dado pessoal da identidade.
+
+Irmão de `application-access.granted`, e separado dele de propósito:
+conceder ACESSO à aplicação e conceder um PERFIL dentro dela são
+decisões diferentes, tomadas por gente diferente em momentos diferentes.
+Num evento só, seria impossível responder "quem virou responsável pelo
+RH, e quando?" sem inspecionar payload.
+
+Implementação real em
+`modules/applicationrole/domain/events/ApplicationRoleDomainEvents.ts`,
+com nomes de campo em `camelCase` (`assignmentPublicId`,
+`identityPublicId`, `applicationPublicId`, `roleCode`) pela mesma
+consistência de `application-access.granted`. Quando não há actor
+autenticado real (reconciliação de bootstrap), o `actorPublicId` do
+envelope carrega um rótulo fechado escrito pelo código — nunca um UUID
+inventado ocupando o lugar de uma pessoa.
+
+### application-role.revoked
+
+- **Produtor:** `access`.
+- **Finalidade:** notificar que um perfil deixou de valer para uma
+  identidade dentro de uma aplicação.
+- **Identificador da entidade:** `application_role_assignment_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `assignment_id`, `identity_id`, `application_id`,
+  `role_code`.
+- **Nunca publicar:** motivo em texto livre que contenha dados sensíveis.
+
 ### credential.created
 
 - **Produtor:** bounded context `security`.

@@ -4,6 +4,7 @@ import { api, ApiError, type ConviteDaIdentidade } from "../api.js";
 import { usarRecurso } from "../usarRecurso.js";
 import { Badge, Confirmacao, Estado } from "../components/ui.js";
 import { FormularioConcederAcesso, FormularioCriarMembership } from "../components/formularios.js";
+import { PerfisDaIdentidade } from "../components/perfisDaIdentidade.js";
 import { rotulo, rotuloDeAplicacao } from "../apresentacao.js";
 
 type AcaoPendente =
@@ -405,6 +406,20 @@ export function UsuarioDetalhePage(): JSX.Element {
                 </div>
               )}
             </div>
+
+            {/* Camada 2 de ADR-007: o que a pessoa faz DENTRO de cada
+                aplicação que declara perfis. Renderizada por aplicação,
+                e não uma seção genérica: cada produto tem o próprio
+                catálogo, e misturá-los sugeriria um perfil global que
+                não existe. */}
+            <PerfisDaIdentidade
+              identityPublicId={publicId}
+              applicationCode="PCTEC_MEU_RH"
+              nomeDaAplicacao="PCTEC Meu RH"
+              temAcessoConcedido={dados.applicationAccesses.some(
+                (a) => a.application_code === "PCTEC_MEU_RH" && a.status === "GRANTED"
+              )}
+            />
 
             {acao?.tipo === "conceder" && (
               <FormularioConcederAcesso
