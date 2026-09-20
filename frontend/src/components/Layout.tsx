@@ -5,6 +5,7 @@ import { encerrarSessao, type Sessao } from "../auth.js";
 const ITENS = [
   { para: "/admin", rotulo: "Painel", fim: true },
   { para: "/admin/usuarios", rotulo: "Usuários", fim: false },
+  { para: "/admin/perfis", rotulo: "Perfis de aplicação", fim: false },
   { para: "/admin/organizacoes", rotulo: "Organizações", fim: false },
   { para: "/admin/convites", rotulo: "Convites", fim: false },
   { para: "/admin/importacoes", rotulo: "Importações", fim: false },

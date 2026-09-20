@@ -121,6 +121,8 @@ import { PCTEC_MEU_RH_APPLICATION_CODE } from "../../modules/application/domain/
 import { MeuRhDirectoryService } from "../../modules/meurh/application/MeuRhDirectoryService.js";
 import { createServiceMeuRhRoutes } from "../../modules/meurh/http/serviceMeuRhRoutes.js";
 import { MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/identity/http/identityResolutionServiceConsumers.js";
+import { ApplicationRoleService } from "../../modules/applicationrole/application/ApplicationRoleService.js";
+import { createAdminApplicationRoleRoutes } from "../../modules/applicationrole/http/adminApplicationRoleRoutes.js";
 
 /**
  * Payload fixo de `GET /health`, conforme especificado na v0.4.1 —
@@ -230,6 +232,12 @@ export interface CreateAppOptions {
    * MESMOS Application Services que a UI administrativa já usa.
    */
   readonly meuRhDirectoryService?: MeuRhDirectoryService;
+  /**
+   * Perfis de aplicação (camada 2 de ADR-007). Injetável pelo mesmo
+   * motivo dos demais serviços: os testes de rota trocam a
+   * implementação sem subir banco.
+   */
+  readonly applicationRoleService?: ApplicationRoleService;
   /** Injetável para teste da API administrativa (v0.9.x). */
   readonly adminApi?: AdminApiDeps;
   /**
@@ -971,6 +979,20 @@ export function createApp(options: CreateAppOptions = {}): Express {
   // seção 15). ADMIN/applicationAccesses continuam fora de
   // req.auth/AuthenticatedPrincipal — só em req.authorization, anexado
   // pelo segundo middleware.
+  /**
+   * Perfis de aplicação — UMA instância, dois consumidores: a
+   * administração do Ingressa (abaixo) e o namespace service-to-service
+   * do produto. Duas instâncias funcionariam igual; uma só deixa
+   * explícito que a concessão é a MESMA operação, venha de onde vier.
+   */
+  const applicationRoleService =
+    options.applicationRoleService ??
+    new ApplicationRoleService({
+      pool: sharedPool!,
+      unitOfWork: new MariaDbUnitOfWork(sharedPool!),
+      auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c)
+    });
+
   app.use(
     "/api/v1/admin",
     createRequireAuthenticatedSession(validateSessionService),
@@ -979,6 +1001,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
       profile: "ADMIN"
     }),
     createAdminWhoamiRoutes(getIdentityByPublicId),
+    // Perfis de aplicação: catálogo, quem tem cada um, conceder e
+    // revogar. MESMA cadeia do resto da administração — sessão válida e
+    // ADMIN em PCTEC_INGRESSA —, e é isso que mantém "administrar um
+    // produto" separado de "administrar a plataforma".
+    createAdminApplicationRoleRoutes(applicationRoleService, allowedOrigins),
     // API administrativa da UI (v0.9.x) — MESMO namespace, MESMA cadeia
     // (sessão → ADMIN em PCTEC_INGRESSA), montada uma vez só. Leitura é
     // projeção paginada; toda mutação delega ao Application Service que
@@ -1366,7 +1393,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
               (c) => new MariaDbApplicationAccessRepository(c),
               (c) => new MariaDbAuditEventRepository(c)
             )
-        })
+        }),
+      applicationRoleService,
+      // O MESMO serviço de convite da UI administrativa: mesma
+      // elegibilidade, mesmo token, mesma entrega, mesma auditoria.
+      createIdentityInvitationService
     )
   );
 

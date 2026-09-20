@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 26 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 29 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -31,7 +31,10 @@ describe("loadMigrationDefinitions", () => {
       "0023_create_identity_invitations",
       "0024_add_identity_external_reference_active_binding_unique",
       "0025_create_auth_rate_limit_counters",
-      "0026_seed_pctec_meu_rh_application"
+      "0026_seed_pctec_meu_rh_application",
+      "0027_create_application_roles",
+      "0028_create_application_role_assignments",
+      "0029_seed_meu_rh_application_roles"
     ]);
 
     for (const migration of migrations) {
@@ -40,7 +43,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026 são seed INSERT/DELETE, 0016/0020/0021/0022/0023 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
@@ -52,7 +55,10 @@ describe("loadMigrationDefinitions", () => {
       "0019_add_match_method_created_from_source",
       "0024_add_identity_external_reference_active_binding_unique",
       "0025_create_auth_rate_limit_counters",
-      "0026_seed_pctec_meu_rh_application"
+      "0026_seed_pctec_meu_rh_application",
+      // 0029 semeia o CATÁLOGO de perfis do Meu RH em
+      // `application_roles`; a tabela que ele preenche nasce em 0027.
+      "0029_seed_meu_rh_application_roles"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -465,10 +471,21 @@ describe("loadMigrationDefinitions", () => {
       // Application técnica do catálogo (PCTEC_MEU_RH, Etapa 1 do
       // produto), cujo down remove só aquela linha, pelo public_id
       // determinístico.
-      "0026_seed_pctec_meu_rh_application"
+      "0026_seed_pctec_meu_rh_application",
+      // 0029 é seed do CATÁLOGO de perfis (`application_roles`), e não
+      // de `applications`: o down remove as linhas de UMA aplicação,
+      // pelo public_id determinístico dela. A FK RESTRICT de 0028
+      // impede a remoção se houver qualquer concessão apontando para
+      // elas — ninguém perde a rastreabilidade de uma autorização
+      // porque alguém reverteu um seed.
+      "0029_seed_meu_rh_application_roles"
     ]);
 
     for (const migration of migrations) {
+      // Nenhuma migration apaga CONCESSÃO de perfil: é histórico de
+      // autorização, pelo mesmo motivo de `application_accesses`.
+      expect(migration.up.toUpperCase()).not.toMatch(/DELETE FROM\s+APPLICATION_ROLE_ASSIGNMENTS/);
+      expect(migration.down.toUpperCase()).not.toMatch(/DELETE FROM\s+APPLICATION_ROLE_ASSIGNMENTS/);
       // DELETE FROM nunca é aceitável sobre `identities` (dado pessoal —
       // ver ADR-020, exclusão lógica) nem sobre `application_accesses`
       // (histórico de auditoria de acesso) em nenhuma migration, up ou
@@ -491,7 +508,11 @@ describe("loadMigrationDefinitions", () => {
     // public_id — nunca um DELETE genérico por code isolado.
     for (const seedMigrationId of seedMigrationIds) {
       const seedMigration = migrations.find((m) => m.id === seedMigrationId);
-      expect(seedMigration?.down.toUpperCase()).toContain("DELETE FROM APPLICATIONS WHERE PUBLIC_ID =");
+      const alvo =
+        seedMigrationId === "0029_seed_meu_rh_application_roles"
+          ? "DELETE FROM APPLICATION_ROLES WHERE APPLICATION_PUBLIC_ID ="
+          : "DELETE FROM APPLICATIONS WHERE PUBLIC_ID =";
+      expect(seedMigration?.down.toUpperCase()).toContain(alvo);
     }
   });
 
