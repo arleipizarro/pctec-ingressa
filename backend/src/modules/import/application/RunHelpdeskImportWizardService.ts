@@ -152,6 +152,7 @@ export interface WriteUserInput {
   readonly membershipOrganizationPublicId: string;
   readonly applicationCode: string;
   readonly actorPublicId: string;
+  readonly correlationId: string;
   readonly recordItems: RecordItemsInTransaction;
 }
 
@@ -785,6 +786,7 @@ export class RunHelpdeskImportWizardService {
         membershipOrganizationPublicId: destino,
         applicationCode: target.application.code,
         actorPublicId,
+        correlationId: batchPublicId,
         recordItems: async (connection, targets) => {
           await this.recordWithinTransaction(connection, batchPublicId, planoUsuario.items, targets);
         }

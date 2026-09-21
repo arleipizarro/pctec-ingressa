@@ -23,7 +23,8 @@
     "preflight:application-access-uniqueness": "node dist/cli/preflight-application-access-uniqueness.js",
     "bootstrap:first-identity": "node dist/cli/bootstrap-first-identity.js",
     "bootstrap:first-admin-access": "node dist/cli/bootstrap-first-admin-access.js",
-    "bootstrap:first-credential": "node dist/cli/bootstrap-first-credential.js"
+    "bootstrap:first-credential": "node dist/cli/bootstrap-first-credential.js",
+    "rollout:portal-users": "node dist/cli/portal-users-rollout.js"
   },
   "dependencies": {
     "argon2": "0.45.1",

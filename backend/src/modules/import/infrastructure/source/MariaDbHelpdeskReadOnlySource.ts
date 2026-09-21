@@ -254,8 +254,10 @@ function ehFonteInalcancavel(erro: unknown): boolean {
 function toUser(row: UserRow): HelpdeskUserRecord {
   return {
     id: Number(row.id),
-    name: row.name,
-    email: row.email,
+    // Espaço acidental nas bordas não representa mudança cadastral.
+    // Normalizar aqui evita conflito falso com uma Identity já criada.
+    name: row.name.trim(),
+    email: row.email.trim(),
     role: row.role,
     active: toBoolean(row.active),
     clientId: row.client_id === null || row.client_id === undefined ? null : Number(row.client_id)

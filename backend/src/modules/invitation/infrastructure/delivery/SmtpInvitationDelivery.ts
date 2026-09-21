@@ -24,9 +24,16 @@ export interface InvitationEmailTransport {
   send(message: InvitationEmailMessage): Promise<void>;
 }
 
+export interface InvitationEmailProduct {
+  readonly nome: string;
+  readonly descricao: string;
+}
+
 export interface SmtpInvitationDeliveryOptions {
   readonly fromLabel: string;
   readonly supportContact: string;
+  /** Ausente preserva o catálogo genérico; rollouts podem limitar ao produto realmente concedido. */
+  readonly products?: readonly InvitationEmailProduct[];
 }
 
 /** Paleta índigo do HUB/Ingressa. Cliente de e-mail não lê custom property. */
@@ -53,7 +60,7 @@ const FONTE = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
  * administrador não concedeu seria mentir na primeira mensagem que a
  * pessoa recebe da PCTEC.
  */
-const PRODUTOS: readonly { readonly nome: string; readonly descricao: string }[] = [
+const PRODUTOS: readonly InvitationEmailProduct[] = [
   {
     nome: "Portal do Cliente",
     descricao: "Acompanhe seus contratos, equipamentos, informações financeiras e chamados."
@@ -184,7 +191,9 @@ function montarTexto({
   options: SmtpInvitationDeliveryOptions;
   link: string;
 }): string {
-  const produtos = PRODUTOS.map((p) => `- ${p.nome}\n  ${p.descricao}`).join("\n\n");
+  const produtos = (options.products ?? PRODUTOS)
+    .map((p) => `- ${p.nome}\n  ${p.descricao}`)
+    .join("\n\n");
   return (
     `${saudacao}\n\n` +
     `Bem-vindo ao ${options.fromLabel}, a central de acesso às aplicações da PCTEC.\n\n` +
@@ -229,7 +238,7 @@ function montarHtml({
     `<div style="font:400 13px/1.4 ${FONTE};color:${COR.textoMedio};margin-top:4px;">` +
     `Central de acesso às aplicações da PCTEC</div>`;
 
-  const listaDeProdutos = PRODUTOS.map(
+  const listaDeProdutos = (options.products ?? PRODUTOS).map(
     (p) =>
       `<tr><td style="padding:10px 14px;background:${COR.selecao};border-radius:8px;">` +
       `<div style="font:700 14px/1.4 ${FONTE};color:${COR.marca};">${escaparHtml(p.nome)}</div>` +

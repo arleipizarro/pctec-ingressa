@@ -109,7 +109,7 @@ describe("assistente Helpdesk — nenhuma credencial", () => {
     expect(codigo.toLowerCase()).not.toContain("credentials");
   });
 
-  it("o escritor do APPLY ativa a identidade federada por ÚLTIMO, depois das quatro escritas", () => {
+  it("o escritor do APPLY ativa a identidade para convite por ÚLTIMO, depois das quatro escritas", () => {
     // Recortado a partir de `writeUser`: `writeOrganization` também
     // chama `recordItems`, e procurar no arquivo inteiro acharia a
     // chamada da organização — que vem antes de tudo isto e faria o
@@ -118,7 +118,7 @@ describe("assistente Helpdesk — nenhuma credencial", () => {
     const corpoDoWriteUser = escritor.slice(escritor.indexOf("public async writeUser("));
 
     const posicaoDoLoop = corpoDoWriteUser.indexOf("for (const item of plan.items)");
-    const posicaoDaAtivacao = corpoDoWriteUser.indexOf("activateFederated.execute");
+    const posicaoDaAtivacao = corpoDoWriteUser.indexOf("identity.activate");
     const posicaoDoRegistro = corpoDoWriteUser.indexOf("await recordItems(connection, targets)");
 
     expect(posicaoDoLoop).toBeGreaterThan(-1);
@@ -130,6 +130,12 @@ describe("assistente Helpdesk — nenhuma credencial", () => {
     const escritor = codigoSemComentarios(ESCRITOR);
     expect(escritor).toContain("accessProfile: WIZARD_ACCESS_PROFILE");
     expect(escritor).not.toContain('"ADMIN"');
+  });
+
+  it("o rollout concede somente PCTEC_PORTAL e nunca PCTEC_HELPDESK", () => {
+    const escopo = codigoSemComentarios("../domain/wizard/HelpdeskImportScope.ts");
+    expect(escopo).toContain('WIZARD_APPLICATION_CODE = "PCTEC_PORTAL"');
+    expect(escopo).not.toContain('WIZARD_APPLICATION_CODE = "PCTEC_HELPDESK"');
   });
 });
 

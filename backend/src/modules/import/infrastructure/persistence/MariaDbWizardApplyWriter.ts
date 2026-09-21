@@ -2,10 +2,13 @@ import type { Queryable } from "../../../../shared/database/Queryable.js";
 import type { UnitOfWork } from "../../../../shared/database/UnitOfWork.js";
 import { DomainError } from "../../../../shared/errors/DomainError.js";
 import { MariaDbAuditEventRepository } from "../../../audit/infrastructure/MariaDbAuditEventRepository.js";
+import { AuditEvent } from "../../../audit/domain/AuditEvent.js";
 import { CreateIdentityService } from "../../../identity/application/CreateIdentityService.js";
 import { CreateIdentityExternalReferenceService } from "../../../identity/application/CreateIdentityExternalReferenceService.js";
 import { MariaDbIdentityRepository } from "../../../identity/infrastructure/persistence/MariaDbIdentityRepository.js";
 import { MariaDbIdentityExternalReferenceRepository } from "../../../identity/infrastructure/persistence/MariaDbIdentityExternalReferenceRepository.js";
+import { PublicId as IdentityPublicId } from "../../../identity/domain/value-objects/PublicId.js";
+import { ActorPublicId } from "../../../identity/domain/value-objects/ActorPublicId.js";
 import { CreateMembershipService } from "../../../organization/application/CreateMembershipService.js";
 import { CreateOrganizationService } from "../../../organization/application/CreateOrganizationService.js";
 import { CreateOrganizationExternalReferenceService } from "../../../organization/application/CreateOrganizationExternalReferenceService.js";
@@ -17,7 +20,6 @@ import { MariaDbOrganizationRelationshipRepository } from "../../../organization
 import { GrantApplicationAccessService } from "../../../application/application/GrantApplicationAccessService.js";
 import { MariaDbApplicationRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationRepository.js";
 import { MariaDbApplicationAccessRepository } from "../../../application/infrastructure/persistence/MariaDbApplicationAccessRepository.js";
-import { ActivateFederatedIdentityService } from "../../../helpdesk/application/ActivateFederatedIdentityService.js";
 import { ExistingConnectionUnitOfWork } from "../../../../shared/database/ExistingConnectionUnitOfWork.js";
 import type {
   WizardApplyWriter,
@@ -66,6 +68,18 @@ export class WizardIdentityNotResolvedError extends DomainError {
 
   constructor(legacyId: number) {
     super(`identidade de destino do usuário ${legacyId} não pôde ser resolvida antes das escritas dependentes.`);
+  }
+}
+
+export class WizardIdentityStatusNotEligibleError extends DomainError {
+  public readonly code = "IMPORT_WIZARD_IDENTITY_STATUS_NOT_ELIGIBLE";
+  public readonly classification = "CONFLICT" as const;
+
+  constructor(legacyId: number, status: string) {
+    super(
+      `identidade de destino do usuário ${legacyId} está ${status}; ` +
+        "o rollout do Portal só ativa identidades PENDING e preserva identidades ACTIVE."
+    );
   }
 }
 
@@ -208,7 +222,15 @@ export class MariaDbWizardApplyWriter implements WizardApplyWriter {
   }
 
   public async writeUser(input: WriteUserInput): Promise<WizardUserWriteResult> {
-    const { user, plan, membershipOrganizationPublicId, applicationCode, actorPublicId, recordItems } = input;
+    const {
+      user,
+      plan,
+      membershipOrganizationPublicId,
+      applicationCode,
+      actorPublicId,
+      correlationId,
+      recordItems
+    } = input;
 
     return this.unitOfWork.runInTransaction(async (connection) => {
       const inner = new ExistingConnectionUnitOfWork(connection);
@@ -239,14 +261,8 @@ export class MariaDbWizardApplyWriter implements WizardApplyWriter {
         (c) => new MariaDbApplicationAccessRepository(c),
         (c) => new MariaDbAuditEventRepository(c)
       );
-      const activateFederated = new ActivateFederatedIdentityService({
-        unitOfWork: inner,
-        identityRepositoryFactory: (c) => new MariaDbIdentityRepository(c),
-        identityExternalReferenceRepositoryFactory: (c) => new MariaDbIdentityExternalReferenceRepository(c),
-        applicationRepositoryFactory: (c) => new MariaDbApplicationRepository(c),
-        applicationAccessRepositoryFactory: (c) => new MariaDbApplicationAccessRepository(c),
-        auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c)
-      });
+      const identityRepository = new MariaDbIdentityRepository(connection);
+      const auditEventRepository = new MariaDbAuditEventRepository(connection);
 
       let identityPublicId = plan.existingIdentityPublicId;
 
@@ -316,20 +332,42 @@ export class MariaDbWizardApplyWriter implements WizardApplyWriter {
         }
       }
 
-      // Ativação por ÚLTIMO, e só quando as três relações e a concessão
-      // já existem nesta transação. Idempotente: identidade já ACTIVE
-      // devolve `alreadyActive` sem escrever nem auditar de novo.
-      const ativacao = await activateFederated.execute({
-        legacyUserId: user.id,
-        approvedByIdentityPublicId: actorPublicId
-      });
+      // Ativação administrativa por ÚLTIMO, depois de Membership e
+      // PCTEC_PORTAL/USER existirem na mesma transação. A referência ao
+      // Helpdesk permanece somente como proveniência da importação; ela
+      // não concede acesso ao produto Helpdesk e não participa do login.
+      const resolvedIdentityPublicId = requireIdentity(identityPublicId, user.id);
+      const identity = await identityRepository.findByPublicId(
+        IdentityPublicId.fromString(resolvedIdentityPublicId)
+      );
+      if (identity === undefined) {
+        throw new WizardIdentityNotResolvedError(user.id);
+      }
+
+      const statusBefore = identity.getStatus().toString();
+      let activatedNow = false;
+      if (statusBefore === "PENDING") {
+        const expectedVersion = identity.getVersion();
+        identity.activate({
+          actor: ActorPublicId.required(actorPublicId),
+          expectedVersion,
+          correlationId
+        });
+        await identityRepository.update(identity, expectedVersion);
+        await auditEventRepository.insertMany(
+          identity.pullDomainEvents().map((event) => AuditEvent.fromDomainEvent(event))
+        );
+        activatedNow = true;
+      } else if (statusBefore !== "ACTIVE") {
+        throw new WizardIdentityStatusNotEligibleError(user.id, statusBefore);
+      }
 
       await recordItems(connection, targets);
 
       return {
-        identityPublicId: requireIdentity(identityPublicId ?? ativacao.identityPublicId, user.id),
-        identityStatus: ativacao.status,
-        activatedNow: !ativacao.alreadyActive,
+        identityPublicId: resolvedIdentityPublicId,
+        identityStatus: identity.getStatus().toString(),
+        activatedNow,
         targetPublicIdByEntityKind: targets
       };
     });

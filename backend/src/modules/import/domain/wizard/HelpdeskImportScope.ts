@@ -42,17 +42,21 @@ export const WIZARD_SOURCE_CLIENT_ENTITY = "clients" as const;
  *  2. O escopo deixou de ser constante e passou a ser seleção assinada
  *     pelo ADMIN, presente no `scopeFingerprint`.
  *
- * A consequência é a mesma de sempre e é deliberada: um lote de
- * `helpdesk-v2` não autoriza apply nenhum sob `helpdesk-wizard-v1`, e
- * vice-versa. `ImportBatch.startApply` compara as versões e recusa.
+ * A consequência é a mesma de sempre e é deliberada: lotes produzidos
+ * pelas regras antigas de acesso ao Helpdesk não autorizam este rollout
+ * do Portal. `ImportBatch.startApply` compara as versões e recusa.
  */
-export const WIZARD_MAPPING_RULES_VERSION = "helpdesk-wizard-v1" as const;
+export const WIZARD_MAPPING_RULES_VERSION = "helpdesk-portal-rollout-v1" as const;
 
 /** Papel de usuário EXTERNO no Helpdesk — `admin`/`atendente` não entram. */
 export const WIZARD_SOURCE_EXTERNAL_ROLE = "cliente" as const;
 
 export const WIZARD_MEMBERSHIP_PROFILE = "CUSTOMER" as const;
-export const WIZARD_APPLICATION_CODE = "PCTEC_HELPDESK" as const;
+/**
+ * A origem dos usuários continua sendo o Helpdesk, mas o produto concedido
+ * é exclusivamente o Portal. O login atual do Helpdesk permanece intocado.
+ */
+export const WIZARD_APPLICATION_CODE = "PCTEC_PORTAL" as const;
 export const WIZARD_ACCESS_PROFILE = "USER" as const;
 export const WIZARD_ORGANIZATION_TYPE_COMPANY = "COMPANY" as const;
 export const WIZARD_ORGANIZATION_TYPE_BUSINESS_GROUP = "BUSINESS_GROUP" as const;
