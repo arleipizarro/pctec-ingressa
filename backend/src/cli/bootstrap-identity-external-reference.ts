@@ -1,4 +1,13 @@
+import { hostname } from "node:os";
+import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+
+import {
+  PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE,
+  normalizeConfirmation,
+  resolveBootstrapCeremony
+} from "./productionBootstrapGuard.js";
 import { loadEnv } from "../app/config/env.js";
 import { createPool } from "../shared/database/Pool.js";
 import { MariaDbUnitOfWork } from "../shared/database/UnitOfWork.js";
@@ -105,6 +114,8 @@ export function parseArgs(argv: readonly string[]): CliArgs {
 export interface DestructiveGateEnv {
   readonly nodeEnv: string;
   readonly allowWriteEnvVar: boolean;
+  /** Só `true` depois de a cerimônia ADR-027 validar ambiente, autorização e TTY. */
+  readonly productionCeremonyAllowed?: boolean | undefined;
 }
 
 export type DestructiveGateDecision =
@@ -119,7 +130,7 @@ export function evaluateIdentityExternalReferenceWriteGate(
   args: CliArgs,
   gateEnv: DestructiveGateEnv
 ): DestructiveGateDecision {
-  if (gateEnv.nodeEnv === "production") {
+  if (gateEnv.nodeEnv === "production" && gateEnv.productionCeremonyAllowed !== true) {
     return { allowed: false, reason: "production" };
   }
   if (!args.execute) {
@@ -134,23 +145,55 @@ export function evaluateIdentityExternalReferenceWriteGate(
   return { allowed: true, actorPublicId: args.actorPublicId };
 }
 
+const CONFIRMATION_PHRASE = "LINK_IDENTITY_EXTERNAL_REFERENCE";
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  const env = args.execute ? loadEnv() : undefined;
+  const nodeEnv = env?.NODE_ENV ?? process.env["NODE_ENV"] ?? "";
+  const ceremony =
+    env === undefined
+      ? undefined
+      : resolveBootstrapCeremony(CONFIRMATION_PHRASE, {
+          nodeEnv,
+          authorization: process.env[PRODUCTION_BOOTSTRAP_AUTHORIZATION_VARIABLE],
+          databaseName: env.DB_NAME,
+          hostname: hostname(),
+          interactive: stdin.isTTY === true
+        });
   const gateDecision = evaluateIdentityExternalReferenceWriteGate(args, {
-    nodeEnv: process.env["NODE_ENV"] ?? "",
-    allowWriteEnvVar: process.env["BOOTSTRAP_ALLOW_WRITE"]?.toLowerCase() === "true"
+    nodeEnv,
+    allowWriteEnvVar: process.env["BOOTSTRAP_ALLOW_WRITE"]?.toLowerCase() === "true",
+    productionCeremonyAllowed: ceremony?.allowed === true
   });
 
   if (!gateDecision.allowed) {
-    // eslint-disable-next-line no-console
     console.error(
       `[bootstrap-identity-external-reference] Recusado (motivo: ${gateDecision.reason}). Nada foi escrito.`
     );
     process.exitCode = 2;
     return;
   }
+  if (env === undefined || ceremony === undefined || !ceremony.allowed) {
+    console.error(ceremony !== undefined && !ceremony.allowed ? ceremony.message : "Configuração não carregada.");
+    process.exitCode = 2;
+    return;
+  }
 
-  const env = loadEnv();
+  if (nodeEnv === "production") {
+    for (const line of ceremony.preamble) console.log(line);
+    const rl = createInterface({ input: stdin, output: stdout });
+    const answer = await rl.question(
+      `Digite ${ceremony.confirmationPhrase} para confirmar (qualquer outra coisa cancela): `
+    );
+    rl.close();
+    if (normalizeConfirmation(answer) !== ceremony.confirmationPhrase) {
+      console.log("Cancelado. Nenhuma conexão de escrita foi aberta, nenhum vínculo foi criado.");
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const pool = createPool({
     host: env.DB_HOST,
     port: env.DB_PORT,
@@ -158,17 +201,14 @@ async function main(): Promise<void> {
     user: env.DB_USER,
     password: env.DB_PASSWORD
   });
-
   try {
-    const unitOfWork = new MariaDbUnitOfWork(pool);
-
-    const createIdentityExternalReferenceService = new CreateIdentityExternalReferenceService(
-      unitOfWork,
+    const service = new CreateIdentityExternalReferenceService(
+      new MariaDbUnitOfWork(pool),
       (connection) => new MariaDbIdentityRepository(connection),
       (connection) => new MariaDbIdentityExternalReferenceRepository(connection),
       (connection) => new MariaDbAuditEventRepository(connection)
     );
-    const result = await createIdentityExternalReferenceService.execute({
+    const result = await service.execute({
       identityPublicId: args.identityPublicId,
       systemCode: args.systemCode,
       entityType: args.entityType,
@@ -176,7 +216,6 @@ async function main(): Promise<void> {
       matchMethod: args.matchMethod,
       actorPublicId: gateDecision.actorPublicId
     });
-    // eslint-disable-next-line no-console
     console.log(
       `[bootstrap-identity-external-reference] IdentityExternalReference criada: ${result.publicId} (${result.systemCode}/${result.entityType} -> Identity ${result.identityPublicId})`
     );

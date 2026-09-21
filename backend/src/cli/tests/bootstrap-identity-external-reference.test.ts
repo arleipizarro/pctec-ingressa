@@ -210,8 +210,8 @@ describe("evaluateIdentityExternalReferenceWriteGate — H. --execute sem --acto
 // I. NODE_ENV=production → rejeitado sempre
 // ---------------------------------------------------------------------------
 
-describe("evaluateIdentityExternalReferenceWriteGate — I. NODE_ENV=production bloqueia SEMPRE", () => {
-  it("production bloqueia mesmo com todos os outros gates satisfeitos", () => {
+describe("evaluateIdentityExternalReferenceWriteGate — I. NODE_ENV=production exige cerimônia ADR-027", () => {
+  it("production bloqueia sem a cerimônia, mesmo com os outros gates satisfeitos", () => {
     expect(
       evaluateIdentityExternalReferenceWriteGate(
         {
@@ -246,6 +246,22 @@ describe("evaluateIdentityExternalReferenceWriteGate — I. NODE_ENV=production 
       { nodeEnv: "production", allowWriteEnvVar: true }
     );
     expect(result.allowed).toBe(false);
+  });
+
+  it("production permite escrita somente depois de a cerimônia ADR-027 ser validada", () => {
+    const result = evaluateIdentityExternalReferenceWriteGate(
+      {
+        identityPublicId: IDENTITY_PUBLIC_ID,
+        systemCode: "PCTEC_HELPDESK",
+        entityType: "users",
+        legacyId: "19",
+        matchMethod: "MATCHED_MANUAL_CONFIRMED",
+        execute: true,
+        actorPublicId: ACTOR_PUBLIC_ID
+      },
+      { nodeEnv: "production", allowWriteEnvVar: true, productionCeremonyAllowed: true }
+    );
+    expect(result).toEqual({ allowed: true, actorPublicId: ACTOR_PUBLIC_ID });
   });
 });
 
