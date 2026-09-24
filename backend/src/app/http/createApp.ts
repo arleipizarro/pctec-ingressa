@@ -1359,6 +1359,7 @@ export function createApp(options: CreateAppOptions = {}): Express {
         new MeuRhDirectoryService({
           pool: sharedPool!,
           unitOfWork: new MariaDbUnitOfWork(sharedPool!),
+          identityRepositoryFactory: (c) => new MariaDbIdentityRepository(c),
           membershipRepositoryFactory: (c) => new MariaDbMembershipRepository(c),
           auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c),
           // Fábricas de UnitOfWork, e não instâncias: dentro da

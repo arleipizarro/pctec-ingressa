@@ -11,6 +11,7 @@ import {
 import { extractSessionTokenFromCookieHeader } from "./sessionCookieParser.js";
 import { isCsrfSafeRequest } from "./csrfGuard.js";
 import { SessionValidationFailedError } from "../domain/errors/SessionValidationErrors.js";
+import { AuthenticationFailedError } from "../domain/errors/AuthenticationErrors.js";
 
 /**
  * Rotas HTTP do módulo `security` — v0.6.0/v0.6.x (ADR-030, Fases D/E).
@@ -78,7 +79,20 @@ export function createSessionRoutes(
           identity: { publicId: result.identityPublicId }
         });
       })
-      .catch(next);
+      .catch((erro: unknown) => {
+        // A resposta continua uniforme (401 genérico); o MOTIVO vai para
+        // o log do servidor. Sem isso, "a pessoa não consegue entrar" não
+        // tinha como distinguir senha errada de conta nunca ativada — o
+        // motivo existia no erro e morria aqui. Nunca o e-mail, nunca a
+        // senha: só o motivo fechado e o publicId, quando houve match.
+        if (erro instanceof AuthenticationFailedError) {
+          console.warn(
+            `[auth] login recusado: reason=${erro.reason}` +
+              ` identity=${erro.identityPublicId ?? "-"} correlation_id=${req.correlationId ?? "-"}`
+          );
+        }
+        next(erro);
+      });
   });
 
   // DELETE /api/v1/sessions/current — logout (v0.6.x, Fase E).

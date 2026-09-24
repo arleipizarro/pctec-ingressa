@@ -19,12 +19,19 @@ export class AuthenticationFailedError extends DomainError {
   public readonly classification = "AUTHENTICATION" as const;
 
   public readonly reason: AuthenticationFailureReason;
+  /**
+   * Identidade encontrada pelo e-mail, quando houve uma. Só para o log
+   * operacional — é o que permite responder "por que FULANA não entra?"
+   * sem o e-mail aparecer em lugar nenhum. Nunca serializado.
+   */
+  public readonly identityPublicId: string | undefined;
 
-  constructor(reason: AuthenticationFailureReason) {
+  constructor(reason: AuthenticationFailureReason, identityPublicId?: string) {
     // Mensagem sempre genérica — nunca inclui o e-mail informado, nunca
     // menciona a causa real.
     super("Não foi possível autenticar com as credenciais informadas.");
     this.reason = reason;
+    this.identityPublicId = identityPublicId;
   }
 }
 

@@ -69,3 +69,17 @@ export class MeuRhMembershipNotFoundError extends DomainError {
     super("Vínculo não encontrado para esta identidade nesta organização.");
   }
 }
+
+/**
+ * Quem pediu a ativação não é uma identidade ACTIVE com acesso ao Meu
+ * RH. O convite é atribuído a essa pessoa na auditoria; um ator que não
+ * poderia nem entrar no produto não autoriza ativar ninguém nele.
+ */
+export class MeuRhActivationActorNotEligibleError extends DomainError {
+  public readonly code = "MEU_RH_ACTIVATION_ACTOR_NOT_ELIGIBLE";
+  public readonly classification = "AUTHORIZATION" as const;
+
+  constructor() {
+    super("O ator informado não pode solicitar ativação no PCTEC Meu RH.");
+  }
+}

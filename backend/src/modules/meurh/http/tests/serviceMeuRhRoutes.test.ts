@@ -19,6 +19,7 @@ import type { AuthorizeApplicationAccessService } from "../../../authorization/a
 import type { RequireOrganizationAccessService } from "../../../portal/application/RequireOrganizationAccessService.js";
 import type { GetActiveOrganizationExternalReferenceService } from "../../../organization/application/GetActiveOrganizationExternalReferenceService.js";
 import type { MeuRhDirectoryService } from "../../application/MeuRhDirectoryService.js";
+import type { CreateIdentityInvitationService } from "../../../invitation/application/CreateIdentityInvitationService.js";
 import { MeuRhOrganizationAmbiguousError } from "../../application/errors/MeuRhErrors.js";
 import {
   SERVICE_CREDENTIAL_HEADER_NAME,
@@ -109,13 +110,62 @@ class FakeDiretorio {
     return { identity: IDENTIDADE_RESUMIDA, identityCreated, membershipCreated, applicationAccessGranted };
   }
 
+  /** Estado das identidades no "Ingressa" do teste, e a ordem das chamadas. */
+  public status = new Map<string, string>([[IDENTIDADE, "PENDING"]]);
+  public chamadas: string[] = [];
+
+  public async ativarParaPrimeiroAcesso(entrada: { identityPublicId: string; actorPublicId: string }) {
+    this.chamadas.push(`ativar:${entrada.identityPublicId}`);
+    const atual = this.status.get(entrada.identityPublicId);
+    if (atual === undefined) return "NOT_FOUND";
+    if (atual === "ACTIVE") return "ALREADY_ACTIVE";
+    if (atual !== "PENDING") return "NOT_ACTIVATABLE";
+    this.status.set(entrada.identityPublicId, "ACTIVE");
+    return "ACTIVATED";
+  }
+
   public async definirSituacaoDoVinculo(entrada: { identityPublicId: string; status: string }) {
     this.situacoesDefinidas.push({ identityPublicId: entrada.identityPublicId, status: entrada.status });
     return { membership: { publicId: VINCULO, status: entrada.status }, changed: true };
   }
 }
 
-async function subirServidor(diretorio: FakeDiretorio, credencial: string = CREDENCIAL_MEU_RH) {
+/**
+ * Convite com a MESMA elegibilidade do serviço real no ponto que importa
+ * aqui: identidade que não está ACTIVE é `SKIPPED/IDENTITY_NOT_ACTIVE`.
+ * Lê o status do diretório no momento da chamada — é isso que prova a
+ * ORDEM (ativar antes de convidar), e não só que as duas coisas rodaram.
+ */
+class FakeConvites {
+  public constructor(private readonly diretorio: FakeDiretorio) {}
+
+  public async execute(entrada: { identityPublicIds: readonly string[]; invitedByPublicId: string }) {
+    return {
+      deliveryMode: "SMTP",
+      results: entrada.identityPublicIds.map((identityPublicId) => {
+        this.diretorio.chamadas.push(`convidar:${identityPublicId}`);
+        const ativa = this.diretorio.status.get(identityPublicId) === "ACTIVE";
+        return {
+          identityPublicId,
+          fullName: "Fulana de Teste",
+          outcome: ativa ? "CREATED" : "SKIPPED",
+          reasonCode: ativa ? null : "IDENTITY_NOT_ACTIVE",
+          invitationPublicId: ativa ? "44444444-4444-4444-8444-000000000001" : null,
+          expiresAt: null,
+          deliveryMode: ativa ? "SMTP" : null,
+          delivered: ativa,
+          manualLink: ativa ? "https://ingressa.exemplo.test/convite#segredo-que-nao-pode-vazar" : null
+        };
+      })
+    };
+  }
+}
+
+async function subirServidor(
+  diretorio: FakeDiretorio,
+  credencial: string = CREDENCIAL_MEU_RH,
+  convites?: FakeConvites
+) {
   const app = createApp({
     validateSessionService: {
       execute: async () => ({ identityPublicId: IDENTIDADE, sessionPublicId: "sessao" })
@@ -127,7 +177,10 @@ async function subirServidor(diretorio: FakeDiretorio, credencial: string = CRED
     serviceCredential: CREDENCIAL_PORTAL,
     helpdeskServiceCredential: CREDENCIAL_HELPDESK,
     meuRhServiceCredential: credencial,
-    meuRhDirectoryService: diretorio as unknown as MeuRhDirectoryService
+    meuRhDirectoryService: diretorio as unknown as MeuRhDirectoryService,
+    ...(convites === undefined
+      ? {}
+      : { createIdentityInvitationService: convites as unknown as CreateIdentityInvitationService })
   });
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -334,5 +387,86 @@ describe("namespace /api/v1/service/meu-rh — contrato e idempotência", () => 
       // serialização — só `publicId` pode sair daqui (ADR-021).
       expect(texto).not.toMatch(/"id"\s*:/);
     }
+  });
+});
+
+describe("POST /identities/activation — participante PENDING recebe acesso de verdade", () => {
+  const ATOR = "22222222-2222-4222-8222-0000000000aa";
+  let server: Server;
+  let baseUrl: string;
+  let diretorio: FakeDiretorio;
+
+  beforeEach(async () => {
+    diretorio = new FakeDiretorio();
+    ({ server, baseUrl } = await subirServidor(diretorio, CREDENCIAL_MEU_RH, new FakeConvites(diretorio)));
+  });
+
+  afterEach(async () => {
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+  });
+
+  it("ativa ANTES de convidar: PENDING vira ACTIVE e o convite é CRIADO, não SKIPPED", async () => {
+    const res = await fetch(
+      `${baseUrl}/api/v1/service/meu-rh/identities/activation`,
+      comCredencial({ identityPublicIds: [IDENTIDADE], actorPublicId: ATOR })
+    );
+
+    expect(res.status).toBe(200);
+    const corpo = await lerJson<{ results: Array<Record<string, unknown>> }>(res);
+    expect(corpo.results).toEqual([
+      { identityPublicId: IDENTIDADE, activation: "ACTIVATED", outcome: "CREATED", reasonCode: null, delivered: true }
+    ]);
+    // A ordem é o defeito: convidar primeiro devolvia IDENTITY_NOT_ACTIVE.
+    expect(diretorio.chamadas).toEqual([`ativar:${IDENTIDADE}`, `convidar:${IDENTIDADE}`]);
+  });
+
+  it("reexecutar não reativa: ALREADY_ACTIVE, e o convite segue o fluxo normal", async () => {
+    diretorio.status.set(IDENTIDADE, "ACTIVE");
+    const res = await fetch(
+      `${baseUrl}/api/v1/service/meu-rh/identities/activation`,
+      comCredencial({ identityPublicIds: [IDENTIDADE], actorPublicId: ATOR })
+    );
+
+    const corpo = await lerJson<{ results: Array<Record<string, unknown>> }>(res);
+    expect(corpo.results[0]).toMatchObject({ activation: "ALREADY_ACTIVE", outcome: "CREATED" });
+  });
+
+  it("identidade BLOQUEADA não é ativada por este caminho — o convite continua recusando", async () => {
+    diretorio.status.set(IDENTIDADE, "BLOCKED");
+    const res = await fetch(
+      `${baseUrl}/api/v1/service/meu-rh/identities/activation`,
+      comCredencial({ identityPublicIds: [IDENTIDADE], actorPublicId: ATOR })
+    );
+
+    const corpo = await lerJson<{ results: Array<Record<string, unknown>> }>(res);
+    expect(corpo.results[0]).toMatchObject({
+      activation: "NOT_ACTIVATABLE",
+      outcome: "SKIPPED",
+      reasonCode: "IDENTITY_NOT_ACTIVE"
+    });
+    expect(diretorio.status.get(IDENTIDADE)).toBe("BLOCKED");
+  });
+
+  it("sem ator: recusa antes de ativar ou convidar qualquer pessoa", async () => {
+    const res = await fetch(
+      `${baseUrl}/api/v1/service/meu-rh/identities/activation`,
+      comCredencial({ identityPublicIds: [IDENTIDADE] })
+    );
+
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(diretorio.chamadas).toEqual([]);
+    expect(diretorio.status.get(IDENTIDADE)).toBe("PENDING");
+  });
+
+  it("o link do convite nunca volta ao consumidor", async () => {
+    const res = await fetch(
+      `${baseUrl}/api/v1/service/meu-rh/identities/activation`,
+      comCredencial({ identityPublicIds: [IDENTIDADE], actorPublicId: ATOR })
+    );
+
+    const texto = await res.text();
+    expect(texto).not.toContain("segredo-que-nao-pode-vazar");
+    expect(texto).not.toContain("manualLink");
+    expect(texto).not.toContain("invitationPublicId");
   });
 });

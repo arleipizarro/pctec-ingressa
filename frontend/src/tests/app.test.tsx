@@ -95,7 +95,12 @@ describe("login e proteção de rotas", () => {
     await userEvent.click(screen.getByRole("button", { name: "Entrar" }));
 
     const alerta = await screen.findByRole("alert");
-    expect(alerta).toHaveTextContent(/sessão expirou/i);
+    // Credencial recusada NÃO é sessão expirada: nesta tela não há
+    // sessão. A frase antiga mandava "entrar novamente" em loop quem
+    // nunca teve senha (participante do Meu RH ainda não ativado).
+    expect(alerta).not.toHaveTextContent(/sessão expirou/i);
+    expect(alerta).toHaveTextContent(/e-mail ou senha não conferem/i);
+    expect(alerta).toHaveTextContent(/primeiro acesso/i);
     expect(alerta.textContent ?? "").not.toMatch(/stack|SQL|Error:/i);
   });
 

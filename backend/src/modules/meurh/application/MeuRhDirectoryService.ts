@@ -9,12 +9,16 @@ import type { CreateOrganizationService } from "../../organization/application/C
 import type { CreateMembershipService } from "../../organization/application/CreateMembershipService.js";
 import type { GrantApplicationAccessService } from "../../application/application/GrantApplicationAccessService.js";
 import type { MembershipRepository } from "../../organization/domain/MembershipRepository.js";
+import type { IdentityRepository } from "../../identity/domain/IdentityRepository.js";
+import { PublicId as IdentityPublicId } from "../../identity/domain/value-objects/PublicId.js";
+import { ActorPublicId } from "../../identity/domain/value-objects/ActorPublicId.js";
 import type { AuditEventRepository } from "../../audit/domain/AuditEventRepository.js";
 import { AuditEvent } from "../../audit/domain/AuditEvent.js";
 import { MembershipProfile } from "../../organization/domain/value-objects/MembershipProfile.js";
 import { PCTEC_MEU_RH_APPLICATION_CODE, PCTEC_MEU_RH_APPLICATION_PUBLIC_ID } from "../../application/domain/value-objects/ApplicationCodes.js";
 import { Email } from "../../identity/domain/value-objects/Email.js";
 import {
+  MeuRhActivationActorNotEligibleError,
   MeuRhIdentityNotFoundError,
   MeuRhMembershipNotFoundError,
   MeuRhOrganizationAmbiguousError,
@@ -65,9 +69,21 @@ export interface ResultadoDeColaborador {
   readonly applicationAccessGranted: boolean;
 }
 
+/**
+ * O que a ativação fez com a identidade, ANTES do convite.
+ *
+ * - `ACTIVATED`: estava PENDING e passou a ACTIVE agora;
+ * - `ALREADY_ACTIVE`: nada a fazer — o convite decide o resto;
+ * - `NO_ACCESS`: sem `ApplicationAccess` ao Meu RH, nada foi escrito;
+ * - `NOT_ACTIVATABLE`: BLOCKED, INACTIVE etc. — outra decisão, outro fluxo;
+ * - `NOT_FOUND`: publicId desconhecido.
+ */
+export type ResultadoDaAtivacao = "ACTIVATED" | "ALREADY_ACTIVE" | "NO_ACCESS" | "NOT_ACTIVATABLE" | "NOT_FOUND";
+
 export interface MeuRhDirectoryDeps {
   readonly pool: Pool;
   readonly unitOfWork: UnitOfWork;
+  readonly identityRepositoryFactory: (connection: Queryable) => IdentityRepository;
   readonly membershipRepositoryFactory: (connection: Queryable) => MembershipRepository;
   readonly auditEventRepositoryFactory: (connection: Queryable) => AuditEventRepository;
   readonly createIdentityServiceFactory: (uow: UnitOfWork) => CreateIdentityService;
@@ -317,6 +333,73 @@ export class MeuRhDirectoryService {
       await auditEventRepository.insertMany(vinculo.pullDomainEvents().map((evento) => AuditEvent.fromDomainEvent(evento)));
 
       return { membership: { publicId: vinculo.getPublicId().toString(), status: vinculo.getStatus() }, changed: true };
+    });
+  }
+
+  /**
+   * Primeiro passo do fluxo oficial de ativação: PENDING → ACTIVE.
+   *
+   * **Por que existe.** O importador cria as identidades dos
+   * colaboradores em PENDING, e o convite de primeiro acesso EXIGE
+   * ACTIVE (`CreateIdentityInvitationService`). A rota de ativação do Meu
+   * RH chamava só o convite — que respondia `SKIPPED/IDENTITY_NOT_ACTIVE`
+   * para exatamente as pessoas que ela deveria ativar. O participante
+   * recebia o questionário, nunca recebia senha, e o login do Ingressa
+   * recusava qualquer tentativa.
+   *
+   * A transição é a do domínio (`identity.activate()`), com ator real e
+   * evento `identity.activated` — nunca UPDATE de status. Não toca
+   * credencial nem `login_enabled`: esses continuam nascendo só no
+   * resgate do convite, pela própria pessoa.
+   *
+   * Só ativa quem já tem `ApplicationAccess` ao Meu RH — é o acesso que
+   * dá propósito à ativação — e só a pedido de um ator ACTIVE que também
+   * o tem. Qualquer outro estado que não PENDING fica como está.
+   */
+  public async ativarParaPrimeiroAcesso(entrada: {
+    readonly identityPublicId: string;
+    readonly actorPublicId: string;
+    readonly correlationId?: string | undefined;
+  }): Promise<ResultadoDaAtivacao> {
+    const correlationId = entrada.correlationId ?? randomUUID();
+    const ator = ActorPublicId.required(IdentityPublicId.fromString(entrada.actorPublicId).toString());
+    const alvo = IdentityPublicId.fromString(entrada.identityPublicId);
+
+    if ((await this.perfilDeAcesso(ator.toString())) === null) {
+      throw new MeuRhActivationActorNotEligibleError();
+    }
+    if ((await this.perfilDeAcesso(alvo.toString())) === null) {
+      return "NO_ACCESS";
+    }
+
+    return this.deps.unitOfWork.runInTransaction(async (connection) => {
+      const identityRepository = this.deps.identityRepositoryFactory(connection);
+      const auditEventRepository = this.deps.auditEventRepositoryFactory(connection);
+
+      const quemPede = await identityRepository.findByPublicId(IdentityPublicId.fromString(ator.toString()));
+      if (quemPede === undefined || quemPede.getStatus().toString() !== "ACTIVE") {
+        throw new MeuRhActivationActorNotEligibleError();
+      }
+
+      const identidade = await identityRepository.findByPublicId(alvo);
+      if (identidade === undefined) {
+        return "NOT_FOUND";
+      }
+      const status = identidade.getStatus().toString();
+      if (status === "ACTIVE") {
+        return "ALREADY_ACTIVE";
+      }
+      if (status !== "PENDING") {
+        return "NOT_ACTIVATABLE";
+      }
+
+      const versaoOriginal = identidade.getVersion();
+      identidade.activate({ actor: ator, expectedVersion: versaoOriginal, correlationId });
+      await identityRepository.update(identidade, versaoOriginal);
+      await auditEventRepository.insertMany(
+        identidade.pullDomainEvents().map((evento) => AuditEvent.fromDomainEvent(evento))
+      );
+      return "ACTIVATED";
     });
   }
 }
