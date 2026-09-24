@@ -120,6 +120,9 @@ export function createServiceMeuRhRoutes(
    * POST /identities/activation — o FLUXO OFICIAL de ativação, pedido
    * pelo produto consumidor.
    *
+   * Dois passos, nesta ordem: PENDING → ACTIVE pela transição do
+   * domínio (`ativarParaPrimeiroAcesso`) e, então, o convite.
+   *
    * Delega ao MESMO `CreateIdentityInvitationService` que a UI
    * administrativa usa: mesma elegibilidade, mesmo token, mesmo prazo,
    * mesma entrega, mesma auditoria. Nenhum caminho paralelo de convite
@@ -150,6 +153,21 @@ export function createServiceMeuRhRoutes(
       if (ator.length === 0) {
         throw new MeuRhIdentityNotFoundError();
       }
+      // Ativar ANTES de convidar. O convite exige ACTIVE, e quem o Meu
+      // RH pede para ativar é justamente quem o importador criou PENDING
+      // — sem este passo, a resposta era `SKIPPED/IDENTITY_NOT_ACTIVE`
+      // para todas elas, e o participante nunca recebia senha.
+      const ativacoes = new Map<string, string>();
+      for (const identityPublicId of new Set(identidades.map((id) => id.trim()))) {
+        ativacoes.set(
+          identityPublicId,
+          await service.ativarParaPrimeiroAcesso({
+            identityPublicId,
+            actorPublicId: ator,
+            correlationId: req.correlationId
+          })
+        );
+      }
       const resultado = await createIdentityInvitationService.execute({
         identityPublicIds: identidades,
         invitedByPublicId: ator,
@@ -161,6 +179,7 @@ export function createServiceMeuRhRoutes(
         // consumidor precisa saber SE funcionou, nunca o segredo.
         results: resultado.results.map((item) => ({
           identityPublicId: item.identityPublicId,
+          activation: ativacoes.get(item.identityPublicId) ?? null,
           outcome: item.outcome,
           reasonCode: item.reasonCode,
           delivered: item.delivered

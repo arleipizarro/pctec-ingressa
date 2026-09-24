@@ -18,6 +18,22 @@ function destinoDeRetomada(next: string | null): string | null {
   return next !== null && next.startsWith(RETOMADA_PERMITIDA) ? next : null;
 }
 
+/**
+ * O que dizer quando o LOGIN é recusado (401 em `POST /sessions`).
+ *
+ * Não é "sua sessão expirou": nesta tela não há sessão nenhuma a
+ * expirar — há e-mail e senha que não foram aceitos. A mensagem genérica
+ * por status mandava a pessoa "entrar novamente", ela entrava, recebia a
+ * mesma frase, e concluía que o link estava quebrado. Quem nunca ativou
+ * a conta não tem senha que funcione, e precisa saber onde buscá-la.
+ *
+ * Continua uniforme de propósito: não diz se o e-mail existe, nem qual
+ * das condições falhou (proteção contra enumeração, ADR-030).
+ */
+export const MENSAGEM_LOGIN_RECUSADO =
+  "E-mail ou senha não conferem. Se este é o seu primeiro acesso, defina sua senha pelo link " +
+  "de ativação enviado pelo PCTEC Ingressa; se não o recebeu, fale com o RH.";
+
 export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void> }): JSX.Element {
   const [parametros] = useSearchParams();
   const [email, setEmail] = useState("");
@@ -46,7 +62,13 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
       // pergunta de novo quem ele é.
       await onAutenticado();
     } catch (falha) {
-      setErro(falha instanceof ApiError ? falha.message : "Não foi possível entrar.");
+      setErro(
+        falha instanceof ApiError
+          ? falha.status === 401
+            ? MENSAGEM_LOGIN_RECUSADO
+            : falha.message
+          : "Não foi possível entrar."
+      );
     } finally {
       setEnviando(false);
     }

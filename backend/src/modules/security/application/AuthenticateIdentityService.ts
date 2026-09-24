@@ -78,12 +78,12 @@ export class AuthenticateIdentityService {
 
     if (identity.getStatus().toString() !== "ACTIVE") {
       await this.passwordVerifier.verify(plainPassword, DUMMY_PASSWORD_HASH);
-      throw new AuthenticationFailedError("IDENTITY_NOT_ACTIVE");
+      throw new AuthenticationFailedError("IDENTITY_NOT_ACTIVE", identity.getPublicId().toString());
     }
 
     if (!identity.isLoginEnabled()) {
       await this.passwordVerifier.verify(plainPassword, DUMMY_PASSWORD_HASH);
-      throw new AuthenticationFailedError("LOGIN_NOT_ENABLED");
+      throw new AuthenticationFailedError("LOGIN_NOT_ENABLED", identity.getPublicId().toString());
     }
 
     const credential = await this.credentialRepository.findByIdentityAndType(
@@ -92,19 +92,19 @@ export class AuthenticateIdentityService {
     );
     if (credential === undefined) {
       await this.passwordVerifier.verify(plainPassword, DUMMY_PASSWORD_HASH);
-      throw new AuthenticationFailedError("CREDENTIAL_NOT_FOUND");
+      throw new AuthenticationFailedError("CREDENTIAL_NOT_FOUND", identity.getPublicId().toString());
     }
 
     if (!credential.isActive()) {
       await this.passwordVerifier.verify(plainPassword, DUMMY_PASSWORD_HASH);
-      throw new AuthenticationFailedError("CREDENTIAL_NOT_ACTIVE");
+      throw new AuthenticationFailedError("CREDENTIAL_NOT_ACTIVE", identity.getPublicId().toString());
     }
 
     const passwordMatches = await this.passwordVerifier.verify(plainPassword, credential.getPasswordHash());
     if (!passwordMatches) {
       // Caminho real (não dummy) — já pagou o custo do Argon2id de
       // verdade, nenhum dummy adicional necessário aqui.
-      throw new AuthenticationFailedError("INVALID_PASSWORD");
+      throw new AuthenticationFailedError("INVALID_PASSWORD", identity.getPublicId().toString());
     }
 
     const expectedVersion = credential.getVersion();
