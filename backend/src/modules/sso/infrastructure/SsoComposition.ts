@@ -1,4 +1,5 @@
 import {
+  PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE,
   PCTEC_MEU_RH_APPLICATION_CODE,
   PCTEC_PORTAL_APPLICATION_CODE
 } from "../../application/domain/value-objects/ApplicationCodes.js";
@@ -45,6 +46,16 @@ export interface SsoCompositionInput {
    * ISSUANCE_POLICY_NOT_DECLARED (ADR-035).
    */
   readonly meuRhIssuancePolicies: readonly SsoIssuancePolicy[];
+  /**
+   * PCTEC Central de Serviços N1. Mesmo desenho do Meu RH: lista vazia de
+   * URIs mantém o cliente desregistrado. Políticas de emissão: nenhuma
+   * além do gate genérico — ter perfil (N1_OPERADOR/APROVADOR_TI) é
+   * decidido DENTRO do produto, que recusa a sessão sem perfil; transformar
+   * isso em política aqui duplicaria a regra em dois lugares.
+   */
+  readonly centralServicosRedirectUris?: readonly string[];
+  readonly centralServicosLaunchUrl?: string;
+  readonly centralServicosIssuancePolicies?: readonly SsoIssuancePolicy[];
 }
 
 export interface SsoComposition {
@@ -103,6 +114,16 @@ export function composeSso(input: SsoCompositionInput): SsoComposition {
     issuancePolicies[PCTEC_MEU_RH_APPLICATION_CODE] = input.meuRhIssuancePolicies;
   }
 
+  const centralServicosUris = input.centralServicosRedirectUris ?? [];
+  if (centralServicosUris.length > 0) {
+    clients.push({
+      clientId: PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE,
+      redirectUris: [...centralServicosUris],
+      launchUrl: input.centralServicosLaunchUrl ?? ""
+    });
+    issuancePolicies[PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE] = input.centralServicosIssuancePolicies ?? [];
+  }
+
   return {
     registry: new SsoClientRegistry(clients),
     issuancePolicyRegistry: new SsoIssuancePolicyRegistry(issuancePolicies),
@@ -111,7 +132,8 @@ export function composeSso(input: SsoCompositionInput): SsoComposition {
     // barraria todo colaborador comum na porta do produto feito para ele.
     requiredProfileByClientId: Object.freeze({
       [PCTEC_PORTAL_APPLICATION_CODE]: "USER",
-      [PCTEC_MEU_RH_APPLICATION_CODE]: "USER"
+      [PCTEC_MEU_RH_APPLICATION_CODE]: "USER",
+      [PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE]: "USER"
     })
   };
 }

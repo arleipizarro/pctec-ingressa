@@ -7,9 +7,13 @@ import {
   MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME
 } from "../../identity/http/identityResolutionServiceConsumers.js";
 import {
+  PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE,
   PCTEC_MEU_RH_APPLICATION_CODE,
   PCTEC_PORTAL_APPLICATION_CODE
 } from "../../application/domain/value-objects/ApplicationCodes.js";
+
+/** Header PRÓPRIO da Central de Serviços N1 (repositório pctec-servicos). */
+export const CENTRAL_SERVICOS_SERVICE_CREDENTIAL_HEADER_NAME = "x-central-servicos-service-credential";
 
 /**
  * Consumidores autorizados a TROCAR um código de autorização por
@@ -42,12 +46,14 @@ import {
  */
 export const APPLICATION_CODE_POR_CONSUMIDOR: Readonly<Record<string, string>> = Object.freeze({
   [PCTEC_PORTAL_APPLICATION_CODE]: PCTEC_PORTAL_APPLICATION_CODE,
-  [MEU_RH_CONSUMER_CODE]: PCTEC_MEU_RH_APPLICATION_CODE
+  [MEU_RH_CONSUMER_CODE]: PCTEC_MEU_RH_APPLICATION_CODE,
+  [PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE]: PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE
 });
 
 export function buildSsoTokenServiceConsumers(credentials: {
   readonly portal: string;
   readonly meuRh: string;
+  readonly centralServicos?: string;
 }): readonly ServiceCredentialConsumer[] {
   return [
     {
@@ -59,6 +65,11 @@ export function buildSsoTokenServiceConsumers(credentials: {
       consumerCode: MEU_RH_CONSUMER_CODE,
       headerName: MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME,
       credential: credentials.meuRh
+    },
+    {
+      consumerCode: PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE,
+      headerName: CENTRAL_SERVICOS_SERVICE_CREDENTIAL_HEADER_NAME,
+      credential: credentials.centralServicos ?? ""
     }
   ];
 }

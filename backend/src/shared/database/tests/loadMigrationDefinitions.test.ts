@@ -34,7 +34,10 @@ describe("loadMigrationDefinitions", () => {
       "0026_seed_pctec_meu_rh_application",
       "0027_create_application_roles",
       "0028_create_application_role_assignments",
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      "0030_seed_pctec_central_servicos_application",
+      "0031_seed_central_servicos_application_roles",
+      "0032_create_delegation_assertions"
     ]);
 
     for (const migration of migrations) {
@@ -43,7 +46,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029/0030/0031 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028/0032 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
@@ -58,7 +61,11 @@ describe("loadMigrationDefinitions", () => {
       "0026_seed_pctec_meu_rh_application",
       // 0029 semeia o CATÁLOGO de perfis do Meu RH em
       // `application_roles`; a tabela que ele preenche nasce em 0027.
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      // 0030 registra a Application da Central de Serviços; 0031 semeia
+      // os perfis dela no catálogo de 0027.
+      "0030_seed_pctec_central_servicos_application",
+      "0031_seed_central_servicos_application_roles"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -478,7 +485,11 @@ describe("loadMigrationDefinitions", () => {
       // impede a remoção se houver qualquer concessão apontando para
       // elas — ninguém perde a rastreabilidade de uma autorização
       // porque alguém reverteu um seed.
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      // 0030/0031: mesmo par da Central de Serviços N1 (Application e
+      // catálogo de perfis), revertidos por public_id.
+      "0030_seed_pctec_central_servicos_application",
+      "0031_seed_central_servicos_application_roles"
     ]);
 
     for (const migration of migrations) {
@@ -509,7 +520,7 @@ describe("loadMigrationDefinitions", () => {
     for (const seedMigrationId of seedMigrationIds) {
       const seedMigration = migrations.find((m) => m.id === seedMigrationId);
       const alvo =
-        seedMigrationId === "0029_seed_meu_rh_application_roles"
+        seedMigrationId === "0029_seed_meu_rh_application_roles" || seedMigrationId === "0031_seed_central_servicos_application_roles"
           ? "DELETE FROM APPLICATION_ROLES WHERE APPLICATION_PUBLIC_ID ="
           : "DELETE FROM APPLICATIONS WHERE PUBLIC_ID =";
       expect(seedMigration?.down.toUpperCase()).toContain(alvo);
@@ -544,7 +555,8 @@ describe("loadMigrationDefinitions", () => {
     "0007_seed_pctec_ingressa_application",
     "0014_seed_pctec_portal_application",
     "0018_seed_pctec_helpdesk_application",
-    "0026_seed_pctec_meu_rh_application"
+    "0026_seed_pctec_meu_rh_application",
+    "0030_seed_pctec_central_servicos_application"
   ] as const;
 
   it("a lista de seeds de application acima é exata — nenhuma seed fora dela", () => {

@@ -115,6 +115,13 @@ const envSchema = z.object({
   // E esse justamente o estado esperado enquanto o Arquiteto nao
   // autorizar o consumidor: a fundacao fica pronta e fechada.
   INGRESSA_MEU_RH_SERVICE_CREDENTIAL: z.string().default(""),
+  // Credencial da PCTEC Central de Serviços N1 (repositório pctec-servicos):
+  // abre SÓ `/api/v1/service/central-servicos` e a troca de código SSO do
+  // próprio cliente. Vazia = namespace indisponível (401), nunca aberto.
+  INGRESSA_CENTRAL_SERVICOS_SERVICE_CREDENTIAL: z.string().default(""),
+  // Validade das asserções de delegação (Central → Helpdesk). Curta: cobre
+  // reenvio de uma ação, não armazenamento de prova.
+  INGRESSA_DELEGATION_ASSERTION_TTL_SECONDS: z.coerce.number().int().min(60).max(86400).default(3600),
   // --- Protecao contra forca bruta no login (D8, ADR-034) -------------
   //
   // Default LIGADO. Um limitador que so protege quando alguem lembra de
@@ -198,6 +205,18 @@ const envSchema = z.object({
   // desabilitado, nunca ausente: o acesso existe, o destino é que não
   // foi configurado.
   SSO_MEU_RH_LAUNCH_URL: z.string().default(""),
+  // Mesmo par para a PCTEC Central de Serviços N1. Vazio = cliente NÃO
+  // registrado (authorize responde 400), e card do launcher desabilitado.
+  SSO_CENTRAL_SERVICOS_REDIRECT_URIS: z
+    .string()
+    .default("")
+    .transform((value) =>
+      value
+        .split(",")
+        .map((uri) => uri.trim())
+        .filter((uri) => uri.length > 0)
+    ),
+  SSO_CENTRAL_SERVICOS_LAUNCH_URL: z.string().default(""),
   // Validade do código de autorização. O teto real (60s) vive no
   // agregado `AuthorizationCode` — esta variável só permite encurtar,
   // nunca esticar: afrouxar a janela de replay não pode ser um ajuste de

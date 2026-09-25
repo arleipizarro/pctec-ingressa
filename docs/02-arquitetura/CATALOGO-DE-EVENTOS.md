@@ -534,3 +534,19 @@ implementado ainda.
   `identity_public_id` está fora do escopo desta entrega (restrita ao
   bounded context `identity`) e fica registrado aqui como pendência para
   uma revisão de consistência de plataforma futura.
+
+
+### delegation-assertion.issued
+
+Asserção de delegação emitida pelo Ingressa a pedido da PCTEC Central de
+Serviços N1, em nome de uma identidade autorizada, para UMA ação no
+Helpdesk. `aggregatePublicId` = public_id da asserção; `actorPublicId` = a
+identidade em nome de quem a ação é pedida. Payload: `assertionPublicId`,
+`issuerApplicationCode`, `audienceApplicationCode`, `ticketId`,
+`actionKind`, `expiresAt`. Nunca contém o token.
+
+### delegation-assertion.consumed
+
+O destinatário (Helpdesk) verificou e consumiu a asserção — primeiro e
+único uso. Payload: `assertionPublicId`, `consumer`, `ticketId`,
+`actionKind`.

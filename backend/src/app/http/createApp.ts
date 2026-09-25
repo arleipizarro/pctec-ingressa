@@ -117,7 +117,17 @@ import { ProvisionOrganizationService } from "../../modules/organization/applica
 import { ProvisionOrganizationUserService } from "../../modules/admin/application/ProvisionOrganizationUserService.js";
 import { CreateIdentityService } from "../../modules/identity/application/CreateIdentityService.js";
 import { PCTEC_HELPDESK_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
-import { PCTEC_MEU_RH_APPLICATION_CODE } from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import {
+  PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE,
+  PCTEC_MEU_RH_APPLICATION_CODE
+} from "../../modules/application/domain/value-objects/ApplicationCodes.js";
+import { CentralServicosService } from "../../modules/centralservicos/application/CentralServicosService.js";
+import { MariaDbCentralServicosPersistence } from "../../modules/centralservicos/infrastructure/persistence/MariaDbCentralServicosPersistence.js";
+import {
+  createServiceCentralServicosRoutes,
+  createServiceHelpdeskDelegationRoutes
+} from "../../modules/centralservicos/http/serviceCentralServicosRoutes.js";
+import { CENTRAL_SERVICOS_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/sso/http/ssoTokenServiceConsumers.js";
 import { MeuRhDirectoryService } from "../../modules/meurh/application/MeuRhDirectoryService.js";
 import { createServiceMeuRhRoutes } from "../../modules/meurh/http/serviceMeuRhRoutes.js";
 import { MEU_RH_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/identity/http/identityResolutionServiceConsumers.js";
@@ -224,6 +234,14 @@ export interface CreateAppOptions {
    * `/api/v1/service/meu-rh` INDISPONÍVEL (401 a tudo), nunca aberto.
    */
   readonly meuRhServiceCredential?: string;
+  /**
+   * PCTEC Central de Serviços N1. Quando omitido, lido de
+   * `INGRESSA_CENTRAL_SERVICOS_SERVICE_CREDENTIAL`. Vazio = namespace
+   * `/api/v1/service/central-servicos` INDISPONÍVEL (401 a tudo).
+   */
+  readonly centralServicosServiceCredential?: string;
+  /** Injetável para testes de rota, sem banco. */
+  readonly centralServicosService?: CentralServicosService;
   /** Injetável para teste; por padrão é composto aqui a partir dos demais. */
   readonly getHelpdeskUserContextService?: GetHelpdeskUserContextService;
   /**
@@ -705,7 +723,11 @@ export function createApp(options: CreateAppOptions = {}): Express {
     meuRhLaunchUrl: env.SSO_MEU_RH_LAUNCH_URL,
     // Nenhuma política ALÉM do gate genérico — ver a nota do campo em
     // `SsoCompositionInput`. Lista vazia declarada, e não ausência.
-    meuRhIssuancePolicies: []
+    meuRhIssuancePolicies: [],
+    centralServicosRedirectUris: env.SSO_CENTRAL_SERVICOS_REDIRECT_URIS,
+    centralServicosLaunchUrl: env.SSO_CENTRAL_SERVICOS_LAUNCH_URL,
+    // Gate genérico apenas; a exigência de perfil é do produto.
+    centralServicosIssuancePolicies: []
   });
   const unitOfWork = sharedPool === undefined ? undefined : new MariaDbUnitOfWork(sharedPool);
 
@@ -748,6 +770,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
   }
   if (env.SSO_MEU_RH_LAUNCH_URL.trim().length > 0) {
     launchUrlByApplicationCode[PCTEC_MEU_RH_APPLICATION_CODE] = env.SSO_MEU_RH_LAUNCH_URL;
+  }
+  if (env.SSO_CENTRAL_SERVICOS_LAUNCH_URL.trim().length > 0) {
+    launchUrlByApplicationCode[PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE] = env.SSO_CENTRAL_SERVICOS_LAUNCH_URL;
   }
 
   const getMyApplicationsService =
@@ -1300,7 +1325,8 @@ export function createApp(options: CreateAppOptions = {}): Express {
     createRequireOneOfServiceCredentials(
       buildSsoTokenServiceConsumers({
         portal: serviceCredential,
-        meuRh: options.meuRhServiceCredential ?? loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL
+        meuRh: options.meuRhServiceCredential ?? loadEnv().INGRESSA_MEU_RH_SERVICE_CREDENTIAL,
+        centralServicos: options.centralServicosServiceCredential ?? loadEnv().INGRESSA_CENTRAL_SERVICOS_SERVICE_CREDENTIAL
       })
     ),
     createServiceSsoTokenRoutes(exchangeAuthorizationCodeService, sso.registry, sso.requiredProfileByClientId)
@@ -1318,10 +1344,42 @@ export function createApp(options: CreateAppOptions = {}): Express {
   //   → GetHelpdeskUserContextService (referência externa → Identity
   //     ACTIVE → ApplicationAccess(PCTEC_HELPDESK, USER) → Memberships)
   //   → organizations sanitizadas.
+  // Central de Serviços N1: UMA instância, dois namespaces — a Central
+  // pede asserções no dela, e o Helpdesk (destinatário) as verifica no
+  // dele, cada um com a própria credencial.
+  const centralServicosService =
+    options.centralServicosService ??
+    new CentralServicosService({
+      persistencia: new MariaDbCentralServicosPersistence(
+        sharedPool!,
+        new MariaDbUnitOfWork(sharedPool!),
+        (c) => new MariaDbAuditEventRepository(c)
+      ),
+      validadeAssercaoSegundos: loadEnv().INGRESSA_DELEGATION_ASSERTION_TTL_SECONDS
+    });
+
   app.use(
     "/api/v1/service/helpdesk",
     createRequireServiceCredential(helpdeskServiceCredential, HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME),
-    createServiceHelpdeskUserContextRoutes(getHelpdeskUserContextService)
+    createServiceHelpdeskUserContextRoutes(getHelpdeskUserContextService),
+    // O Helpdesk verifica e consome a asserção que a Central pediu em nome
+    // do operador. Nenhuma chamada do Helpdesk existe ainda (etapa futura).
+    createServiceHelpdeskDelegationRoutes(centralServicosService)
+  );
+
+  // /api/v1/service/central-servicos/* — PCTEC Central de Serviços N1.
+  //
+  // NAMESPACE PRÓPRIO, com CREDENCIAL e HEADER PRÓPRIOS. Contrato fechado
+  // na própria aplicação (ver CentralServicosService): autorização de
+  // PCTEC_CENTRAL_SERVICOS e emissão de asserção — nada de ler acesso ou
+  // perfil de outros produtos. Nunca browser-facing.
+  app.use(
+    "/api/v1/service/central-servicos",
+    createRequireServiceCredential(
+      options.centralServicosServiceCredential ?? loadEnv().INGRESSA_CENTRAL_SERVICOS_SERVICE_CREDENTIAL,
+      CENTRAL_SERVICOS_SERVICE_CREDENTIAL_HEADER_NAME
+    ),
+    createServiceCentralServicosRoutes(centralServicosService)
   );
 
   // /api/v1/service/meu-rh/* — Etapa 1 do PCTEC Meu RH.

@@ -90,3 +90,20 @@ export const PCTEC_MEU_RH_APPLICATION_CODE = "PCTEC_MEU_RH" as const;
 export const PCTEC_MEU_RH_APPLICATION_NAME = "PCTEC Meu RH" as const;
 
 export const PCTEC_MEU_RH_APPLICATION_PUBLIC_ID = "9a4e6d17-2c85-4b93-8e61-000000000001" as const;
+
+/**
+ * `PCTEC_CENTRAL_SERVICOS` — Application própria da PCTEC Central de
+ * Serviços N1 (repositório `pctec-servicos`), pelo mesmo princípio de
+ * ADR-031 §1. Nunca reaproveita nenhuma das outras: quem opera a Central
+ * não ganha Helpdesk, Portal, Meu RH nem administração do Ingressa por
+ * tabela nenhuma, e o contrário também não vale.
+ *
+ * `public_id` determinístico pelo mesmo raciocínio das demais — metadado
+ * técnico estável, igual entre ambientes, fixado por migration
+ * (`0030_seed_pctec_central_servicos_application.up.sql`).
+ */
+export const PCTEC_CENTRAL_SERVICOS_APPLICATION_CODE = "PCTEC_CENTRAL_SERVICOS" as const;
+
+export const PCTEC_CENTRAL_SERVICOS_APPLICATION_NAME = "PCTEC Central de Serviços" as const;
+
+export const PCTEC_CENTRAL_SERVICOS_APPLICATION_PUBLIC_ID = "7e2d4c86-3b51-4f9a-8d20-000000000001" as const;
