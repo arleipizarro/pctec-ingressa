@@ -420,6 +420,14 @@ export function UsuarioDetalhePage(): JSX.Element {
                 (a) => a.application_code === "PCTEC_MEU_RH" && a.status === "GRANTED"
               )}
             />
+            <PerfisDaIdentidade
+              identityPublicId={publicId}
+              applicationCode="PCTEC_PORTAL"
+              nomeDaAplicacao="Portal do Cliente"
+              temAcessoConcedido={dados.applicationAccesses.some(
+                (a) => a.application_code === "PCTEC_PORTAL" && a.status === "GRANTED"
+              )}
+            />
 
             {acao?.tipo === "conceder" && (
               <FormularioConcederAcesso

@@ -71,7 +71,7 @@ describe("build", () => {
     expect(existsSync(DIST_CLI_BOOTSTRAP_FIRST_CREDENTIAL_JS)).toBe(true);
   });
 
-  it("gera dist/shared/database/migrations/ com exatamente as 58 migrations atuais (0001-0029, up/down)", () => {
+  it("gera dist/shared/database/migrations/ com exatamente as 60 migrations atuais (0001-0029 e 0033, up/down)", () => {
     expect(existsSync(DIST_MIGRATIONS_DIR)).toBe(true);
     const distFiles = readdirSync(DIST_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql")).sort();
     expect(distFiles).toEqual([
@@ -132,13 +132,15 @@ describe("build", () => {
       "0028_create_application_role_assignments.down.sql",
       "0028_create_application_role_assignments.up.sql",
       "0029_seed_meu_rh_application_roles.down.sql",
-      "0029_seed_meu_rh_application_roles.up.sql"
+      "0029_seed_meu_rh_application_roles.up.sql",
+      "0033_seed_portal_application_roles.down.sql",
+      "0033_seed_portal_application_roles.up.sql"
     ]);
   });
 
   it("cada arquivo copiado para dist/ tem SHA-256 idêntico ao arquivo fonte em src/ (cópia byte-a-byte)", () => {
     const srcFiles = readdirSync(SRC_MIGRATIONS_DIR).filter((name) => name.endsWith(".sql"));
-    expect(srcFiles.length).toBe(58);
+    expect(srcFiles.length).toBe(60);
     for (const name of srcFiles) {
       const srcHash = sha256(path.join(SRC_MIGRATIONS_DIR, name));
       const distHash = sha256(path.join(DIST_MIGRATIONS_DIR, name));
@@ -146,7 +148,7 @@ describe("build", () => {
     }
   });
 
-  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 29 migrations (0001-0029) sem depender de src/ nem de banco", async () => {
+  it("loadMigrationDefinitions, executado a partir do artefato COMPILADO, enumera as 30 migrations (0001-0029 e 0033) sem depender de src/ nem de banco", async () => {
     const compiledModuleUrl = pathToFileURL(path.join(DIST_DIR, "shared", "database", "loadMigrationDefinitions.js")).href;
     const { loadMigrationDefinitions } = (await import(compiledModuleUrl)) as {
       loadMigrationDefinitions: () => Array<{ id: string; up: string; down: string }>;
@@ -183,7 +185,8 @@ describe("build", () => {
       "0026_seed_pctec_meu_rh_application",
       "0027_create_application_roles",
       "0028_create_application_role_assignments",
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      "0033_seed_portal_application_roles"
     ]);
     for (const migration of migrations) {
       expect(migration.up.trim().length).toBeGreaterThan(0);

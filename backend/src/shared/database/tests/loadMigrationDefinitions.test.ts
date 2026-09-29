@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { loadMigrationDefinitions } from "../loadMigrationDefinitions.js";
 
 describe("loadMigrationDefinitions", () => {
-  it("carrega as 29 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
+  it("carrega as 30 migrations esperadas, em ordem, cada uma com up e down não vazios", () => {
     const migrations = loadMigrationDefinitions();
 
     expect(migrations.map((m) => m.id)).toEqual([
@@ -34,7 +34,8 @@ describe("loadMigrationDefinitions", () => {
       "0026_seed_pctec_meu_rh_application",
       "0027_create_application_roles",
       "0028_create_application_role_assignments",
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      "0033_seed_portal_application_roles"
     ]);
 
     for (const migration of migrations) {
@@ -43,7 +44,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029/0033 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
@@ -58,7 +59,9 @@ describe("loadMigrationDefinitions", () => {
       "0026_seed_pctec_meu_rh_application",
       // 0029 semeia o CATÁLOGO de perfis do Meu RH em
       // `application_roles`; a tabela que ele preenche nasce em 0027.
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      // 0033 faz o mesmo para o perfil global do Portal.
+      "0033_seed_portal_application_roles"
     ]);
     const tableCreatingMigrations = migrations.filter((m) => !nonTableCreatingIds.has(m.id));
 
@@ -478,7 +481,10 @@ describe("loadMigrationDefinitions", () => {
       // impede a remoção se houver qualquer concessão apontando para
       // elas — ninguém perde a rastreabilidade de uma autorização
       // porque alguém reverteu um seed.
-      "0029_seed_meu_rh_application_roles"
+      "0029_seed_meu_rh_application_roles",
+      // 0033: mesmo padrão, restrito ao perfil PORTAL_ADMIN_GLOBAL da
+      // aplicação PCTEC_PORTAL.
+      "0033_seed_portal_application_roles"
     ]);
 
     for (const migration of migrations) {
@@ -509,7 +515,8 @@ describe("loadMigrationDefinitions", () => {
     for (const seedMigrationId of seedMigrationIds) {
       const seedMigration = migrations.find((m) => m.id === seedMigrationId);
       const alvo =
-        seedMigrationId === "0029_seed_meu_rh_application_roles"
+        seedMigrationId === "0029_seed_meu_rh_application_roles" ||
+        seedMigrationId === "0033_seed_portal_application_roles"
           ? "DELETE FROM APPLICATION_ROLES WHERE APPLICATION_PUBLIC_ID ="
           : "DELETE FROM APPLICATIONS WHERE PUBLIC_ID =";
       expect(seedMigration?.down.toUpperCase()).toContain(alvo);

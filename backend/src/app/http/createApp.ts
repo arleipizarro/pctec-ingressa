@@ -86,6 +86,7 @@ import { GetHelpdeskUserContextService } from "../../modules/helpdesk/applicatio
 import { HELPDESK_SERVICE_CREDENTIAL_HEADER_NAME } from "../../modules/portal/http/requireServiceCredential.js";
 import { ResolvePortalTenantScopeService } from "../../modules/portal/application/ResolvePortalTenantScopeService.js";
 import { createServicePortalTenantScopeRoutes } from "../../modules/portal/http/servicePortalTenantScopeRoutes.js";
+import { createServicePortalApplicationRolesRoutes } from "../../modules/portal/http/servicePortalApplicationRolesRoutes.js";
 import { composeSso } from "../../modules/sso/infrastructure/SsoComposition.js";
 import { IssueAuthorizationCodeService } from "../../modules/sso/application/IssueAuthorizationCodeService.js";
 import { ExchangeAuthorizationCodeService } from "../../modules/sso/application/ExchangeAuthorizationCodeService.js";
@@ -1242,7 +1243,14 @@ export function createApp(options: CreateAppOptions = {}): Express {
       authorizeApplicationAccessService,
       requireOrganizationAccessService,
       resolvePortalTenantScopeService
-    )
+    ),
+    // GET /api/v1/service/portal/identities/:identityPublicId/application-roles
+    // — camada 2 de ADR-007 para o Portal (ADR-036): os perfis da Identity
+    // DENTRO do Portal (hoje só PORTAL_ADMIN_GLOBAL). Mesmo namespace, mesmo
+    // requireServiceCredential. Camada 1 conferida antes pelo MESMO
+    // AuthorizeApplicationAccessService; a leitura é a MESMA instância de
+    // ApplicationRoleService da administração e do Meu RH.
+    createServicePortalApplicationRolesRoutes(authorizeApplicationAccessService, applicationRoleService)
   );
 
   // GET /api/v1/service/identity-external-references/:systemCode/:entityType/identities/:identityPublicId
