@@ -135,11 +135,19 @@ describe("MariaDbCredentialRepository", () => {
     expect(updateCall?.sql).toContain("WHERE public_id = ?");
     expect(updateCall?.sql).toContain("AND version = ?");
 
-    // params: [last_authenticated_at, status, version(SET), updated_at, public_id, expectedVersion(WHERE)]
-    expect(updateCall?.params?.[2]).toBe(2); // SET version = 2 (absoluto, final)
+    // params: [password_hash, last_authenticated_at, status, version(SET),
+    //          updated_at, public_id, expectedVersion(WHERE)]
+    //
+    // `password_hash` entrou como PRIMEIRO parâmetro em v0.9.2, quando a
+    // coluna passou a fazer parte do SET — sem ela, a redefinição de
+    // senha subia a versão e não trocava o hash. As posições abaixo
+    // deslocaram uma casa por isso; a asserção continua sendo a mesma:
+    // SET recebe a versão FINAL absoluta, WHERE recebe a ORIGINAL.
+    expect(updateCall?.params?.[3]).toBe(2); // SET version = 2 (absoluto, final)
     const lastParamIndex = (updateCall?.params?.length ?? 1) - 1;
     expect(updateCall?.params?.[lastParamIndex]).toBe(1); // WHERE version = 1 (original)
-    expect(updateCall?.params?.[0]).toEqual(new Date("2026-01-02T10:00:00Z")); // last_authenticated_at setado
+    expect(updateCall?.params?.[1]).toEqual(new Date("2026-01-02T10:00:00Z")); // last_authenticated_at setado
+    expect(typeof updateCall?.params?.[0]).toBe("string"); // password_hash sempre presente no SET
   });
 
   it("update() lança CredentialVersionConflictError quando affectedRows=0 — nada é silenciosamente aceito", async () => {

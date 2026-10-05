@@ -122,16 +122,33 @@ export class MariaDbCredentialRepository implements CredentialRepository {
    * de uma mutação de domínio ocorrer antes de uma única chamada a
    * `update()`.
    */
+  /**
+   * Persiste o estado mutável da Credential com trava otimista.
+   *
+   * **`password_hash` faz parte do UPDATE**, e a ausência dele foi um bug
+   * real: este método nasceu servindo só a
+   * `recordSuccessfulAuthentication` (que muda `last_authenticated_at`),
+   * e quando `resetPassword` passou a usá-lo, a redefinição de senha
+   * "funcionava" — versão subia, evento `credential.changed` era
+   * gravado, o CLI reportava sucesso — mas o hash no banco continuava o
+   * antigo. O sintoma aparecia longe da causa: login recusando uma senha
+   * que acabara de ser definida.
+   *
+   * Escrever o hash a cada chamada é inócuo para os demais fluxos: quem
+   * não o alterou grava de volta o mesmo valor.
+   */
   public async update(credential: Credential, expectedVersion: number): Promise<void> {
     const [result] = await this.connection.execute(
       `UPDATE credentials
-          SET last_authenticated_at = ?,
+          SET password_hash = ?,
+              last_authenticated_at = ?,
               status = ?,
               version = ?,
               updated_at = ?
         WHERE public_id = ?
           AND version = ?`,
       [
+        credential.getPasswordHash().toString(),
         credential.getLastAuthenticatedAt() ?? null,
         credential.getStatus().toString(),
         credential.getVersion(),
