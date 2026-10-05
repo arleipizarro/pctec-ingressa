@@ -30,6 +30,19 @@ export interface LoginRateLimitDeps {
   readonly resolveClientIp: ClientIpResolver;
   /** Injetável para tornar os testes determinísticos. */
   readonly now?: () => Date;
+  /**
+   * Código e mensagem do `429`. Ausente = os do login. Existe para que
+   * outro endpoint público protegido por esta mesma mecânica (ex.:
+   * "Esqueci minha senha") não responda falando de "autenticação".
+   */
+  readonly rejection?: { readonly code: string; readonly message: string };
+  /**
+   * `aggregate_public_id` do `auth.rate-limit.blocked`. Ausente =
+   * `AUTH_RATE_LIMIT_AGGREGATE_PUBLIC_ID` (criação de sessão); outro
+   * endpoint informa o próprio valor fixo, para que a trilha diga QUAL
+   * formulário foi barrado.
+   */
+  readonly auditAggregatePublicId?: string;
 }
 
 /**
@@ -128,17 +141,24 @@ export function createLoginRateLimitMiddleware(deps: LoginRateLimitDeps) {
         // mesma janela seriam uma escrita por requisição do atacante.
         const transicoes = estourados.filter((counter) => counter.attemptCount === counter.bucket.limit + 1);
         for (const transicao of transicoes) {
-          await registrarBloqueio(deps.auditEventRepository, transicao.bucket, config.windowSeconds, now, req);
+          await registrarBloqueio(
+            deps.auditEventRepository,
+            deps.auditAggregatePublicId ?? AUTH_RATE_LIMIT_AGGREGATE_PUBLIC_ID,
+            transicao.bucket,
+            config.windowSeconds,
+            now,
+            req
+          );
         }
 
         res.setHeader("Retry-After", String(retryAfter));
         res.status(429).json({
           error: {
-            code: "LOGIN_RATE_LIMITED",
+            code: deps.rejection?.code ?? "LOGIN_RATE_LIMITED",
             // Mensagem única, sem dizer QUAL limite foi atingido: saber
             // se foi o de origem ou o de origem+e-mail já diria algo
             // sobre o que mais está acontecendo no sistema.
-            message: "Muitas tentativas de autenticação. Tente novamente mais tarde.",
+            message: deps.rejection?.message ?? "Muitas tentativas de autenticação. Tente novamente mais tarde.",
             correlation_id: req.correlationId ?? null,
             details: []
           }
@@ -196,6 +216,7 @@ function armarLimpezaDoEscopoApertado(
 
 async function registrarBloqueio(
   auditEventRepository: AuditEventRepository,
+  aggregatePublicId: string,
   bucket: LoginRateLimitBucket,
   windowSeconds: number,
   now: Date,
@@ -206,7 +227,7 @@ async function registrarBloqueio(
       AuditEvent.fromDomainEvent(
         createAuthRateLimitBlockedEvent(
           {
-            aggregatePublicId: AUTH_RATE_LIMIT_AGGREGATE_PUBLIC_ID,
+            aggregatePublicId,
             actorPublicId: ATOR_SISTEMA,
             correlationId: req.correlationId ?? randomUUID(),
             occurredAt: now

@@ -22,36 +22,62 @@
  * tela, que roda na primeira renderização, antes de qualquer efeito.
  */
 
-/**
- * Memória do valor já capturado.
- *
- * Necessária porque a remoção é destrutiva: a segunda leitura do
- * fragmento encontraria a URL já limpa e devolveria vazio. Isso
- * aconteceria de verdade em dois casos comuns — o `StrictMode` do React,
- * que invoca inicializadores de estado duas vezes em desenvolvimento, e
- * qualquer remontagem da tela. Guardar o valor mantém a função
- * idempotente: chamadas seguintes devolvem o mesmo token sem depender
- * da URL.
- */
-let tokenCapturado: string | null = null;
+export interface CapturaDeTokenDoFragmento {
+  readonly capturar: () => string;
+  readonly descartar: () => void;
+}
 
-export function capturarTokenDoConvite(): string {
-  if (tokenCapturado !== null) {
+/**
+ * Uma captura independente por tela que recebe token no fragmento
+ * (convite, redefinição de senha). Instâncias separadas, e não uma
+ * memória global única: o token de um convite não pode aparecer na
+ * tela de redefinição só porque as duas rodaram na mesma aba.
+ */
+export function criarCapturaDeTokenDoFragmento(): CapturaDeTokenDoFragmento {
+  /**
+   * Memória do valor já capturado.
+   *
+   * Necessária porque a remoção é destrutiva: a segunda leitura do
+   * fragmento encontraria a URL já limpa e devolveria vazio. Isso
+   * aconteceria de verdade em dois casos comuns — o `StrictMode` do React,
+   * que invoca inicializadores de estado duas vezes em desenvolvimento, e
+   * qualquer remontagem da tela. Guardar o valor mantém a função
+   * idempotente: chamadas seguintes devolvem o mesmo token sem depender
+   * da URL.
+   */
+  let tokenCapturado: string | null = null;
+
+  function capturar(): string {
+    if (tokenCapturado !== null) {
+      return tokenCapturado;
+    }
+
+    const fragmento = window.location.hash;
+    tokenCapturado = fragmento.startsWith("#") ? decodeURIComponent(fragmento.slice(1)) : "";
+
+    if (fragmento.length > 0) {
+      // Remoção IMEDIATA, na mesma chamada da leitura. Nunca depois do
+      // sucesso da operação: o token não pode sobreviver na barra
+      // durante o tempo em que a pessoa está escolhendo a senha, nem se
+      // ela desistir no meio.
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
+
     return tokenCapturado;
   }
 
-  const fragmento = window.location.hash;
-  tokenCapturado = fragmento.startsWith("#") ? decodeURIComponent(fragmento.slice(1)) : "";
+  return {
+    capturar,
+    descartar: () => {
+      tokenCapturado = null;
+    }
+  };
+}
 
-  if (fragmento.length > 0) {
-    // Remoção IMEDIATA, na mesma chamada da leitura. Nunca depois do
-    // sucesso do resgate: o token não pode sobreviver na barra durante o
-    // tempo em que a pessoa está escolhendo a senha, nem se ela desistir
-    // no meio.
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
-  }
+const capturaDoConvite = criarCapturaDeTokenDoFragmento();
 
-  return tokenCapturado;
+export function capturarTokenDoConvite(): string {
+  return capturaDoConvite.capturar();
 }
 
 /**
@@ -72,5 +98,5 @@ export function capturarTokenDoConvite(): string {
  * herdaria o token do anterior sem isto.
  */
 export function descartarTokenDoConvite(): void {
-  tokenCapturado = null;
+  capturaDoConvite.descartar();
 }

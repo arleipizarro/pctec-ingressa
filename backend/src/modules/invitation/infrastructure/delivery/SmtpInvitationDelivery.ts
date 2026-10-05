@@ -30,7 +30,7 @@ export interface SmtpInvitationDeliveryOptions {
 }
 
 /** Paleta índigo do HUB/Ingressa. Cliente de e-mail não lê custom property. */
-const COR = {
+export const COR = {
   fundo: "#f5f4fa",
   cartao: "#ffffff",
   borda: "#e2daf0",
@@ -42,7 +42,7 @@ const COR = {
   textoMedio: "#4b3d6a"
 } as const;
 
-const FONTE = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+export const FONTE = "'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
 /**
  * Produtos citados como EXEMPLO do que o Ingressa dá acesso.
@@ -299,7 +299,7 @@ function montarHtml({
 }
 
 /** O nome vem do banco, mas nome é texto de usuário — nunca interpolado cru em HTML. */
-function escaparHtml(valor: string): string {
+export function escaparHtml(valor: string): string {
   return valor
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

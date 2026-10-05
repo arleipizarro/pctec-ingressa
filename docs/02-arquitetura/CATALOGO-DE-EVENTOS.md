@@ -345,6 +345,50 @@ relação envolve DUAS Organizations — parent e child — e
   Auditar toda requisição barrada faria do limitador um amplificador do
   ataque que ele existe para conter.
 
+### password-reset.requested
+
+- **Produtor:** `passwordreset` (ADR-037).
+- **Finalidade:** registrar todo pedido "Esqueci minha senha" e o seu
+  desfecho real — a resposta HTTP é a mesma em todos os casos, então é
+  aqui que o ADMIN vê, por exemplo, que alguém com login desabilitado
+  tentou redefinir a senha.
+- **Identificador da entidade:** `identity_public_id` do titular; quando
+  o e-mail não corresponde a ninguém, o valor FIXO
+  `00000000-0000-4000-8000-0000000000a2`.
+- **Ator:** sempre `SYSTEM` — o pedido é anônimo, e qualquer pessoa pode
+  digitar o e-mail de outra.
+- **Versão:** 1.
+- **Payload mínimo:** `outcome` (`ISSUED`, `IGNORED_UNKNOWN_EMAIL`,
+  `IGNORED_IDENTITY_NOT_ACTIVE`, `IGNORED_LOGIN_DISABLED`,
+  `IGNORED_NO_CREDENTIAL`, `IGNORED_LINK_NOT_CONFIGURED`, `THROTTLED`);
+  quando há titular, `identityPublicId`; quando emitido,
+  `resetRequestPublicId`, `expiresAt`, `supersededCount`.
+- **Nunca publicar:** o e-mail digitado, o token, o hash, o link.
+
+### password-reset.delivery-failed
+
+- **Produtor:** `passwordreset`.
+- **Finalidade:** o pedido foi emitido, mas o SMTP recusou a mensagem.
+- **Identificador da entidade:** `identity_public_id`.
+- **Versão:** 1.
+- **Payload mínimo:** `resetRequestPublicId`, `identityPublicId`.
+- **Nunca publicar:** a mensagem de erro do driver (pode conter o
+  envelope, inclusive o link).
+
+### password-reset.completed
+
+- **Produtor:** `passwordreset`.
+- **Finalidade:** o titular trocou a senha por um link válido. Sai na
+  mesma transação de `credential.changed`
+  (`reasonCode = SELF_SERVICE_PASSWORD_RESET`) e dos `session.revoked`
+  (`reason = PASSWORD_RESET`).
+- **Identificador da entidade:** `identity_public_id`; ator = o próprio
+  titular.
+- **Versão:** 1.
+- **Payload mínimo:** `resetRequestPublicId`, `identityPublicId`,
+  `credentialPublicId`, `revokedSessions`.
+- **Nunca publicar:** senha, hash, token.
+
 ### application.created
 
 - **Produtor:** bounded context `application`.

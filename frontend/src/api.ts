@@ -121,6 +121,22 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ token, password, passwordConfirmation })
     }),
+  /** Resposta neutra (202) exista o e-mail ou não — ver `passwordResetRoutes`. */
+  solicitarRedefinicaoDeSenha: (email: string) =>
+    requisitar<{ message: string }>("/password-reset/request", {
+      method: "POST",
+      body: JSON.stringify({ email })
+    }),
+  previewRedefinicaoDeSenha: (token: string) =>
+    requisitar<{ expiresAt: string }>("/password-reset/preview", {
+      method: "POST",
+      body: JSON.stringify({ token })
+    }),
+  redefinirSenha: (token: string, password: string, passwordConfirmation: string) =>
+    requisitar<{ passwordReset: true }>("/password-reset/confirm", {
+      method: "POST",
+      body: JSON.stringify({ token, password, passwordConfirmation })
+    }),
   login: (email: string, password: string) =>
     requisitar<unknown>("/sessions", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => requisitar<unknown>("/sessions/current", { method: "DELETE" }),

@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { useLocation, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api.js";
-import { LOGOUT_INCOMPLETO, type EstadoDoLogin } from "../auth.js";
+import { LOGOUT_INCOMPLETO, SENHA_REDEFINIDA, type EstadoDoLogin } from "../auth.js";
 
 /**
  * Prefixo do ÚNICO destino de retomada aceito.
@@ -43,7 +43,9 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
   const retomada = destinoDeRetomada(parametros.get("next"));
   // Estado de navegação, não parâmetro de URL: ninguém precisa (nem
   // deve) conseguir provocar este aviso digitando um link.
-  const logoutIncompleto = (useLocation().state as EstadoDoLogin | null)?.motivo === LOGOUT_INCOMPLETO;
+  const motivo = (useLocation().state as EstadoDoLogin | null)?.motivo;
+  const logoutIncompleto = motivo === LOGOUT_INCOMPLETO;
+  const senhaRedefinida = motivo === SENHA_REDEFINIDA;
 
   async function entrar(evento: FormEvent): Promise<void> {
     evento.preventDefault();
@@ -97,12 +99,18 @@ export function LoginPage({ onAutenticado }: { onAutenticado: () => Promise<void
             da sua conta.
           </div>
         )}
+        {senhaRedefinida && erro === null && (
+          <div className="aviso aviso-ok" role="status">
+            Senha redefinida. Entre com o seu e-mail e a nova senha.
+          </div>
+        )}
         {erro !== null && <div className="aviso aviso-erro" role="alert">{erro}</div>}
         <label htmlFor="email">E-mail</label>
         <input id="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
         <label htmlFor="senha">Senha</label>
         <input id="senha" type="password" autoComplete="current-password" value={senha} onChange={(e) => setSenha(e.target.value)} required />
         <button type="submit" className="primario" disabled={enviando}>{enviando ? "Entrando…" : "Entrar"}</button>
+        <p className="login-rodape"><Link to="/esqueci-senha">Esqueci minha senha</Link></p>
       </form>
     </div>
   );

@@ -22,8 +22,15 @@ export interface Sessao {
  */
 export const LOGOUT_INCOMPLETO = "LOGOUT_INCOMPLETO" as const;
 
+/**
+ * A senha acabou de ser redefinida pelo "Esqueci minha senha". Mesmo
+ * transporte do aviso acima — estado de navegação, nunca parâmetro de
+ * URL: ninguém deve conseguir exibir "senha redefinida" mandando um link.
+ */
+export const SENHA_REDEFINIDA = "SENHA_REDEFINIDA" as const;
+
 export interface EstadoDoLogin {
-  readonly motivo?: typeof LOGOUT_INCOMPLETO;
+  readonly motivo?: typeof LOGOUT_INCOMPLETO | typeof SENHA_REDEFINIDA;
 }
 
 /**

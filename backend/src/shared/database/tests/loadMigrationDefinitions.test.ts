@@ -35,7 +35,8 @@ describe("loadMigrationDefinitions", () => {
       "0027_create_application_roles",
       "0028_create_application_role_assignments",
       "0029_seed_meu_rh_application_roles",
-      "0033_seed_portal_application_roles"
+      "0033_seed_portal_application_roles",
+      "0034_create_password_reset_tokens"
     ]);
 
     for (const migration of migrations) {
@@ -44,7 +45,7 @@ describe("loadMigrationDefinitions", () => {
     }
   });
 
-  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029/0033 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028 criam tabela)", () => {
+  it("as migrations que criam tabela usam CREATE TABLE / DROP TABLE (0004/0015/0017/0019/0024 são ALTER TABLE, 0007/0014/0018/0026/0029/0033 são seed INSERT/DELETE, 0016/0020/0021/0022/0023/0027/0028/0034 criam tabela)", () => {
     const migrations = loadMigrationDefinitions();
     const nonTableCreatingIds = new Set([
       "0004_add_checksum_and_timing_to_schema_migrations",
