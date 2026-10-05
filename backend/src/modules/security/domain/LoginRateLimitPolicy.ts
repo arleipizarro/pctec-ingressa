@@ -86,7 +86,17 @@ export class LoginRateLimitPolicy {
    */
   private static readonly SEPARADOR = "\u0000";
 
-  public constructor(private readonly config: LoginRateLimitConfig) {}
+  /**
+   * `namespace` separa os contadores de OUTRO endpoint público que use
+   * esta mesma política (hoje: "Esqueci minha senha"). Sem ele, pedir
+   * redefinição consumiria o orçamento de login da mesma origem — e o
+   * contrário. Ausente = as chaves de sempre do login, byte a byte: os
+   * contadores já gravados continuam valendo.
+   */
+  public constructor(
+    private readonly config: LoginRateLimitConfig,
+    private readonly namespace?: string
+  ) {}
 
   public getConfig(): LoginRateLimitConfig {
     return this.config;
@@ -104,8 +114,9 @@ export class LoginRateLimitPolicy {
     return raw.trim().toLowerCase();
   }
 
-  private static digest(...partes: readonly string[]): string {
-    return createHash("sha256").update(partes.join(LoginRateLimitPolicy.SEPARADOR), "utf8").digest("hex");
+  private digest(...partes: readonly string[]): string {
+    const escopo = this.namespace === undefined ? partes : [this.namespace, ...partes];
+    return createHash("sha256").update(escopo.join(LoginRateLimitPolicy.SEPARADOR), "utf8").digest("hex");
   }
 
   /**
@@ -122,7 +133,7 @@ export class LoginRateLimitPolicy {
   }): readonly LoginRateLimitBucket[] {
     const buckets: LoginRateLimitBucket[] = [
       {
-        key: LoginRateLimitPolicy.digest("ip", input.clientIp),
+        key: this.digest("ip", input.clientIp),
         kind: "IP",
         limit: this.config.maxAttemptsPerIp
       }
@@ -132,7 +143,7 @@ export class LoginRateLimitPolicy {
       input.identifier === undefined ? "" : LoginRateLimitPolicy.normalizeIdentifier(input.identifier);
     if (identificador.length > 0) {
       buckets.push({
-        key: LoginRateLimitPolicy.digest("ip-identifier", input.clientIp, identificador),
+        key: this.digest("ip-identifier", input.clientIp, identificador),
         kind: "IP_IDENTIFIER",
         limit: this.config.maxAttemptsPerIpIdentifier
       });

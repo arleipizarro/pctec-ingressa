@@ -4,6 +4,8 @@ import { useSessao } from "./auth.js";
 import { LoginPage } from "./pages/LoginPage.js";
 import { AplicativosPage } from "./pages/AplicativosPage.js";
 import { ConvitePage } from "./pages/ConvitePage.js";
+import { EsqueciSenhaPage } from "./pages/EsqueciSenhaPage.js";
+import { RedefinirSenhaPage } from "./pages/RedefinirSenhaPage.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { UsuariosPage } from "./pages/UsuariosPage.js";
 import { PerfisDeAplicacaoPage } from "./pages/PerfisDeAplicacaoPage.js";
@@ -31,6 +33,10 @@ export function App(): JSX.Element {
         {/* Convite é PÚBLICO: quem chega por ele ainda não tem senha, e
             portanto nunca teria sessão para mostrar. */}
         <Route path="/convite" element={<ConvitePage />} />
+        {/* "Esqueci minha senha" — PÚBLICO pelo mesmo motivo: quem chega
+            aqui justamente não consegue entrar. */}
+        <Route path="/esqueci-senha" element={<EsqueciSenhaPage />} />
+        <Route path="/redefinir-senha" element={<RedefinirSenhaPage />} />
         {/* Sem sessão, toda rota cai no login — a proteção real está no
             servidor, mas navegar para uma tela vazia seria confuso. */}
         <Route path="*" element={<Navigate to="/login" replace />} />
@@ -42,6 +48,12 @@ export function App(): JSX.Element {
     <Routes>
       <Route path="/login" element={<Navigate to="/apps" replace />} />
       <Route path="/convite" element={<ConvitePage />} />
+      {/* O link do e-mail pode ser aberto numa aba já logada. A troca
+          encerra todas as sessões no servidor, então a tela larga a
+          sessão local ao ir para o login — senão `/login` redirecionaria
+          para `/apps` com uma sessão que acabou de ser revogada. */}
+      <Route path="/redefinir-senha" element={<RedefinirSenhaPage aoConcluir={encerrar} />} />
+      <Route path="/esqueci-senha" element={<Navigate to="/apps" replace />} />
       {/* `/apps` é a casa de QUALQUER pessoa autenticada — inclusive de
           quem só tem Portal ou Helpdesk. Antes, a raiz caía direto no
           painel administrativo, que só existe para ADMIN. */}

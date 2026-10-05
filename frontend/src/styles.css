@@ -498,7 +498,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
   background: var(--sup-pagina);
 }
 
-.login form {
+.login form,
+.login .login-cartao {
   background: var(--sup-cartao);
   border: 1px solid var(--borda);
   border-radius: var(--raio-gg);
@@ -518,6 +519,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
 .login .subtitulo { text-align: center; margin: 0; }
 .login label { font-size: 0.82rem; font-weight: 700; color: var(--txt-medio); }
 .login button.primario { margin-top: var(--e2); padding: 11px var(--e4); }
+/* Link secundário do cartão ("Esqueci minha senha", "Voltar para o
+   login"): centrado e menor que a ação principal, para não competir com
+   o botão. */
+.login-rodape { margin: 0; text-align: center; font-size: 0.88rem; }
 
 /* ===================================================================
    Modais

@@ -211,6 +211,12 @@ const envSchema = z.object({
   // Recusado em produção (ver gate em `loadEnv`): mostrar o link na tela
   // é um recurso de desenvolvimento, não uma política de entrega.
   INVITATION_DELIVERY_MODE: z.enum(["MANUAL_DEV", "EMAIL"]).default("MANUAL_DEV"),
+  // --- Esqueci minha senha ---
+  // Validade do link de redefinição: 30 min por padrão. O teto de 60 min
+  // vive no agregado `PasswordResetToken` — esta variável só encurta.
+  // A ENTREGA segue INVITATION_DELIVERY_MODE + INGRESSA_SMTP_*: os dois
+  // e-mails do Ingressa saem pelo mesmo canal.
+  PASSWORD_RESET_TTL_SECONDS: z.coerce.number().int().positive().max(3_600).default(1_800),
   // SMTP PRÓPRIO do Ingressa — nunca compartilhado com o Portal, para
   // que revogar uma credencial não derrube o outro produto. Nenhum valor
   // real aqui e nenhum no Git: defaults "" e ausência = modo EMAIL

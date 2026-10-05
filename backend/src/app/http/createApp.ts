@@ -111,6 +111,13 @@ import { BlockIdentityService } from "../../modules/identity/application/BlockId
 import { UnblockIdentityService } from "../../modules/identity/application/UnblockIdentityService.js";
 import { RevokeAllSessionsService } from "../../modules/security/application/RevokeAllSessionsService.js";
 import { RevokeInvitationService } from "../../modules/invitation/application/RevokeInvitationService.js";
+import { RequestPasswordResetService } from "../../modules/passwordreset/application/RequestPasswordResetService.js";
+import { CompletePasswordResetService } from "../../modules/passwordreset/application/CompletePasswordResetService.js";
+import { MariaDbPasswordResetTokenRepository } from "../../modules/passwordreset/infrastructure/persistence/MariaDbPasswordResetTokenRepository.js";
+import { CryptoPasswordResetTokenGenerator } from "../../modules/passwordreset/infrastructure/token/passwordResetTokenHash.js";
+import { composePasswordResetDelivery } from "../../modules/passwordreset/infrastructure/PasswordResetComposition.js";
+import { createPasswordResetRoutes } from "../../modules/passwordreset/http/passwordResetRoutes.js";
+import { PASSWORD_RESET_FORM_AGGREGATE_PUBLIC_ID } from "../../modules/passwordreset/domain/events/PasswordResetDomainEvents.js";
 import { RenameOrganizationService } from "../../modules/organization/application/RenameOrganizationService.js";
 import { CreateOrganizationRelationshipService } from "../../modules/organization/application/CreateOrganizationRelationshipService.js";
 import { CreateOrganizationService } from "../../modules/organization/application/CreateOrganizationService.js";
@@ -332,7 +339,36 @@ export interface CreateAppOptions {
    * de verdade.
    */
   readonly invitationEmailTransport?: InvitationEmailTransport;
+  /**
+   * Injetáveis para teste — "Esqueci minha senha". Quando omitidos,
+   * `createApp()` compõe as versões reais sobre o pool compartilhado,
+   * com a MESMA entrega de e-mail do convite.
+   */
+  readonly requestPasswordResetService?: RequestPasswordResetService;
+  readonly completePasswordResetService?: CompletePasswordResetService;
+  /**
+   * Política do limitador do "Esqueci minha senha". Ausente = tetos de
+   * `DEFAULT_PASSWORD_RESET_RATE_LIMIT`, ligados/desligados junto com
+   * `LOGIN_RATE_LIMIT_ENABLED`.
+   */
+  readonly passwordResetRateLimitPolicy?: LoginRateLimitPolicy;
 }
+
+/**
+ * Tetos do limitador HTTP do "Esqueci minha senha", em namespace próprio
+ * (não consome o orçamento de login).
+ *
+ * Mais apertados que os do login, e numa janela de uma hora: ninguém
+ * legítimo pede redefinição dezenas de vezes, e cada pedido aceito pode
+ * virar um e-mail na caixa de alguém. O teto por TITULAR (independente
+ * do IP) mora no serviço, contado no banco — ver
+ * `RequestPasswordResetService`.
+ */
+const DEFAULT_PASSWORD_RESET_RATE_LIMIT = {
+  windowSeconds: 3_600,
+  maxAttemptsPerIp: 20,
+  maxAttemptsPerIpIdentifier: 5
+} as const;
 
 /**
  * Pool único, compartilhado entre `IdentityRepository` e `LoginService`
@@ -596,7 +632,9 @@ export function createApp(options: CreateAppOptions = {}): Express {
     options.exchangeAuthorizationCodeService === undefined ||
     options.getMyApplicationsService === undefined ||
     options.createIdentityInvitationService === undefined ||
-    options.redeemIdentityInvitationService === undefined;
+    options.redeemIdentityInvitationService === undefined ||
+    options.requestPasswordResetService === undefined ||
+    options.completePasswordResetService === undefined;
   const sharedPool = needsDefaultPool ? createDefaultPool() : undefined;
 
   const identityRepository = options.identityRepository ?? new MariaDbIdentityRepository(sharedPool!);
@@ -798,6 +836,68 @@ export function createApp(options: CreateAppOptions = {}): Express {
       identityRepository
     );
 
+  // --- Esqueci minha senha ----------------------------------------------
+  //
+  // Reaproveita o que já existe: o MESMO canal de e-mail do convite
+  // (`INVITATION_DELIVERY_MODE` + `INGRESSA_SMTP_*`), o MESMO hasher
+  // Argon2id, a MESMA política de senha (`PlainPassword`) e a MESMA
+  // mecânica de limitação do login — com contadores em namespace próprio.
+  const deliveryConfig = {
+    mode: env.INVITATION_DELIVERY_MODE,
+    smtpHost: env.INGRESSA_SMTP_HOST,
+    smtpPort: env.INGRESSA_SMTP_PORT,
+    smtpUser: env.INGRESSA_SMTP_USER,
+    smtpPassword: env.INGRESSA_SMTP_PASSWORD,
+    smtpFrom: env.INGRESSA_SMTP_FROM,
+    smtpSecure: env.INGRESSA_SMTP_SECURE,
+    requireTls: env.NODE_ENV === "production"
+  };
+  const requestPasswordResetService =
+    options.requestPasswordResetService ??
+    new RequestPasswordResetService({
+      unitOfWork: unitOfWork!,
+      identityRepository,
+      credentialRepository: new MariaDbCredentialRepository(sharedPool!),
+      passwordResetTokenRepositoryFactory: (c) => new MariaDbPasswordResetTokenRepository(c),
+      auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c),
+      auditEventRepository: new MariaDbAuditEventRepository(sharedPool!),
+      tokenGenerator: new CryptoPasswordResetTokenGenerator(),
+      delivery: composePasswordResetDelivery(deliveryConfig, options.invitationEmailTransport),
+      ttlSeconds: env.PASSWORD_RESET_TTL_SECONDS,
+      publicBaseUrl: env.INGRESSA_PUBLIC_BASE_URL
+    });
+  const completePasswordResetService =
+    options.completePasswordResetService ??
+    new CompletePasswordResetService({
+      unitOfWork: unitOfWork!,
+      passwordResetTokenRepositoryFactory: (c) => new MariaDbPasswordResetTokenRepository(c),
+      identityRepositoryFactory: (c) => new MariaDbIdentityRepository(c),
+      credentialRepositoryFactory: (c) => new MariaDbCredentialRepository(c),
+      sessionRepositoryFactory: (c) => new MariaDbSessionRepository(c),
+      auditEventRepositoryFactory: (c) => new MariaDbAuditEventRepository(c),
+      passwordHasher: new Argon2PasswordHasher(),
+      readOnlyPasswordResetTokenRepository: new MariaDbPasswordResetTokenRepository(sharedPool!),
+      readOnlyIdentityRepository: identityRepository
+    });
+  const passwordResetRateLimit = createLoginRateLimitMiddleware({
+    policy:
+      options.passwordResetRateLimitPolicy ??
+      new LoginRateLimitPolicy(
+        { enabled: envRateLimit.LOGIN_RATE_LIMIT_ENABLED, ...DEFAULT_PASSWORD_RESET_RATE_LIMIT },
+        "password-reset"
+      ),
+    store: loginRateLimitStore,
+    auditEventRepository: loginRateLimitAuditEventRepository,
+    resolveClientIp:
+      options.loginRateLimitClientIpResolver ?? createClientIpResolver(envRateLimit.TRUSTED_PROXY_HOP_COUNT),
+    ...(options.loginRateLimitClock !== undefined ? { now: options.loginRateLimitClock } : {}),
+    rejection: {
+      code: "PASSWORD_RESET_RATE_LIMITED",
+      message: "Muitas solicitações de redefinição de senha. Tente novamente mais tarde."
+    },
+    auditAggregatePublicId: PASSWORD_RESET_FORM_AGGREGATE_PUBLIC_ID
+  });
+
   // Não anunciar a tecnologia do servidor em nenhuma resposta.
   app.disable("x-powered-by");
 
@@ -865,6 +965,25 @@ export function createApp(options: CreateAppOptions = {}): Express {
   // convite de primeiro acesso. Quem as usa ainda não tem credencial; a
   // autorização é o token de uso único, enviado no CORPO (nunca na URL).
   app.use("/api/v1/invitations", createInvitationRoutes(redeemIdentityInvitationService));
+
+  // POST /api/v1/password-reset/{request,preview,confirm} — "Esqueci
+  // minha senha", rotas PÚBLICAS. O pedido responde a mesma frase
+  // neutra exista o e-mail ou não, e só depois trabalha; o token da
+  // conclusão vem no CORPO, nunca na URL.
+  app.use(
+    "/api/v1/password-reset",
+    createPasswordResetRoutes({
+      requestPasswordResetService,
+      completePasswordResetService,
+      requestRateLimit: passwordResetRateLimit,
+      completeRateLimit: passwordResetRateLimit,
+      onBackgroundError: () => {
+        // Sem a mensagem do erro: ela pode carregar o e-mail digitado ou
+        // detalhe de driver. O correlation id fica na auditoria.
+        console.warn("[password-reset] falha inesperada ao processar um pedido de redefinição.");
+      }
+    })
+  );
 
   // POST /api/v1/admin/invitations — emissão administrativa. Montada no
   // próprio prefixo, ANTES do /api/v1/admin genérico, pelo mesmo motivo

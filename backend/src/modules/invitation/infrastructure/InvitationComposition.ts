@@ -78,6 +78,26 @@ export function composeInvitationDelivery(
     return new ManualDevInvitationDelivery();
   }
 
+  return new SmtpInvitationDelivery(composeSmtpEmailTransport(config, transport), {
+    fromLabel: "PCTEC Ingressa",
+    supportContact: "a PCTEC"
+  });
+}
+
+/**
+ * Valida `INGRESSA_SMTP_*` e constrói o transporte — o MESMO para todo
+ * e-mail que o Ingressa envia (convite e redefinição de senha).
+ *
+ * Separado de `composeInvitationDelivery` para que a redefinição de
+ * senha reuse exatamente a mesma validação e o mesmo transporte, em vez
+ * de uma segunda leitura das variáveis que pudesse divergir desta. Lança
+ * `InvitationDeliveryNotConfiguredError` com os NOMES das variáveis
+ * ausentes, nunca os valores.
+ */
+export function composeSmtpEmailTransport(
+  config: InvitationDeliveryConfig,
+  transport?: InvitationEmailTransport
+): InvitationEmailTransport {
   const ausentes: string[] = [];
   if (config.smtpHost.trim().length === 0) {
     ausentes.push("INGRESSA_SMTP_HOST");
@@ -101,7 +121,7 @@ export function composeInvitationDelivery(
     );
   }
 
-  const transporteEfetivo =
+  return (
     transport ??
     new NodemailerInvitationEmailTransport({
       host: config.smtpHost.trim(),
@@ -111,10 +131,6 @@ export function composeInvitationDelivery(
       from: config.smtpFrom.trim(),
       secure: resolveSmtpSecure(config.smtpPort, config.smtpSecure),
       requireTls: config.requireTls
-    });
-
-  return new SmtpInvitationDelivery(transporteEfetivo, {
-    fromLabel: "PCTEC Ingressa",
-    supportContact: "a PCTEC"
-  });
+    })
+  );
 }
